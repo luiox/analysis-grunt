@@ -194,6 +194,36 @@ TEST(ConstantCallScan, FoldsValueThatNeedsConstantPool)
     EXPECT_EQ(result.sites.front().value.i32, 65534);
 }
 
+TEST(ConstantCallScan, EvaluatesTargetBodyThatLoadsPoolConstants)
+{
+    // 目标方法体自身带 ldc（值超 bipush/sipush 域）：求值器必须经会话常量池
+    // 解析出 100000，才能算出 3 * 100000。这条钉的是**前置能力**——求值器
+    // 不支持 ldc 的话，所有方法体里带池常量的目标都会被静默拒掉。
+    model::ResourceContainer container = makeContainer({
+        {"fixture/Util",
+         ".super java/lang/Object\n"
+         ".class public super fixture/Util {\n"
+         "  .method public static scaled (I)I {\n"
+         "    parameters: { a },\n"
+         "    code: {\n"
+         "      iload a\n"
+         "      ldc 100000\n"
+         "      imul\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+        {"fixture/Caller",
+         callerSource("      bipush 3\n"
+                      "      invokestatic fixture/Util.scaled (I)I\n"
+                      "      ireturn\n")},
+    });
+
+    const ScanResult result = scan(container);
+    ASSERT_EQ(result.sites.size(), 1u);
+    EXPECT_EQ(result.sites.front().value.i32, 300000);
+}
+
 TEST(ConstantCallScan, RejectsNonStaticTarget)
 {
     model::ResourceContainer container = makeContainer({
