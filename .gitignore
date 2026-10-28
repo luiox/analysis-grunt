@@ -1,0 +1,7 @@
+build/
+.xmake/
+*.jar
+*.class
+*.exe
+*.pdb
+*.obj
