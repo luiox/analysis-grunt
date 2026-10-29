@@ -58,4 +58,22 @@ inline void replaceClass(mjbase::model::ResourceContainer& container, std::strin
         owned, std::make_unique<mjbase::model::ClassResource>(owned, std::move(bytes)));
 }
 
+/// @brief 按 uri 取类字节；缺失或非类资源返回空。
+inline const std::vector<ca::u8>* findClassBytes(
+    const mjbase::model::ResourceContainer& container, std::string_view uri)
+{
+    const mjbase::model::IResource* raw = container.getResource(uri);
+    const auto* cls =
+        ca::core::tag_cast::dyn_cast<const mjbase::model::ClassResource>(raw);
+    return cls == nullptr ? nullptr : &cls->get();
+}
+
+/// @brief 容器内类条目数（proof 的类数门用）。
+inline ca::usize countClasses(const mjbase::model::ResourceContainer& container)
+{
+    ca::usize n = 0;
+    forEachClass(container, [&](const ClassEntry&) { ++n; });
+    return n;
+}
+
 }   // namespace grunt

@@ -24,6 +24,8 @@
 #include "mjbase/asm/insn/insn_factory.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/proof_toolbox.hpp"
+#include "grunt/rewrite_toolbox.hpp"
 
 namespace grunt::constant_call {
 
@@ -406,63 +408,6 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
 // ==== REWRITE ===============================================================
 // ============================================================================
 
-/// 造一条常量装载指令：短形态优先，放不下才落池。
-///
-/// 池索引走 `CodeEditor::loadConst` 选形态——`LDC` 的操作数域只有 u1，大类
-/// 的池索引轻易超过 255，编码器对超界 `LDC` 直接 Unencodable（insn_codec
-/// 的域宽校验）。`loadConst` 负责按实际索引在 `LDC`/`LDC_W` 之间选对。
-bool makeConstLoad(ir::ClassSession& session, const ev::Value& v, ir::Insn& out)
-{
-    switch (v.kind) {
-    case ev::Value::Kind::I32: {
-        auto r = mjbase::asm_insn::intConstInsn(v.i32);
-        if (r.is_ok()) {
-            out = r.unwrap();
-            return true;
-        }
-        const ca::u32 cp = session.internInteger(v.i32);
-        if (cp == 0) return false;
-        out = ir::CodeEditor::loadConst(cp);
-        return true;
-    }
-    case ev::Value::Kind::I64: {
-        auto r = mjbase::asm_insn::longConstInsn(v.i64);
-        if (r.is_ok()) {
-            out = r.unwrap();
-            return true;
-        }
-        const ca::u32 cp = session.backing().cp.addLong(v.i64);
-        if (cp == 0 || cp > 0xFFFF) return false;   // LDC2_W 是 CP2 域（u2）
-        out.op = Op::LDC2_W;
-        out.cp = cp;
-        return true;
-    }
-    case ev::Value::Kind::F32: {
-        auto r = mjbase::asm_insn::floatConstInsn(v.f32);
-        if (r.is_ok()) {
-            out = r.unwrap();
-            return true;
-        }
-        const ca::u32 cp = session.backing().cp.addFloatBits(bitCast<ca::u32>(v.f32));
-        if (cp == 0) return false;
-        out = ir::CodeEditor::loadConst(cp);
-        return true;
-    }
-    case ev::Value::Kind::F64: {
-        auto r = mjbase::asm_insn::doubleConstInsn(v.f64);
-        if (r.is_ok()) {
-            out = r.unwrap();
-            return true;
-        }
-        const ca::u32 cp = session.backing().cp.addDoubleBits(bitCast<ca::u64>(v.f64));
-        if (cp == 0 || cp > 0xFFFF) return false;
-        out.op = Op::LDC2_W;
-        out.cp = cp;
-    }
-    default: return false;
-    }
-}
-
 bool sameValue(const ev::Value& a, const ev::Value& b)
 {
     if (a.kind != b.kind) return false;
@@ -604,7 +549,7 @@ RwResult rewriteSite(ir::ClassSession& session, ir::CodeUnit& cu, const Site& si
     }
 
     ir::Insn load;
-    if (!makeConstLoad(session, site.value, load)) return RwResult::LoadFail;
+    if (!rewrite_tools::makeConstLoad(session, site.value, load)) return RwResult::LoadFail;
 
     // order 是 DOM 的活视图：任何结构变更之后下标都会位移，先把句柄取出来。
     const ir::InsnId callId  = order[callPos];
@@ -650,47 +595,8 @@ RwResult rewriteSite(ir::ClassSession& session, ir::CodeUnit& cu, const Site& si
 }
 
 // ============================================================================
-// ==== 往返自检（rewrite 的前置门）============================================
-// ============================================================================
-
-/// @brief 判「这些方法在**未修改**状态下能否走完一次 promote → lower」。
-///
-/// 为什么需要这道门：lower 不是 promote 的恒等逆。样本里存在能通过校验、但
-/// 当前 lower 无法重新编码的方法（指令/属性重定位边界）。这类方法一旦被改写，
-/// lower 失败会把整个类拖下水——而失败与我们的改动无关，却表现为「改写有 bug」。
-/// 先在不改动的会话上往返一遍，把「本来就往返不了」的方法排除：改写面从
-/// 「全部命中方法」收窄成「可往返方法」，剩下的 lower 失败才是真正的改写缺陷。
-///
-/// 用独立会话做探针：探针会 promote/lower，不能污染真正要改的那一份。
-std::unordered_set<ca::usize> roundTripSafe(const std::vector<ca::u8>&    bytes,
-                                           const std::vector<ca::usize>& methods)
-{
-    std::unordered_set<ca::usize> safe;
-    auto probe = openSession(bytes);
-    if (!probe) return safe;
-    for (const ca::usize mi : methods) {
-        if (!ir::hasCode(*probe, mi)) continue;
-        if (ir::promoteMethod(*probe, mi).is_err()) continue;
-        if (ir::lowerMethod(*probe, mi).is_ok()) {
-            safe.insert(mi);
-        } else if (std::getenv("GRUNT_DEBUG_ERASE") != nullptr) {
-            std::fprintf(stderr, "[roundtrip-fail] %s method#%zu\n",
-                         std::string(probe->backing().thisName()).c_str(), mi);
-        }
-    }
-    return safe;
-}
-
-// ============================================================================
 // ==== PROOF =================================================================
 // ============================================================================
-
-ca::usize countClasses(const mjbase::model::ResourceContainer& container)
-{
-    ca::usize n = 0;
-    forEachClass(container, [&](const ClassEntry&) { ++n; });
-    return n;
-}
 
 }   // namespace
 
@@ -816,7 +722,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::vector<ca::usize> candidates;
         candidates.reserve(byMethod.size());
         for (const auto& slot : byMethod) candidates.push_back(slot.first);
-        const std::unordered_set<ca::usize> safe = roundTripSafe(*entry.bytes, candidates);
+        const std::unordered_set<ca::usize> safe = proof_tools::roundTripSafe(*entry.bytes, candidates);
 
         bool changed = false;
         for (auto& [methodIndex, sites] : byMethod) {

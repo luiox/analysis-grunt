@@ -28,6 +28,22 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.ConstantCall"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.FlagsStrip",
+            [] { return std::make_unique<FlagsStripPass>(); },
+            "Clear bogus ACC_SYNTHETIC/ACC_BRIDGE access flags on static members"
+            " (Java 11+ non-enum classes only).");
+        r.is_err()) {
+        return Err(std::string("grunt.FlagsStrip"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.ConstMethod",
+            [] { return std::make_unique<ConstMethodPass>(); },
+            "Inline invokestatic calls whose target body is a single constant producer"
+            " (primitive TYPE getters, int constants, null) into a constant load.");
+        r.is_err()) {
+        return Err(std::string("grunt.ConstMethod"));
+    }
     return Ok();
 }
 
@@ -51,7 +67,8 @@ public:
 private:
     mjbase::plugin::PackManifest manifest_{
         "grunt", mjbase::plugin::buildCommit(),
-        "Grunt obfuscation family deobfuscation (constant-call folding)."};
+        "Grunt obfuscation family deobfuscation (constant-call folding, flags strip,"
+        " const-method inlining)."};
 };
 
 GruntPack& packInstance()
