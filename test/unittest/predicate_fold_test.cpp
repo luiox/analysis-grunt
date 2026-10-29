@@ -102,7 +102,8 @@ TEST(PredicateFoldRewrite, FoldsAndPersists)
     auto promoted = jbc::ir::promoteMethod(*session, 0);
     ASSERT_TRUE(promoted.is_ok());
     jbc::ir::CodeUnit* cu = promoted.unwrap().get();
-    // 折叠后：操作数区被压成一条 goto_w，死块不可达但布局仍在（无 dead_code）。
+    // 折叠后：NOT-TAKEN 锚置 NOP，操作数区与分支本体消失，死块不可达但
+    // 布局仍在（无 dead_code）。
     ca::usize branches = 0;
     ca::usize nops     = 0;
     for (const jbc::ir::InsnId id : cu->dom.order()) {
@@ -141,6 +142,71 @@ TEST(PredicateFoldRewrite, FoldsAndPersists)
         ASSERT_NE(in->op, jbc::core::Op::IF_ICMPLE)
             << "session 重开后仍见 if_icmple：容器字节未更新";
     }
+}
+
+/// 恒真双常量谓词：iconst_0; iconst_0; if_icmple Ldead——0<=0 恒成立，走
+/// TAKEN 面。折叠必须落 [ICONST_0, IFEQ→Ldead] 恒真条件跳转，不得插无条件
+/// goto（HotSpot 要求无条件跳转后的段首带帧，被擦延续段无帧即炸）。
+const char* kPredTakenSource =
+    ".super java/lang/Object\n"
+    ".class public super fixture/PredTaken {\n"
+    "  .method public static m ()I {\n"
+    "    code: {\n"
+    "      iconst_0\n"
+    "      iconst_0\n"
+    "      if_icmple Ldead\n"
+    "      iconst_5\n"
+    "      ireturn\n"
+    "    Ldead:\n"
+    "      iconst_0\n"
+    "      ireturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+TEST(PredicateFoldRewrite, TakenFoldsToAlwaysTrueConditional)
+{
+    model::ResourceContainer container;
+    const std::string        uri = "fixture/PredTaken.class";
+    container.addResource(uri, std::make_unique<model::ClassResource>(
+                                   uri, asJava17(assemble("fixture/PredTaken", kPredTakenSource))));
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+
+    const model::IResource* raw = container.getResource(uri);
+    const auto* cls = ca::core::tag_cast::dyn_cast<const model::ClassResource>(raw);
+    ASSERT_NE(cls, nullptr);
+
+    auto session = openSession(cls->get());
+    ASSERT_TRUE(session != nullptr);
+    auto promoted = jbc::ir::promoteMethod(*session, 0);
+    ASSERT_TRUE(promoted.is_ok());
+    jbc::ir::CodeUnit* cu = promoted.unwrap().get();
+
+    ca::usize icmps    = 0;
+    ca::usize ifeqs    = 0;
+    ca::usize gotos    = 0;
+    const jbc::ir::Insn* ifeqInsn = nullptr;
+    for (const jbc::ir::InsnId id : cu->dom.order()) {
+        const jbc::ir::Insn* in = cu->dom.peek(id);
+        if (in == nullptr) continue;
+        if (in->op == jbc::core::Op::IF_ICMPLE) ++icmps;
+        if (in->op == jbc::core::Op::IFEQ) { ++ifeqs; ifeqInsn = in; }
+        if (in->op == jbc::core::Op::GOTO || in->op == jbc::core::Op::GOTO_W) ++gotos;
+    }
+    EXPECT_EQ(icmps, 0u) << "if_icmple 未折叠";
+    EXPECT_EQ(ifeqs, 1u) << "TAKEN 未落恒真 IFEQ";
+    EXPECT_EQ(gotos, 0u) << "禁止插无条件 goto";
+    ASSERT_NE(ifeqInsn, nullptr);
+    // IFEQ 目标 = 原分支目标 Ldead（死块头，bipush 之前的 iconst_0）。
+    auto tgt = cu->dom.resolveLabel(ifeqInsn->target);
+    ASSERT_TRUE(tgt.is_ok());
+    const jbc::ir::Insn* tgtInsn = cu->dom.peek(tgt.unwrap().insn);
+    ASSERT_NE(tgtInsn, nullptr);
+    EXPECT_EQ(tgtInsn->op, jbc::core::Op::ICONST_0) << "IFEQ 未指向原分支目标";
 }
 
 }   // namespace

@@ -20,7 +20,6 @@ namespace grunt::predicate_fold {
 
 namespace {
 
-namespace ev = mjbase::asm_evaluator;
 namespace ir = jbc::ir;
 using jbc::core::Op;
 using proof_tools::roundTripSafe;
@@ -63,10 +62,10 @@ bool isCandidate(Op op)
            || (op >= Op::IF_ICMPEQ && op <= Op::IF_ICMPLE) || isSwitch(op);
 }
 
-bool allI32(const std::vector<ev::Value>& args)
+bool allI32(const std::vector<jsim::SimValue>& args)
 {
-    for (const ev::Value& a : args) {
-        if (a.kind != ev::Value::Kind::I32) return false;
+    for (const jsim::SimValue& a : args) {
+        if (a.type != jsim::ValType::I32 || !a.known) return false;
     }
     return true;
 }
@@ -86,7 +85,7 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
         if (in == nullptr || !isCandidate(in->op)) continue;
 
         std::vector<ir::InsnId> producers;
-        std::vector<ev::Value>  args;
+        std::vector<jsim::SimValue>  args;
         if (!const_args::collectArgs(s, cu->dom, order, pos, operandCount(in->op),
                                      producers, args)) {
             continue;
@@ -96,15 +95,14 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
     }
 }
 
-/// @brief 单方法 REWRITE。@return 改写成功的站点数；failed/skipped 走出参。
+/// @brief 单方法 REWRITE。@return 改写成功的站点数；failed 走出参。
 ///
-/// cu 是 mutateMethodWithFrames 提升好的当前 unit：promote 只发生一次，
-/// DOM 改写、prepare、lower 都落在同一 unit 上（再 promote 即弃改写）。
-/// 受害者一律 eraseBatch——SMT 由 rewireFramesAfterLower 严格重算，不存在
-/// 需要保锚的帧。
+/// cu 由调用方 promote：DOM 改写落在本 unit，随后由调用方统一 lowerMethod
+/// （原 SMT/行表由 lower 的 pcmap 重定位——本改写不新增合并点：TAKEN 落
+/// [ICONST_0, IFEQ→T] 恒真条件跳转、NOT-TAKEN 锚 NOP 原地保 srcPc，被擦
+/// 指令若被帧/标签锚定 eraseBatch 会拒收整站放弃，不产生需要再生的帧）。
 ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
-                        const std::vector<const Site*>& sites, ca::usize& failed,
-                        ca::usize& skipped)
+                        const std::vector<const Site*>& sites, ca::usize& failed)
 {
     ir::CodeDom& dom = cu->dom;
 
@@ -130,7 +128,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
 
         // 操作数区复核（scan 之后字节可能已被同方法其他站点改写，不盲改）。
         std::vector<ir::InsnId> producers;
-        std::vector<ev::Value>  args;
+        std::vector<jsim::SimValue>  args;
         if (!const_args::collectArgs(s, dom, order, branchPos, operandCount(site->branchOp),
                                      producers, args)
             || producers.empty() || !allI32(args)) {
@@ -142,7 +140,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
         bool              taken      = false;
         const ir::LabelId* gotoTarget = nullptr;
         if (isSwitch(site->branchOp)) {
-            const ca::i32 key = args.back().i32;
+            const ca::i32 key = static_cast<ca::i32>(args.back().intBits);
             if (site->branchOp == Op::TABLESWITCH) {
                 const ca::i32 lo    = branch->a;
                 const ca::i32 span  = static_cast<ca::i32>(branch->targets.size());
@@ -160,8 +158,8 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
             }
             taken = true;
         } else {
-            const ca::i32 v1 = args.size() == 2 ? args[0].i32 : 0;
-            if (!branchVerdict(site->branchOp, v1, args.back().i32, taken)) {
+            const ca::i32 v1 = args.size() == 2 ? static_cast<ca::i32>(args[0].intBits) : 0;
+            if (!branchVerdict(site->branchOp, v1, static_cast<ca::i32>(args.back().intBits), taken)) {
                 ++failed;
                 continue;
             }
@@ -184,18 +182,51 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
             ++failed;
             continue;
         }
+        // 目标标签值先拷出：switch 侧 gotoTarget 指向 branch 自身字段。
+        const ir::LabelId takenTarget = *gotoTarget;
+
         ir::Insn*     anchor  = slotR.unwrap();
+        const ir::Insn original = *anchor;
         const ca::u32 keepPc = anchor->srcPc;
+
+        // TAKEN：恒真条件跳转形态 [ICONST_0, IFEQ→T]——锚改常量、分支本体
+        // 原地换 op+目标、其余操作数擦除。不插无条件 GOTO：HotSpot 线性走查
+        // 要求无条件跳转之后的段首带帧，而被擦区域的延续段在原 SMT 中无帧
+        // （非合并点，实测 VerifyError "Expecting a stack map frame"）；条件
+        // 跳转让延续段保持 fallthrough 可达，帧面零改动。NOT-TAKEN：锚 NOP、
+        // 区域整段消失，fallthrough 直续。
         ir::Insn      fresh{};
-        fresh.op    = taken ? Op::GOTO_W : Op::NOP;
-        if (taken) fresh.target = *gotoTarget;
+        fresh.op    = taken ? Op::ICONST_0 : Op::NOP;
         fresh.srcPc = keepPc;
         *anchor     = fresh;
 
-        // 其余操作数与分支本体：全部擦除（帧由 rewire 严格重算，无需保锚）。
+        ir::Insn* branchMut      = nullptr;
+        ir::Insn  branchOriginal{};
+        if (taken) {
+            auto branchR = dom.get(order[branchPos]);
+            if (branchR.is_err()) {
+                *anchor = original;
+                ++failed;
+                continue;
+            }
+            branchMut      = branchR.unwrap();
+            branchOriginal = *branchMut;
+            ir::Insn branchFresh{};
+            branchFresh.op     = Op::IFEQ;
+            branchFresh.target = takenTarget;
+            branchFresh.srcPc  = branchOriginal.srcPc;
+            *branchMut         = branchFresh;
+        }
+
+        // 其余操作数（与 NOT-TAKEN 下的分支本体）擦除。eraseBatch 是
+        // kRejectIfUsed：受害者被异常表 start/end 引用时拒收（上面的标签门
+        // 只盖跳转标签）——拒收即整站放弃，anchor/分支回滚原样，不留
+        // 「常量装载已被覆盖、分支还在」的半改写态（栈下溢 VerifyError）。
         std::vector<ir::InsnId> victims(producers.begin() + 1, producers.end());
-        victims.push_back(order[branchPos]);
-        if (dom.eraseBatch(victims).is_err()) {
+        if (!taken) victims.push_back(order[branchPos]);
+        if (!victims.empty() && dom.eraseBatch(victims).is_err()) {
+            *anchor = original;
+            if (branchMut != nullptr) *branchMut = branchOriginal;
             ++failed;
             continue;
         }
@@ -236,9 +267,6 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 {
     DirtySet dirty;
 
-    // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
-    rewrite_tools::FrameContext frames(container);
-
     std::set<std::string> uris;
     for (const Site& site : result.sites) uris.insert(site.uri);
 
@@ -274,29 +302,40 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 
         ca::usize hit      = 0;
         ca::usize failed   = 0;
-        ca::usize skipped = 0;
         for (const ca::usize mi : methodIdxs) {
-            std::vector<const Site*> sitesOfMethod;
-            for (const Site* site : sitesOf) {
-                if (site->methodIndex == mi) sitesOfMethod.push_back(site);
-            }
+            const std::vector<const Site*> sitesOfMethod = [&] {
+                std::vector<const Site*> out;
+                for (const Site* site : sitesOf) {
+                    if (site->methodIndex == mi) out.push_back(site);
+                }
+                return out;
+            }();
             dirty.attempted += sitesOfMethod.size();
             if (safe.count(mi) == 0) {
                 dirty.skippedByRoundTrip += sitesOfMethod.size();
-                skipped += sitesOfMethod.size();
                 continue;
             }
             ca::usize methodHit = 0;
-            const bool ok = rewrite_tools::mutateMethodWithFrames(
-                s, mi, frames.resolver(), [&](ir::CodeUnit& cu) {
-                    methodHit = rewriteMethod(s, &cu, sitesOfMethod, failed, skipped);
-                    return methodHit > 0;
-                });
-            if (!ok) continue;   // fail-closed：该方法放弃，其余方法已写回的不受影响
+            {
+                if (!ir::hasCode(s, mi)) continue;
+                auto promoted = ir::promoteMethod(s, mi);
+                if (promoted.is_err()) continue;
+                ir::CodeUnit* cu = promoted.unwrap().get();
+                if (cu == nullptr) continue;
+                methodHit = rewriteMethod(s, cu, sitesOfMethod, failed);
+            }
+            if (methodHit == 0) continue;   // 该方法无改动，其余方法不受影响
             hit += methodHit;
         }
         dirty.failed += failed;
         if (hit == 0) return;
+
+        // 全部方法 lower 成功才落盘：任一失败整类放弃（session 随返回丢弃，
+        // 半改写态不外泄）。
+        for (const ca::usize mi : methodIdxs) {
+            auto lowered = ir::lowerMethod(s, mi);
+            if (lowered.is_err()) return;
+        }
         auto encoded = jbc::core::writeClass(s.backing());
         if (encoded.is_err()) return;
         pending.push_back(PendingWrite{uri, std::move(encoded).unwrap(), hit});
