@@ -209,5 +209,35 @@ TEST(PredicateFoldRewrite, TakenFoldsToAlwaysTrueConditional)
     EXPECT_EQ(tgtInsn->op, jbc::core::Op::ICONST_0) << "IFEQ 未指向原分支目标";
 }
 
+/// 自身 TAKEN 形态的不动点：iconst_0; ifeq Ldead 恰是折叠产物形状——扫描
+/// 必须排除（否则每轮原样重写、站点永不归零）。
+const char* kPredSelfSource =
+    ".super java/lang/Object\n"
+    ".class public super fixture/PredSelf {\n"
+    "  .method public static m ()I {\n"
+    "    code: {\n"
+    "      iconst_0\n"
+    "      ifeq Ldead\n"
+    "      iconst_5\n"
+    "      ireturn\n"
+    "    Ldead:\n"
+    "      iconst_0\n"
+    "      ireturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+TEST(PredicateFoldScan, SkipsOwnTakenFixedPoint)
+{
+    model::ResourceContainer container;
+    const std::string        uri = "fixture/PredSelf.class";
+    container.addResource(uri, std::make_unique<model::ClassResource>(
+                                   uri, asJava17(assemble("fixture/PredSelf", kPredSelfSource))));
+
+    const ScanResult scanned = scan(container);
+    EXPECT_EQ(scanned.sites.size(), 0u)
+        << "[ICONST_0, IFEQ] 不动点被当成站点：收敛判据会失真";
+}
+
 }   // namespace
 }   // namespace grunt::predicate_fold

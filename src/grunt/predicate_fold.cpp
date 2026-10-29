@@ -91,6 +91,13 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
             continue;
         }
         if (!allI32(args)) continue;
+        // 自身 TAKEN 形态 [ICONST_0, IFEQ→T] 是本判据的不动点：恒真条件跳转
+        // 的操作数也是常量，再裁决再重写只会原样吐回（hit 虚增、收敛判据
+        // 失真）——扫描面直接排除。
+        if (in->op == Op::IFEQ && producers.size() == 1) {
+            const ir::Insn* producer = cu->dom.peek(producers[0]);
+            if (producer != nullptr && producer->op == Op::ICONST_0) continue;
+        }
         result.sites.push_back(Site{uri, methodIndex, in->srcPc, in->op});
     }
 }
@@ -134,6 +141,12 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
             || producers.empty() || !allI32(args)) {
             ++failed;
             continue;
+        }
+        // 防御复核：自身 TAKEN 形态的不动点原样跳过（scan 面已排除，站点不
+        // 应到达这里；同方法前站改写后临时成形的除外——跳过即终态）。
+        if (branch->op == Op::IFEQ && producers.size() == 1) {
+            const ir::Insn* producer = dom.peek(producers[0]);
+            if (producer != nullptr && producer->op == Op::ICONST_0) continue;
         }
 
         // 裁决与目标标签解析。
