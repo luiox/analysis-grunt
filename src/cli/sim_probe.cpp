@@ -3,6 +3,15 @@
 ///
 /// 探针的判据是「行为可复现」：同一个方法、同一组输入，模拟执行的结果必须
 /// 和真机一致。它不负责改写，也不参与 pass 链。
+///
+/// 两条通路，**显式二选一**：
+///
+/// - 默认：单方法裸跑。只经过桥 + 引擎，用来证明「真 CodeUnit 转出来的方法」
+///   行为正确。子调用一律 Bail——这正是单方法引擎的边界（设计 D9）。
+/// - `--exec`：跨方法执行器。子调用被编排层接住、再开引擎实例跑下去，
+///   用来证明「clinit 建池 → decrypt 读池 → decrypt 里再调 decrypt」这条链。
+///
+/// 两路必须分开报告，不能混：如果以为在验桥、其实跑的是执行器，结论就是错的。
 
 #include "cli/sim_probe.hpp"
 
@@ -14,7 +23,9 @@
 
 #include "grunt/container.hpp"
 #include "grunt/jsim_bridge.hpp"
+#include "grunt/jsim_executor.hpp"
 
+#include "mjbase/jasm/jvm_jasm_service.hpp"
 #include "mjbase/model/resource_helper.hpp"
 
 #include "jsim/engine.hpp"
@@ -117,11 +128,98 @@ jsim::SimValue makeArg(const std::string& spec, jsim::ValType type)
     return jsim::SimValue::unknownOf(type);
 }
 
+/// @brief 逐步栈形观测。探针与环境变量都不进框架，只在这里挂。
+void installTrace(jsim::Session& session)
+{
+    if (std::getenv("GRUNT_SIM_TRACE") == nullptr) return;
+    session.trace = [](jsim::u32 pc, const char* opcode, const std::string& stackText) {
+        std::printf("  [pc %3u] %-14s %s\n", pc, opcode, stackText.c_str());
+    };
+}
+
+/// @brief 把连续重复的 Jasm 空白转义压成 `\u0020×N`。
+///
+/// Grunt 的方法名是三万个空格，Jasm 按码点转义成三万个 `\u0020`，一行就 200KB。
+/// 压成计数后信息不丢、行还能读——否则 --dump 的输出没法看。
+std::string collapseEscapes(const std::string& text)
+{
+    static const std::string kEsc = "\\u0020";
+    std::string out;
+    out.reserve(text.size());
+    std::size_t i = 0;
+    while (i < text.size()) {
+        if (text.compare(i, kEsc.size(), kEsc) == 0) {
+            std::size_t n = 0;
+            while (text.compare(i, kEsc.size(), kEsc) == 0) {
+                i += kEsc.size();
+                ++n;
+            }
+            if (n == 1) {
+                out += kEsc;
+            } else {
+                out += "\\u0020×" + std::to_string(n);
+            }
+            continue;
+        }
+        out += text[i];
+        ++i;
+    }
+    return out;
+}
+
+/// @brief 用 mjbase 的 Jasm 门面反汇编单个方法。
+///
+/// 不自己搓反汇编：mjbase 已经把 libjhasm 包成 `JvmJasmService`，输出是规范化
+/// Jasm（常量池、跳转标签、栈图都在），信息量比自制的「pc + 操作数」视图大得多，
+/// 而且与回写用的 `assemble` 是同一套口径——改写前后各 dump 一次可以逐行对比。
+///
+/// 另一层好处：dump 直接吃**原始类字节**，不经过桥。桥转换失败时照样能看到
+/// 方法体，排查「是桥的问题还是引擎的问题」才有依据。
+bool dumpMethodWithJasm(const std::vector<ca::u8>& classBytes, const std::string& name,
+                        const std::string& desc)
+{
+    mjbase::jasm::JvmJasmService service;
+    mjbase::jasm::Result<mjbase::jasm::JvmJasmMethodDisassembly> r = service.disassembleMethod(
+        classBytes, ca::str::Utf8StringRef::from_string_view(name),
+        ca::str::Utf8StringRef::from_string_view(desc));
+    if (!r.isOk()) {
+        std::fprintf(stderr, "Jasm 反汇编失败：%s%s\n", name.c_str(), desc.c_str());
+        for (const mjbase::jasm::Diagnostic& d : r.diagnostics) {
+            std::fprintf(stderr, "  [%s] %s\n",
+                         d.severity == mjbase::jasm::DiagnosticSeverity::Error ? "error" : "warn",
+                         d.message.to_utf8_string().to_std_string().c_str());
+        }
+        return false;
+    }
+    std::printf("%s\n",
+                collapseEscapes(r.value->source.to_utf8_string().to_std_string()).c_str());
+    return true;
+}
+
+/// @brief 桥产物的指令序列（只有 opcode，没有操作数）。
+///
+/// 这不是反汇编器——反汇编是 Jasm 的活。这里只做**对表**：Jasm 给出的指令数与
+/// 桥给出的条数不一致，就说明 `promoteMethod` 的产物和字节码原貌有出入，
+/// 而桥是按前者建 pc 的。没有这一行，pc 偏移错位会被当成引擎的行为差异。
+void printBridgeShape(const jsim::Method& m)
+{
+    std::printf("── 桥视图：%zu 条（与上面 Jasm 对表用）\n", m.code.size());
+    for (jsim::usize pc = 0; pc < m.code.size(); ++pc) {
+        if (pc % 6 == 0) std::printf("  ");
+        std::printf("%zu:%s ", pc, jsim::opcodeName(m.code[pc].opcode));
+        if (pc % 6 == 5 || pc + 1 == m.code.size()) std::printf("\n");
+    }
+}
+
 }   // namespace
 
-int runSimProbe(const std::string& jarPath, const std::string& target,
-                const std::string& argsSpec)
+int runSimProbe(const SimProbeOptions& options)
 {
+    const std::string& jarPath    = options.jarPath;
+    const std::string& target     = options.target;
+    const std::string& argsSpec   = options.argsSpec;
+    const bool         executor   = options.executor;
+
     const std::size_t hash = target.find('#');
     if (hash == std::string::npos) {
         std::fprintf(stderr, "--sim 需要 `类uri#方法名` 形态：%s\n", target.c_str());
@@ -206,6 +304,7 @@ int runSimProbe(const std::string& jarPath, const std::string& target,
             const std::string_view     desc = unit.symbols().str(mu.desc);
             if (name != wantName) continue;
             if (!wantDesc.empty() && desc != wantDesc) continue;
+            if (!jbc::ir::hasCode(*session, i)) continue;
             found = i;
             break;
         }
@@ -215,39 +314,98 @@ int runSimProbe(const std::string& jarPath, const std::string& target,
         return 1;
     }
 
+    const std::string desc(unit.symbols().str(unit.methods[found].desc));
+    const std::string name(unit.symbols().str(unit.methods[found].name));
+
+    // dump 直接走 Jasm，不经桥：桥转换失败时照样能看到方法体，才能分清
+    // 「桥的问题」还是「引擎的问题」。桥视图跟在后面，供对表。
     jsim::Method simMethod;
     std::string  why;
-    if (!jsim_bridge::toSimMethod(*session, found, simMethod, &why)) {
+    const bool   bridged = jsim_bridge::toSimMethod(*session, found, simMethod, &why);
+    if (options.dump) {
+        (void)dumpMethodWithJasm(*bytes, name, desc);
+        if (bridged) {
+            printBridgeShape(simMethod);
+        } else {
+            std::printf("── 桥转换失败：%s\n", why.c_str());
+        }
+    }
+    if (!executor && !bridged) {
         std::fprintf(stderr, "桥转换失败：%s\n", why.c_str());
         return 1;
     }
 
+    // 预填实参：类型由描述符给（静态事实），值由命令行给。两路共用这一份。
+    const std::vector<jsim::ValType> types    = paramTypes(desc);
+    const std::vector<std::string>   argTexts = splitBy(argsSpec, ',');
+    std::vector<jsim::SimValue>      argValues;
+    argValues.reserve(types.size());
+    for (std::size_t i = 0; i < types.size(); ++i) {
+        argValues.push_back(i < argTexts.size() ? makeArg(argTexts[i], types[i])
+                                                : jsim::SimValue::unknownOf(types[i]));
+    }
+
+    // ── 跨方法执行器 ────────────────────────────────────────────────────────
+    //
+    // 扩展包由**探针**装，不由执行器装（分层红线）：执行器只认 jsim 核心，
+    // String 怎么拼、Integer 怎么解析，是调用方的事。要证明「拿掉扩展包
+    // 也能跑」，删掉下面两行即可。
+    if (executor) {
+        std::printf("方法 %s%s（执行器）\n", name.c_str(), desc.c_str());
+
+        grunt::SimExecutor exec(container);
+        jsim::str::install(exec.session());
+        jsim::num::install(exec.session());
+        installTrace(exec.session());
+
+        const SimOutcome out = exec.invoke(classUri, methodSpec, argValues);
+        const SimExecutor::Stats& st = exec.stats();
+        switch (out.kind) {
+        case SimOutcome::Kind::Returned:
+            std::printf("→ Completed：%s（%llu 步）\n", jsim::toDisplay(out.value).c_str(),
+                        static_cast<unsigned long long>(out.steps));
+            break;
+        case SimOutcome::Kind::Void:
+            std::printf("→ Completed：void（%llu 步）\n",
+                        static_cast<unsigned long long>(out.steps));
+            break;
+        case SimOutcome::Kind::Bailed:
+            std::printf("→ Bailed：%s（%llu 步）\n", out.detail.c_str(),
+                        static_cast<unsigned long long>(out.steps));
+            break;
+        case SimOutcome::Kind::LimitHit:
+            std::printf("→ LimitHit：%s（%llu 步）\n", out.detail.c_str(),
+                        static_cast<unsigned long long>(out.steps));
+            break;
+        }
+        std::printf("  调用 %llu 次，缓存命中 %llu 次，累计 %llu 步，Bail %llu 次\n",
+                    static_cast<unsigned long long>(st.calls),
+                    static_cast<unsigned long long>(st.cacheHits),
+                    static_cast<unsigned long long>(st.totalSteps),
+                    static_cast<unsigned long long>(st.bails));
+        return out.ok() ? 0 : 1;
+    }
+
+    // ── 单方法裸跑（验桥）──────────────────────────────────────────────────
     std::printf("方法 %s%s，%zu 条指令，maxLocals=%u\n", simMethod.name.c_str(),
                 simMethod.desc.c_str(), simMethod.code.size(),
                 static_cast<unsigned>(simMethod.maxLocals));
 
-    // 预填：参数按描述符声明类型灌值，其余槽位留 Unknown。
-    const std::vector<jsim::ValType>        types = paramTypes(simMethod.desc);
-    const std::vector<std::string>          argTexts = splitBy(argsSpec, ',');
-    jsim::Prefill                           prefill;
+    jsim::Prefill prefill;
     prefill.locals.reserve(simMethod.maxLocals);
     for (jsim::usize i = 0; i < simMethod.maxLocals; ++i) {
         prefill.locals.push_back(jsim::SimValue::unknownOf(jsim::ValType::I32));
     }
     ca::u32 slot = 0;
-    for (jsim::usize i = 0; i < types.size() && i < argTexts.size(); ++i) {
-        prefill.locals[slot] = makeArg(argTexts[i], types[i]);
-        slot += (types[i] == jsim::ValType::I64 || types[i] == jsim::ValType::F64) ? 2 : 1;
+    for (jsim::usize i = 0; i < argValues.size() && slot < prefill.locals.size(); ++i) {
+        prefill.locals[slot] = argValues[i];
+        slot += (argValues[i].isCat2()) ? 2 : 1;
     }
 
     jsim::Session simSession;
     jsim::str::install(simSession);
     jsim::num::install(simSession);
-    if (std::getenv("GRUNT_SIM_TRACE") != nullptr) {
-        simSession.trace = [](jsim::u32 pc, const char* opcode, const std::string& stackText) {
-            std::printf("  [pc %3u] %-14s %s\n", pc, opcode, stackText.c_str());
-        };
-    }
+    installTrace(simSession);
 
     const jsim::RunResult r = jsim::Sim(simMethod, simSession).run(0, std::move(prefill), {100000});
     switch (r.kind) {

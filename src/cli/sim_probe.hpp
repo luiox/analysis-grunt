@@ -9,13 +9,18 @@
 
 namespace grunt::cli {
 
+/// @brief 探针入参。用结构体而不是位置参数——布尔位一多就没人读得懂调用点。
+struct SimProbeOptions
+{
+    std::string jarPath;              ///< 输入 jar
+    std::string target;               ///< `类uri#方法名`，方法名可按描述符后缀精确化
+    std::string argsSpec;             ///< 逗号分隔实参：十进制 / `s:` / `x:` / `u:`
+    bool        executor = false;     ///< true = 跨方法执行器；false = 单方法裸跑
+    bool        dump     = false;     ///< 打印桥产物的反汇编视图（只读）
+};
+
 /// @brief 跑一个方法并打印结果。
-///
-/// @param jarPath   输入 jar
-/// @param target    `类uri#方法名`，方法名可按描述符后缀精确化：`foo(II)V`
-/// @param argsSpec  逗号分隔的实参：十进制整数 / `s:文本` / `u:`（Unknown）
 /// @return 进程退出码（0 成功执行完，1 失败）
-int runSimProbe(const std::string& jarPath, const std::string& target,
-                const std::string& argsSpec);
+int runSimProbe(const SimProbeOptions& options);
 
 }   // namespace grunt::cli

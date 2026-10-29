@@ -242,6 +242,7 @@ inline bool toSimMethod(jbc::ir::ClassSession& s, ca::usize methodIndex, jsim::M
             jsim::ValType rt = jsim::ValType::I32;
             call.hasReturn    = retTypeOfDesc(call.desc, rt);
             call.retType      = call.hasReturn ? rt : jsim::ValType::I32;
+            call.isStatic     = in->op == jbc::core::Op::INVOKESTATIC;
             ji.a              = static_cast<ca::i32>(out.calls.size());
             out.calls.push_back(std::move(call));
             break;

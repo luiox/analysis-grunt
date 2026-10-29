@@ -39,7 +39,9 @@ constexpr const char* kUsage =
     "  -c  pack 配置 JSON 文件（可选，文本整体交给 pack 解析）\n"
     "  --list  列出本 pack 注册的全部 pass 后退出\n"
     "  --sim 类uri#方法名   对真方法跑一次模拟执行后退出（调试用，只读）\n"
-    "  --args v1,v2,...     --sim 的实参：十进制数 / s:文本 / u:（Unknown）\n"
+    "  --args v1,v2,...     --sim 的实参：十进制数 / s:文本 / x:十六进制 / u:（Unknown）\n"
+    "  --exec               --sim 走跨方法执行器（子方法调用自动展开）；默认单方法裸跑\n"
+    "  --dump               --sim 打印桥产物的反汇编视图（只读）\n"
     "  环境变量 GRUNT_SIM_TRACE=1 时打印逐步栈形\n";
 
 std::string readFileText(const std::string& path)
@@ -74,6 +76,8 @@ int main(int argc, char** argv)
     std::string configPath;
     std::string simTarget;
     std::string simArgs;
+    bool        simExec = false;
+    bool        simDump = false;
     bool        list = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -84,6 +88,10 @@ int main(int argc, char** argv)
             simTarget = argv[++i];
         } else if (arg == "--args" && i + 1 < argc) {
             simArgs = argv[++i];
+        } else if (arg == "--exec") {
+            simExec = true;
+        } else if (arg == "--dump") {
+            simDump = true;
         } else if (arg == "-i" && i + 1 < argc) {
             input = argv[++i];
         } else if (arg == "-o" && i + 1 < argc) {
@@ -107,7 +115,13 @@ int main(int argc, char** argv)
             std::fputs("--sim 需要 -i 指定输入 jar\n", stderr);
             return 2;
         }
-        return grunt::cli::runSimProbe(input, simTarget, simArgs);
+        grunt::cli::SimProbeOptions probe;
+        probe.jarPath  = input;
+        probe.target   = simTarget;
+        probe.argsSpec = simArgs;
+        probe.executor = simExec;
+        probe.dump     = simDump;
+        return grunt::cli::runSimProbe(probe);
     }
 
     std::string configText;
