@@ -63,6 +63,41 @@ inline bool fieldTypeOfDesc(std::string_view desc, jsim::ValType& out) noexcept
     return valTypeOfDescChar(desc.front(), out);
 }
 
+/// @brief 方法描述符的参数列表 → 值类型序列。`(`/`)` 缺失返回 false。
+///
+/// 引用类型（含数组）一律折成 Ref：跨方法编排只需要知道「占一个栈位、是个引用」，
+/// 具体类名不参与弹栈。cat2 的宽度由 ValType 自身携带，调用方据此算槽位。
+inline bool paramTypesOfDesc(std::string_view desc, std::vector<jsim::ValType>& out) noexcept
+{
+    out.clear();
+    const std::size_t open = desc.find('(');
+    if (open == std::string_view::npos) return false;
+    std::size_t i = open + 1;
+    while (i < desc.size() && desc[i] != ')') {
+        const char c = desc[i];
+        if (c == '[') {
+            while (i < desc.size() && desc[i] == '[') ++i;
+            if (i < desc.size() && desc[i] == 'L') {
+                while (i < desc.size() && desc[i] != ';') ++i;
+            }
+            ++i;
+            out.push_back(jsim::ValType::Ref);
+            continue;
+        }
+        if (c == 'L') {
+            while (i < desc.size() && desc[i] != ';') ++i;
+            ++i;
+            out.push_back(jsim::ValType::Ref);
+            continue;
+        }
+        jsim::ValType t = jsim::ValType::I32;
+        if (!valTypeOfDescChar(c, t)) return false;
+        out.push_back(t);
+        ++i;
+    }
+    return i < desc.size();
+}
+
 namespace detail {
 
 /// @brief Class 常量 → 内部名。

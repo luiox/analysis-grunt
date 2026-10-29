@@ -20,9 +20,9 @@
 ///   1. 目标方法是本容器内声明的 `static`、有方法体、非 `<init>`/`<clinit>`、
 ///      非 `synchronized`；
 ///   2. 调用点的实参由**紧邻的纯常量装载**产生，且槽数与描述符严格相等；
-///   3. 用具体求值栈机在**常量实参**下能跑出一个值——求值器只覆盖数值运算、
-///      栈整形与分支，**不含任何堆访问/调用/分配**，所以「求值成功」本身
-///      就是「这条执行路径无副作用」的证明。
+///   3. 用 jsim 执行器（跨方法、封闭环境）在**常量实参**下能跑出一个值——
+///      环境外调用/字段/分配一律 bail，「求值成功」本身就是「这条执行路径
+///      可静态重放且无外部副作用」的证明。
 ///
 /// 额外的保守面（不算判据，是拒绝理由）：被调类的 `<clinit>` 必须缺失或
 /// 只剩 `return`——否则删掉调用会改变类初始化时机。
@@ -33,8 +33,9 @@
 
 #include "libca/core/datatype.hpp"
 
-#include "mjbase/asm/evaluator/value.hpp"
 #include "mjbase/model/resource_container.hpp"
+
+#include "jsim/value.hpp"
 
 namespace grunt::constant_call {
 
@@ -57,8 +58,8 @@ struct Site
     std::string targetDesc;
     ca::usize   targetMethodIndex = 0;
 
-    std::vector<mjbase::asm_evaluator::Value> args;   ///< 逐实参（含 null 引用）
-    mjbase::asm_evaluator::Value              value;  ///< 求值结果
+    std::vector<jsim::SimValue> args;   ///< 逐实参（含 null 引用）
+    jsim::SimValue              value;  ///< 求值结果
 };
 
 /// @brief 拒绝原因（站点级证据链的一部分，供 trace 与文档引用）。
@@ -75,7 +76,7 @@ enum class RejectReason : ca::u8 {
     EvalUnsupported,           ///< 求值器不支持该指令形状
     EvalStepLimit,             ///< 步数熔断（循环/不可达 return）
     EvalBadState,              ///< 栈/局部变量状态不符（含除零）
-    ValueKindUnsupported,      ///< 结果类别不可折叠（引用）
+    ValueKindUnsupported,      ///< 结果不可折叠（引用，或环境未知值传播成 unknown）
 };
 
 /// @brief 一条拒绝记录。

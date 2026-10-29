@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -19,19 +18,21 @@
 #include "jbc/ir/code_editor.hpp"
 #include "jbc/ir/units.hpp"
 
-#include "mjbase/asm/evaluator/evaluator.hpp"
-#include "mjbase/asm/evaluator/method_sig.hpp"
-#include "mjbase/asm/insn/insn_factory.hpp"
-
 #include "grunt/container.hpp"
+#include "grunt/jsim_executor.hpp"
+#include "grunt/knowledge/const_args.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/rewrite_toolbox.hpp"
+
+#include "jsim/indy.hpp"
+#include "jsim/num.hpp"
+#include "jsim/reflect.hpp"
+#include "jsim/str.hpp"
 
 namespace grunt::constant_call {
 
 namespace {
 
-namespace ev = mjbase::asm_evaluator;
 namespace ir = jbc::ir;
 using jbc::core::Op;
 
@@ -39,151 +40,9 @@ constexpr ca::u32 kAccStatic       = 0x0008;
 constexpr ca::u32 kAccSynchronized = 0x0020;
 constexpr ca::usize kNoIndex       = static_cast<ca::usize>(-1);
 
-template <class To, class From>
-To bitCast(const From& from) noexcept
-{
-    static_assert(sizeof(To) == sizeof(From), "bitCast size mismatch");
-    To to;
-    std::memcpy(&to, &from, sizeof(To));
-    return to;
-}
-
 // ============================================================================
 // ==== SCAN ==================================================================
 // ============================================================================
-
-/// 粗找：常量装载指令族。只钉形状（op 族籍），值由细找经常量池解析。
-bool isConstPush(Op op) noexcept
-{
-    switch (op) {
-    case Op::ACONST_NULL:
-    case Op::ICONST_M1:
-    case Op::ICONST_0:
-    case Op::ICONST_1:
-    case Op::ICONST_2:
-    case Op::ICONST_3:
-    case Op::ICONST_4:
-    case Op::ICONST_5:
-    case Op::LCONST_0:
-    case Op::LCONST_1:
-    case Op::FCONST_0:
-    case Op::FCONST_1:
-    case Op::FCONST_2:
-    case Op::DCONST_0:
-    case Op::DCONST_1:
-    case Op::BIPUSH:
-    case Op::SIPUSH:
-    case Op::LDC:
-    case Op::LDC_W:
-    case Op::LDC2_W: return true;
-    default: return false;
-    }
-}
-
-/// 细找：把一条常量装载指令解成具体值 + 占用槽数。
-/// 引用常量只接受 `aconst_null`（String/Class 等不猜内容）。
-bool decodePush(ir::ClassSession& session, const ir::Insn& in, ev::Value& out, ca::u32& slots)
-{
-    const auto i32At = [&](ca::i32 v) {
-        out   = ev::Value::ofI32(v);
-        slots = 1;
-        return true;
-    };
-    switch (in.op) {
-    case Op::ACONST_NULL:
-        out   = ev::Value::ofNull();
-        slots = 1;
-        return true;
-    case Op::ICONST_M1:
-    case Op::ICONST_0:
-    case Op::ICONST_1:
-    case Op::ICONST_2:
-    case Op::ICONST_3:
-    case Op::ICONST_4:
-    case Op::ICONST_5:
-        return i32At(static_cast<ca::i32>(in.op) - static_cast<ca::i32>(Op::ICONST_0));
-    case Op::BIPUSH:
-    case Op::SIPUSH: return i32At(in.a);
-    case Op::LCONST_0:
-    case Op::LCONST_1:
-        out   = ev::Value::ofI64(in.op == Op::LCONST_1 ? 1 : 0);
-        slots = 2;
-        return true;
-    case Op::FCONST_0:
-    case Op::FCONST_1:
-    case Op::FCONST_2:
-        out   = ev::Value::ofF32(static_cast<ca::f32>(static_cast<ca::i32>(in.op) -
-                                                     static_cast<ca::i32>(Op::FCONST_0)));
-        slots = 1;
-        return true;
-    case Op::DCONST_0:
-    case Op::DCONST_1:
-        out   = ev::Value::ofF64(static_cast<ca::f64>(static_cast<ca::i32>(in.op) -
-                                                     static_cast<ca::i32>(Op::DCONST_0)));
-        slots = 2;
-        return true;
-    case Op::LDC:
-    case Op::LDC_W:
-    case Op::LDC2_W: {
-        ir::ClassSession::ConstSem sem;
-        if (!session.constOf(in, sem)) return false;
-        switch (sem.kind) {
-        case ir::ClassSession::ConstSem::Kind::Int:
-            out   = ev::Value::ofI32(static_cast<ca::i32>(sem.num));
-            slots = 1;
-            return true;
-        case ir::ClassSession::ConstSem::Kind::Long:
-            out   = ev::Value::ofI64(sem.num);
-            slots = 2;
-            return true;
-        case ir::ClassSession::ConstSem::Kind::Float:
-            out   = ev::Value::ofF32(bitCast<ca::f32>(static_cast<ca::u32>(sem.bits)));
-            slots = 1;
-            return true;
-        case ir::ClassSession::ConstSem::Kind::Double:
-            out   = ev::Value::ofF64(bitCast<ca::f64>(sem.bits));
-            slots = 2;
-            return true;
-        default:
-            // String / Class / MethodType / MethodHandle / Dynamic：
-            // 引用内容不可静态确定，拒绝该站点。
-            return false;
-        }
-    }
-    default: return false;
-    }
-}
-
-/// 方法描述符的参数槽数（long/double 双槽）。
-ca::u32 argSlots(std::string_view desc)
-{
-    ca::u32   slots = 0;
-    ca::usize i     = 1;
-    while (i < desc.size() && desc[i] != ')') {
-        const char c = desc[i];
-        if (c == 'L') {
-            const ca::usize semi = desc.find(';', i);
-            if (semi == std::string_view::npos) return 0;
-            i = semi + 1;
-            ++slots;
-        } else if (c == '[') {
-            while (i < desc.size() && desc[i] == '[') ++i;
-            if (i >= desc.size()) return 0;
-            if (desc[i] == 'L') {
-                const ca::usize semi = desc.find(';', i);
-                if (semi == std::string_view::npos) return 0;
-                i = semi + 1;
-            } else {
-                ++i;
-            }
-            ++slots;
-        } else {
-            slots += (c == 'J' || c == 'D') ? 2 : 1;
-            ++i;
-        }
-    }
-    return slots;
-}
 
 /// 返回类别（'V' 表示 void）。
 char returnChar(std::string_view desc)
@@ -265,47 +124,8 @@ bool classInitNeutral(ir::ClassSession& session)
     return true;
 }
 
-/// 从调用点往前收集实参；要求每一层都是纯常量装载且槽数严格吻合。
-bool collectArgs(ir::ClassSession& session, const ir::CodeDom& dom,
-                 const std::vector<ir::InsnId>& order, ca::usize callPos, ca::u32 wantSlots,
-                 std::vector<ir::InsnId>& producers, std::vector<ev::Value>& args)
-{
-    ca::i32                 need = static_cast<ca::i32>(wantSlots);
-    ca::usize               j    = callPos;
-    std::vector<ev::Value>  rev;
-    std::vector<ir::InsnId> revIds;
-    while (need > 0) {
-        if (j == 0) return false;
-        --j;
-        const ir::Insn* p = dom.peek(order[j]);
-        if (p == nullptr) return false;
-        ev::Value v;
-        ca::u32   s = 0;
-        if (!decodePush(session, *p, v, s)) return false;
-        rev.push_back(v);
-        revIds.push_back(order[j]);
-        need -= static_cast<ca::i32>(s);
-    }
-    if (need != 0) return false;
-    std::reverse(rev.begin(), rev.end());
-    std::reverse(revIds.begin(), revIds.end());
-    args      = std::move(rev);
-    producers = std::move(revIds);
-    return true;
-}
-
-RejectReason mapEvalError(ev::EvalError::Kind kind)
-{
-    switch (kind) {
-    case ev::EvalError::Kind::Unsupported: return RejectReason::EvalUnsupported;
-    case ev::EvalError::Kind::StepLimit: return RejectReason::EvalStepLimit;
-    case ev::EvalError::Kind::BadState:
-    default: return RejectReason::EvalBadState;
-    }
-}
-
-/// 求值段：按目标类分组，逐类开会话、判类初始化、跑具体求值栈机。
-/// 通过者写回 `value`；失败者转成拒绝记录。
+/// 求值段：装好扩展包的 jsim 执行器逐站点跑目标方法；通过者写回 `value`，
+/// 失败者转成拒绝记录。类初始化门仍在目标会话上先判。
 void evaluateSites(const mjbase::model::ResourceContainer& container,
                    std::vector<Site>& sites, std::vector<RejectedSite>& rejects)
 {
@@ -314,78 +134,65 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
 
     std::vector<ca::u8> ok(sites.size(), 0);   // 0 待判 / 1 通过 / 2 拒绝
 
+    SimExecutor exec(container);
+    jsim::str::install(exec.session());
+    jsim::num::install(exec.session());
+    // 折叠不需要注解/类元数据：目标按判据是纯算术，反射元数据无人读。
+    jsim::reflect::install(exec.session(), [](const std::string&)
+                               -> const jsim::reflect::ClassMeta* { return nullptr; });
+    jsim::indy::install(exec.session());
+
     forEachClass(container, [&](const ClassEntry& entry) {
         auto session = openSession(*entry.bytes);
         if (!session) return;
-        ir::ClassSession&     s    = *session;
-        const std::string_view self = s.backing().thisName();
+        const std::string_view self = session->backing().thisName();
 
         const auto group = byOwner.find(std::string(self));
         if (group == byOwner.end()) return;
 
-        if (!classInitNeutral(s)) {
+        if (!classInitNeutral(*session)) {
             for (const ca::usize si : group->second) {
                 rejects.push_back(RejectedSite{sites[si].callerOwner, sites[si].callerMethod,
                                                sites[si].callSrcPc,
                                                RejectReason::ClassInitPresent});
+                ok[si] = 2;
             }
             return;
         }
 
-        std::unordered_map<ca::usize, ir::CodeDom*> doms;
         for (const ca::usize si : group->second) {
             Site& site = sites[si];
 
-            if (!ir::hasCode(s, site.targetMethodIndex)) {
+            if (!ir::hasCode(*session, site.targetMethodIndex)) {
                 rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod, site.callSrcPc,
                                                RejectReason::TargetNoCode});
+                ok[si] = 2;
                 continue;
             }
 
-            ir::CodeDom* dom = nullptr;
-            const auto   dit = doms.find(site.targetMethodIndex);
-            if (dit != doms.end()) {
-                dom = dit->second;
-            } else {
-                auto promoted = ir::promoteMethod(s, site.targetMethodIndex);
-                if (promoted.is_err()) {
-                    rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod,
-                                                   site.callSrcPc, RejectReason::TargetNoCode});
-                    continue;
-                }
-                ir::CodeUnit* cu = promoted.unwrap().get();
-                if (cu == nullptr) continue;
-                dom = &cu->dom;
-                doms.emplace(site.targetMethodIndex, dom);
-            }
-
-            auto sig = ev::MethodSig::parse(site.targetDesc, /*isStatic=*/true);
-            if (sig.is_err()) {
-                rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod, site.callSrcPc,
-                                               RejectReason::EvalBadState});
-                continue;
-            }
-
-            ev::Options options;
-            options.session = &s;
-            auto outcome    = ev::evaluate(*dom, sig.unwrap(), site.args, options);
-            if (outcome.is_err()) {
-                rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod, site.callSrcPc,
-                                               mapEvalError(outcome.unwrap_err().kind)});
-                continue;
-            }
-            const ev::EvalOutcome oc = outcome.unwrap();
-            if (oc.kind != ev::EvalOutcome::Kind::Value) {
+            const SimOutcome out =
+                exec.invoke(site.targetOwner, site.targetName + site.targetDesc, site.args);
+            if (out.kind == SimOutcome::Kind::Void) {
                 rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod, site.callSrcPc,
                                                RejectReason::TargetVoid});
+                ok[si] = 2;
                 continue;
             }
-            if (oc.value.kind == ev::Value::Kind::Ref || oc.value.kind == ev::Value::Kind::Top) {
+            if (!out.ok()) {
+                rejects.push_back(RejectedSite{
+                    site.callerOwner, site.callerMethod, site.callSrcPc,
+                    out.kind == SimOutcome::Kind::LimitHit ? RejectReason::EvalStepLimit
+                                                           : RejectReason::EvalBadState});
+                ok[si] = 2;
+                continue;
+            }
+            if (!out.value.known || out.value.type == jsim::ValType::Ref) {
                 rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod, site.callSrcPc,
                                                RejectReason::ValueKindUnsupported});
+                ok[si] = 2;
                 continue;
             }
-            site.value = oc.value;
+            site.value = out.value;
             ok[si]     = 1;
         }
     });
@@ -407,19 +214,6 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
 // ============================================================================
 // ==== REWRITE ===============================================================
 // ============================================================================
-
-bool sameValue(const ev::Value& a, const ev::Value& b)
-{
-    if (a.kind != b.kind) return false;
-    switch (a.kind) {
-    case ev::Value::Kind::I32: return a.i32 == b.i32;
-    case ev::Value::Kind::I64: return a.i64 == b.i64;
-    case ev::Value::Kind::F32: return bitCast<ca::u32>(a.f32) == bitCast<ca::u32>(b.f32);
-    case ev::Value::Kind::F64: return bitCast<ca::u64>(a.f64) == bitCast<ca::u64>(b.f64);
-    case ev::Value::Kind::Ref: return a.isNull() && b.isNull();
-    default: return false;
-    }
-}
 
 /// 改写失败原因（trace 用）。
 enum class RwResult : ca::u8 {
@@ -538,14 +332,15 @@ RwResult rewriteSite(ir::ClassSession& session, ir::CodeUnit& cu, const Site& si
         return RwResult::MemberMismatch;
     }
 
-    std::vector<ir::InsnId> producers;
-    std::vector<ev::Value>  args;
-    if (!collectArgs(session, dom, order, callPos, argSlots(enc.desc), producers, args)) {
+    std::vector<ir::InsnId>     producers;
+    std::vector<jsim::SimValue> args;
+    if (!const_args::collectArgs(session, dom, order, callPos, const_args::argSlots(enc.desc),
+                                 producers, args)) {
         return RwResult::ArgsMismatch;
     }
     if (args.size() != site.args.size()) return RwResult::ArgsMismatch;
     for (ca::usize i = 0; i < args.size(); ++i) {
-        if (!sameValue(args[i], site.args[i])) return RwResult::ArgsMismatch;
+        if (!const_args::sameValue(args[i], site.args[i])) return RwResult::ArgsMismatch;
     }
 
     ir::Insn load;
@@ -663,9 +458,10 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
                     continue;
                 }
 
-                std::vector<ir::InsnId> producers;
-                std::vector<ev::Value>  args;
-                if (!collectArgs(s, cu->dom, order, pos, argSlots(enc.desc), producers, args)) {
+                std::vector<ir::InsnId>     producers;
+                std::vector<jsim::SimValue> args;
+                if (!const_args::collectArgs(s, cu->dom, order, pos, const_args::argSlots(enc.desc),
+                                             producers, args)) {
                     reject(RejectReason::ArgsNotConstant);
                     continue;
                 }
@@ -747,18 +543,32 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                         std::fprintf(stderr, "[fold] %s.%s pc=%u -> %s  = ", site->callerOwner.c_str(),
                                      site->callerMethod.c_str(), site->callSrcPc,
                                      site->targetName.c_str());
-                        for (const ev::Value& arg : site->args) {
-                            switch (arg.kind) {
-                            case ev::Value::Kind::I32: std::fprintf(stderr, "%d ", arg.i32); break;
-                            case ev::Value::Kind::I64: std::fprintf(stderr, "%lld ", (long long)arg.i64); break;
-                            case ev::Value::Kind::Ref: std::fprintf(stderr, "null "); break;
+                        for (const jsim::SimValue& arg : site->args) {
+                            switch (arg.type) {
+                            case jsim::ValType::I32:
+                                std::fprintf(stderr, "%d ", static_cast<ca::i32>(arg.intBits));
+                                break;
+                            case jsim::ValType::I64:
+                                std::fprintf(stderr, "%lld ", static_cast<long long>(arg.intBits));
+                                break;
+                            case jsim::ValType::Ref:
+                                if (arg.ref.kind == jsim::RefPayload::Kind::Null) {
+                                    std::fprintf(stderr, "null ");
+                                } else {
+                                    std::fprintf(stderr, "? ");
+                                }
+                                break;
                             default: std::fprintf(stderr, "? "); break;
                             }
                         }
-                        switch (site->value.kind) {
-                        case ev::Value::Kind::I32: std::fprintf(stderr, "=> %d\n", site->value.i32); break;
-                        case ev::Value::Kind::I64:
-                            std::fprintf(stderr, "=> %lld\n", (long long)site->value.i64);
+                        switch (site->value.type) {
+                        case jsim::ValType::I32:
+                            std::fprintf(stderr, "=> %d\n",
+                                         static_cast<ca::i32>(site->value.intBits));
+                            break;
+                        case jsim::ValType::I64:
+                            std::fprintf(stderr, "=> %lld\n",
+                                         static_cast<long long>(site->value.intBits));
                             break;
                         default: std::fprintf(stderr, "=> ?\n"); break;
                         }

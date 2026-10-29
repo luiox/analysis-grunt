@@ -29,7 +29,9 @@
 #include "mjbase/model/resource_helper.hpp"
 
 #include "jsim/engine.hpp"
+#include "jsim/indy.hpp"
 #include "jsim/num.hpp"
+#include "jsim/reflect.hpp"
 #include "jsim/str.hpp"
 
 namespace grunt::cli {
@@ -49,35 +51,11 @@ const char* reasonName(jsim::Bail::Reason r)
     return "?";
 }
 
-/// @brief 描述符参数列表 → 值类型序列。
+/// @brief 描述符参数列表 → 值类型序列（桥里有同一份，探针不另写）。
 std::vector<jsim::ValType> paramTypes(std::string_view desc)
 {
     std::vector<jsim::ValType> out;
-    std::size_t i = desc.find('(');
-    if (i == std::string_view::npos) return out;
-    ++i;
-    while (i < desc.size() && desc[i] != ')') {
-        char c = desc[i];
-        if (c == '[') {
-            while (i < desc.size() && desc[i] == '[') ++i;
-            if (i < desc.size() && desc[i] == 'L') {
-                while (i < desc.size() && desc[i] != ';') ++i;
-            }
-            ++i;
-            out.push_back(jsim::ValType::Ref);
-            continue;
-        }
-        if (c == 'L') {
-            while (i < desc.size() && desc[i] != ';') ++i;
-            ++i;
-            out.push_back(jsim::ValType::Ref);
-            continue;
-        }
-        jsim::ValType t = jsim::ValType::I32;
-        (void)jsim_bridge::valTypeOfDescChar(c, t);
-        out.push_back(t);
-        ++i;
-    }
+    (void)jsim_bridge::paramTypesOfDesc(desc, out);
     return out;
 }
 
@@ -97,14 +75,26 @@ std::vector<std::string> splitBy(const std::string& text, char sep)
     return out;
 }
 
-/// @brief 实参文本 → SimValue。`u:` 显式 Unknown，`s:` 字符串，`x:` 十六进制字节。
+/// @brief 实参文本 → SimValue。`u:` 显式 Unknown，`s:` 字符串，`x:` 十六进制字节，
+/// `b:` 装箱整数（Integer 对象）。
 ///
 /// `x:` 是必需的：密文是非 ASCII 码元，走 Windows argv 会被 ANSI 代码页改写，
 /// 只有十六进制形态能无损穿过命令行。
-jsim::SimValue makeArg(const std::string& spec, jsim::ValType type)
+///
+/// `b:` 也是必需的：BSM 的最后一个静态参数是 `Integer`，体内 `aload; checkcast;
+/// intValue()` 之后立刻上分支。传 Unknown 过不去——分支条件不具体就 Bail，
+/// 而这跟解密逻辑无关，纯是实参没给对类型。
+///
+/// 装箱载荷复用 num 包的 `@v` 槽口径：`intValue()` 拆箱时按同一个键取，自己
+/// 另造一份会与拆箱契约漂移。
+jsim::SimValue makeArg(const std::string& spec, jsim::ValType type, jsim::Session& session)
 {
     if (spec.rfind("u:", 0) == 0) return jsim::SimValue::unknownOf(type);
     if (spec.rfind("s:", 0) == 0) return jsim::SimValue::knownStr(spec.substr(2));
+    if (spec.rfind("b:", 0) == 0) {
+        const jsim::i32 v = static_cast<jsim::i32>(std::strtoll(spec.c_str() + 2, nullptr, 10));
+        return jsim::num::detail::boxed(session, "java/lang/Integer", jsim::SimValue::knownI32(v));
+    }
     if (spec.rfind("x:", 0) == 0) {
         std::string bytes;
         const std::string& hex = spec;
@@ -126,6 +116,34 @@ jsim::SimValue makeArg(const std::string& spec, jsim::ValType type)
         return jsim::SimValue::unknownOf(jsim::ValType::Ref);
     }
     return jsim::SimValue::unknownOf(type);
+}
+
+/// @brief 实参文本按描述符声明的类型灌成 SimValue 序列。
+///
+/// 需要会话：`b:` 要在堆上分配包装对象，而堆属于会话。所以「解析文本」与
+/// 「落成值」必须分开——先按描述符定类型，再由调用方拿自己的会话物化。
+std::vector<jsim::SimValue> buildArgs(const std::vector<jsim::ValType>& types,
+                                      const std::string& argsSpec, jsim::Session& session)
+{
+    const std::vector<std::string> texts = splitBy(argsSpec, ',');
+    std::vector<jsim::SimValue>    out;
+    out.reserve(types.size());
+    for (std::size_t i = 0; i < types.size(); ++i) {
+        out.push_back(i < texts.size() ? makeArg(texts[i], types[i], session)
+                                       : jsim::SimValue::unknownOf(types[i]));
+    }
+    return out;
+}
+
+const char* indyKindName(jsim::indy::Target::Kind kind)
+{
+    switch (kind) {
+    case jsim::indy::Target::Kind::Static: return "invokestatic";
+    case jsim::indy::Target::Kind::Virtual: return "invokevirtual";
+    case jsim::indy::Target::Kind::Special: return "invokespecial";
+    case jsim::indy::Target::Kind::Interface: return "invokeinterface";
+    }
+    return "?";
 }
 
 /// @brief 逐步栈形观测。探针与环境变量都不进框架，只在这里挂。
@@ -335,15 +353,9 @@ int runSimProbe(const SimProbeOptions& options)
         return 1;
     }
 
-    // 预填实参：类型由描述符给（静态事实），值由命令行给。两路共用这一份。
-    const std::vector<jsim::ValType> types    = paramTypes(desc);
-    const std::vector<std::string>   argTexts = splitBy(argsSpec, ',');
-    std::vector<jsim::SimValue>      argValues;
-    argValues.reserve(types.size());
-    for (std::size_t i = 0; i < types.size(); ++i) {
-        argValues.push_back(i < argTexts.size() ? makeArg(argTexts[i], types[i])
-                                                : jsim::SimValue::unknownOf(types[i]));
-    }
+    // 实参类型由描述符给（静态事实），值由命令行给。物化要用会话（`b:` 要落堆），
+    // 所以两条通路各自用自己那个会话灌。
+    const std::vector<jsim::ValType> types = paramTypes(desc);
 
     // ── 跨方法执行器 ────────────────────────────────────────────────────────
     //
@@ -356,14 +368,29 @@ int runSimProbe(const SimProbeOptions& options)
         grunt::SimExecutor exec(container);
         jsim::str::install(exec.session());
         jsim::num::install(exec.session());
+        jsim::reflect::install(exec.session(), [](const std::string&) {
+            return static_cast<const jsim::reflect::ClassMeta*>(nullptr);
+        });
+        jsim::indy::install(exec.session());
         installTrace(exec.session());
 
+        const std::vector<jsim::SimValue> argValues = buildArgs(types, argsSpec, exec.session());
         const SimOutcome out = exec.invoke(classUri, methodSpec, argValues);
         const SimExecutor::Stats& st = exec.stats();
         switch (out.kind) {
         case SimOutcome::Kind::Returned:
             std::printf("→ Completed：%s（%llu 步）\n", jsim::toDisplay(out.value).c_str(),
                         static_cast<unsigned long long>(out.steps));
+            // BSM 的返回值就是折叠的依据：调用点到底指向谁，是它算出来的。
+            if (jsim::indy::isCallSite(exec.session(), out.value)) {
+                jsim::indy::Target target;
+                if (jsim::indy::targetOf(exec.session(), out.value, target)) {
+                    std::printf("  CallSite 目标：%s %s.%s%s\n", indyKindName(target.kind),
+                                target.owner.c_str(), target.name.c_str(), target.desc.c_str());
+                } else {
+                    std::printf("  CallSite 目标：读不出来（句柄载荷不完整）\n");
+                }
+            }
             break;
         case SimOutcome::Kind::Void:
             std::printf("→ Completed：void（%llu 步）\n",
@@ -391,6 +418,13 @@ int runSimProbe(const SimProbeOptions& options)
                 simMethod.desc.c_str(), simMethod.code.size(),
                 static_cast<unsigned>(simMethod.maxLocals));
 
+    jsim::Session simSession;
+    jsim::str::install(simSession);
+    jsim::num::install(simSession);
+    installTrace(simSession);
+
+    const std::vector<jsim::SimValue> argValues = buildArgs(types, argsSpec, simSession);
+
     jsim::Prefill prefill;
     prefill.locals.reserve(simMethod.maxLocals);
     for (jsim::usize i = 0; i < simMethod.maxLocals; ++i) {
@@ -401,11 +435,6 @@ int runSimProbe(const SimProbeOptions& options)
         prefill.locals[slot] = argValues[i];
         slot += (argValues[i].isCat2()) ? 2 : 1;
     }
-
-    jsim::Session simSession;
-    jsim::str::install(simSession);
-    jsim::num::install(simSession);
-    installTrace(simSession);
 
     const jsim::RunResult r = jsim::Sim(simMethod, simSession).run(0, std::move(prefill), {100000});
     switch (r.kind) {

@@ -18,11 +18,11 @@
 #include "jbc/ir/units.hpp"
 
 #include "grunt/rewrite_toolbox.hpp"
-#include "mjbase/asm/evaluator/value.hpp"
+
+#include "jsim/value.hpp"
 
 namespace grunt::const_args {
 
-namespace ev = mjbase::asm_evaluator;
 namespace ir = jbc::ir;
 using jbc::core::Op;
 
@@ -30,17 +30,17 @@ using jbc::core::Op;
 ///
 /// String/Class/MethodType/MethodHandle/Dynamic 的引用内容不可静态确定，
 /// 一律拒绝。`slots` 是压栈槽数（long/double 双槽）。
-inline bool decodePush(ir::ClassSession& session, const ir::Insn& in, ev::Value& out,
+inline bool decodePush(ir::ClassSession& session, const ir::Insn& in, jsim::SimValue& out,
                        ca::u32& slots)
 {
     const auto i32At = [&](ca::i32 v) {
-        out   = ev::Value::ofI32(v);
+        out   = jsim::SimValue::knownI32(v);
         slots = 1;
         return true;
     };
     switch (in.op) {
     case Op::ACONST_NULL:
-        out   = ev::Value::ofNull();
+        out   = jsim::SimValue::knownNull();
         slots = 1;
         return true;
     case Op::ICONST_M1:
@@ -55,19 +55,19 @@ inline bool decodePush(ir::ClassSession& session, const ir::Insn& in, ev::Value&
     case Op::SIPUSH: return i32At(in.a);
     case Op::LCONST_0:
     case Op::LCONST_1:
-        out   = ev::Value::ofI64(in.op == Op::LCONST_1 ? 1 : 0);
+        out   = jsim::SimValue::knownI64(in.op == Op::LCONST_1 ? 1 : 0);
         slots = 2;
         return true;
     case Op::FCONST_0:
     case Op::FCONST_1:
     case Op::FCONST_2:
-        out   = ev::Value::ofF32(static_cast<ca::f32>(static_cast<ca::i32>(in.op) -
+        out   = jsim::SimValue::knownF32(static_cast<ca::f32>(static_cast<ca::i32>(in.op) -
                                                      static_cast<ca::i32>(Op::FCONST_0)));
         slots = 1;
         return true;
     case Op::DCONST_0:
     case Op::DCONST_1:
-        out   = ev::Value::ofF64(static_cast<ca::f64>(static_cast<ca::i32>(in.op) -
+        out   = jsim::SimValue::knownF64(static_cast<ca::f64>(static_cast<ca::i32>(in.op) -
                                                      static_cast<ca::i32>(Op::DCONST_0)));
         slots = 2;
         return true;
@@ -78,20 +78,20 @@ inline bool decodePush(ir::ClassSession& session, const ir::Insn& in, ev::Value&
         if (!session.constOf(in, sem)) return false;
         switch (sem.kind) {
         case ir::ClassSession::ConstSem::Kind::Int:
-            out   = ev::Value::ofI32(static_cast<ca::i32>(sem.num));
+            out   = jsim::SimValue::knownI32(static_cast<ca::i32>(sem.num));
             slots = 1;
             return true;
         case ir::ClassSession::ConstSem::Kind::Long:
-            out   = ev::Value::ofI64(sem.num);
+            out   = jsim::SimValue::knownI64(sem.num);
             slots = 2;
             return true;
         case ir::ClassSession::ConstSem::Kind::Float:
-            out   = ev::Value::ofF32(
+            out   = jsim::SimValue::knownF32(
                 rewrite_tools::bitCast<ca::f32>(static_cast<ca::u32>(sem.bits)));
             slots = 1;
             return true;
         case ir::ClassSession::ConstSem::Kind::Double:
-            out   = ev::Value::ofF64(rewrite_tools::bitCast<ca::f64>(sem.bits));
+            out   = jsim::SimValue::knownF64(rewrite_tools::bitCast<ca::f64>(sem.bits));
             slots = 2;
             return true;
         default:
@@ -143,11 +143,11 @@ inline ca::u32 argSlots(std::string_view desc)
 inline bool collectArgs(ir::ClassSession& session, const ir::CodeDom& dom,
                         const std::vector<ir::InsnId>& order, ca::usize consumerPos,
                         ca::u32 wantSlots, std::vector<ir::InsnId>& producers,
-                        std::vector<ev::Value>& args)
+                        std::vector<jsim::SimValue>& args)
 {
     ca::i32                 need = static_cast<ca::i32>(wantSlots);
     ca::usize               j    = consumerPos;
-    std::vector<ev::Value>  rev;
+    std::vector<jsim::SimValue>  rev;
     std::vector<ir::InsnId> revIds;
     while (need > 0) {
         if (j == 0) return false;
@@ -155,7 +155,7 @@ inline bool collectArgs(ir::ClassSession& session, const ir::CodeDom& dom,
         const ir::Insn* p = dom.peek(order[j]);
         if (p == nullptr) return false;
         if (p->op == Op::NOP) continue;
-        ev::Value v;
+        jsim::SimValue v;
         ca::u32   s = 0;
         if (!decodePush(session, *p, v, s)) return false;
         rev.push_back(v);
@@ -172,7 +172,7 @@ inline bool collectArgs(ir::ClassSession& session, const ir::CodeDom& dom,
 
 /// @brief ConstantValue 值面的常量载荷（const_value_promote 残留用）。
 ///
-/// ev::Value 装不下字符串，而这个面的判据与栈值面不同（见 decodeValueLoad），
+/// jsim::SimValue 装不下字符串，而这个面的判据与栈值面不同（见 decodeValueLoad），
 /// 所以单独成结构：kind + 数值/位形 + 字符串。
 struct ValueLoad
 {
@@ -256,21 +256,23 @@ inline bool decodeValueLoad(ir::ClassSession& session, const ir::Insn& in, Value
 }
 
 /// @brief 求值值的同一性（同类别按位相同；null 引用互相等同）。
-inline bool sameValue(const ev::Value& a, const ev::Value& b)
+///
+/// SimValue 的位型纪律：I32/I64/F32 都走 intBits（F32 存 floatToBits 位形），
+/// F64 走 realValue 真值，Ref 只认 null。
+inline bool sameValue(const jsim::SimValue& a, const jsim::SimValue& b)
 {
-    if (a.kind != b.kind) return false;
-    switch (a.kind) {
-    case ev::Value::Kind::I32: return a.i32 == b.i32;
-    case ev::Value::Kind::I64: return a.i64 == b.i64;
-    case ev::Value::Kind::F32:
-        return rewrite_tools::bitCast<ca::u32>(a.f32)
-               == rewrite_tools::bitCast<ca::u32>(b.f32);
-    case ev::Value::Kind::F64:
-        return rewrite_tools::bitCast<ca::u64>(a.f64)
-               == rewrite_tools::bitCast<ca::u64>(b.f64);
-    case ev::Value::Kind::Ref: return a.isNull() && b.isNull();
-    default: return false;
+    if (a.known != b.known || a.type != b.type) return false;
+    if (!a.known) return true;
+    switch (a.type) {
+    case jsim::ValType::I32:
+    case jsim::ValType::I64:
+    case jsim::ValType::F32: return a.intBits == b.intBits;
+    case jsim::ValType::F64: return a.realValue == b.realValue;
+    case jsim::ValType::Ref:
+        return a.ref.kind == jsim::RefPayload::Kind::Null
+               && b.ref.kind == jsim::RefPayload::Kind::Null;
     }
+    return false;
 }
 
 }   // namespace grunt::const_args

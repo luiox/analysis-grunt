@@ -26,7 +26,6 @@ namespace grunt::const_method {
 
 namespace {
 
-namespace ev = mjbase::asm_evaluator;
 namespace ir = jbc::ir;
 using jbc::core::Op;
 
@@ -312,7 +311,7 @@ bool makeInlineLoad(ir::ClassSession& session, const ConstValue& value, ir::Insn
 {
     switch (value.kind) {
     case ConstValue::Kind::I32: {
-        ev::Value v = ev::Value::ofI32(value.i32);
+        jsim::SimValue v = jsim::SimValue::knownI32(value.i32);
         return rewrite_tools::makeConstLoad(session, v, out);
     }
     case ConstValue::Kind::Null:

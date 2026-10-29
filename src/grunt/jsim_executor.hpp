@@ -74,9 +74,11 @@ public:
         : container_(&container), limits_(limits)
     {
         // 只挂编排钩子，不装任何扩展包（见文件头分层红线）。
-        session_.callMockResolver = [this](const jsim::CallRef& callee, jsim::Frame& frame) {
-            return resolve(callee, frame);
-        };
+        // 走解析链而不是单槽：反射包等扩展也要这个口子，单槽会互相顶掉。
+        session_.callMockResolvers.push_back(
+            [this](const jsim::CallRef& callee, jsim::Frame& frame) {
+                return resolve(callee, frame);
+            });
     }
 
     jsim::Session&       session() noexcept { return session_; }

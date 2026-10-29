@@ -20,7 +20,6 @@
 #include "jbc/ir/units.hpp"
 
 #include "mjbase/analysis/class_scan.hpp"
-#include "mjbase/asm/evaluator/value.hpp"
 #include "mjbase/asm/insn/insn_factory.hpp"
 #include "mjbase/hierarchy/class_hierarchy.hpp"
 #include "mjbase/hierarchy/summary.hpp"
@@ -29,6 +28,8 @@
 #include "mjbase/spi/frame_rewire.hpp"
 #include "mjbase/spi/pass_pipeline.hpp"
 #include "mjbase/spi/strict_type_resolver.hpp"
+
+#include "jsim/value.hpp"
 
 namespace grunt::rewrite_tools {
 
@@ -46,57 +47,61 @@ To bitCast(const From& from) noexcept
 /// 池索引走 `CodeEditor::loadConst` 选形态——`LDC` 的操作数域只有 u1，大类
 /// 的池索引轻易超过 255，编码器对超界 `LDC` 直接 Unencodable（insn_codec
 /// 的域宽校验）。`loadConst` 负责按实际索引在 `LDC`/`LDC_W` 之间选对。
-inline bool makeConstLoad(jbc::ir::ClassSession& session, const mjbase::asm_evaluator::Value& v,
+inline bool makeConstLoad(jbc::ir::ClassSession& session, const jsim::SimValue& v,
                           jbc::ir::Insn& out)
 {
-    switch (v.kind) {
-    case mjbase::asm_evaluator::Value::Kind::I32: {
-        auto r = mjbase::asm_insn::intConstInsn(v.i32);
+    if (!v.known) return false;
+    switch (v.type) {
+    case jsim::ValType::I32: {
+        const auto n = static_cast<ca::i32>(v.intBits);
+        auto r = mjbase::asm_insn::intConstInsn(n);
         if (r.is_ok()) {
             out = r.unwrap();
             return true;
         }
-        const ca::u32 cp = session.internInteger(v.i32);
+        const ca::u32 cp = session.internInteger(n);
         if (cp == 0) return false;
         out = jbc::ir::CodeEditor::loadConst(cp);
         return true;
     }
-    case mjbase::asm_evaluator::Value::Kind::I64: {
-        auto r = mjbase::asm_insn::longConstInsn(v.i64);
+    case jsim::ValType::I64: {
+        auto r = mjbase::asm_insn::longConstInsn(v.intBits);
         if (r.is_ok()) {
             out = r.unwrap();
             return true;
         }
-        const ca::u32 cp = session.backing().cp.addLong(v.i64);
+        const ca::u32 cp = session.backing().cp.addLong(v.intBits);
         if (cp == 0 || cp > 0xFFFF) return false;   // LDC2_W 是 CP2 域（u2）
         out.op = jbc::core::Op::LDC2_W;
         out.cp = cp;
         return true;
     }
-    case mjbase::asm_evaluator::Value::Kind::F32: {
-        auto r = mjbase::asm_insn::floatConstInsn(v.f32);
+    case jsim::ValType::F32: {
+        const float f = v.asF32();
+        auto r = mjbase::asm_insn::floatConstInsn(f);
         if (r.is_ok()) {
             out = r.unwrap();
             return true;
         }
-        const ca::u32 cp = session.backing().cp.addFloatBits(bitCast<ca::u32>(v.f32));
+        const ca::u32 cp = session.backing().cp.addFloatBits(jsim::floatToBits(f));
         if (cp == 0) return false;
         out = jbc::ir::CodeEditor::loadConst(cp);
         return true;
     }
-    case mjbase::asm_evaluator::Value::Kind::F64: {
-        auto r = mjbase::asm_insn::doubleConstInsn(v.f64);
+    case jsim::ValType::F64: {
+        const double d = v.asF64();
+        auto r = mjbase::asm_insn::doubleConstInsn(d);
         if (r.is_ok()) {
             out = r.unwrap();
             return true;
         }
-        const ca::u32 cp = session.backing().cp.addDoubleBits(bitCast<ca::u64>(v.f64));
+        const ca::u32 cp = session.backing().cp.addDoubleBits(jsim::doubleToBits(d));
         if (cp == 0 || cp > 0xFFFF) return false;
         out.op = jbc::core::Op::LDC2_W;
         out.cp = cp;
         return true;
     }
-    default: return false;
+    default: return false;   // Ref/Null 不落常量装载
     }
 }
 

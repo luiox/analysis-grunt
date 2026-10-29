@@ -13,7 +13,6 @@
 
 #include "jbc/ir/units.hpp"
 #include "libca/core/tag_cast.hpp"
-#include "mjbase/asm/evaluator/evaluator.hpp"
 #include "mjbase/jasm/jvm_jasm_service.hpp"
 #include "mjbase/model/resource_container.hpp"
 #include "mjbase/model/resource_model.hpp"
@@ -28,7 +27,6 @@
 namespace grunt::constant_call {
 namespace {
 
-namespace ev    = mjbase::asm_evaluator;
 namespace model = mjbase::model;
 
 ca::str::Utf16String utf16(const std::string& value)
@@ -161,9 +159,10 @@ TEST(ConstantCallScan, FoldsPureCallWithConstantArgs)
     EXPECT_EQ(site.targetName, "pure");
     EXPECT_EQ(site.callerOwner, "fixture/Caller");
     ASSERT_EQ(site.args.size(), 2u);
-    ASSERT_EQ(site.value.kind, ev::Value::Kind::I32);
+    ASSERT_TRUE(site.value.known);
+    ASSERT_EQ(site.value.type, jsim::ValType::I32);
     // (3 + 4) * 7
-    EXPECT_EQ(site.value.i32, 49);
+    EXPECT_EQ(static_cast<ca::i32>(site.value.intBits), 49);
 }
 
 TEST(ConstantCallScan, FoldsValueThatNeedsConstantPool)
@@ -191,7 +190,7 @@ TEST(ConstantCallScan, FoldsValueThatNeedsConstantPool)
 
     const ScanResult result = scan(container);
     ASSERT_EQ(result.sites.size(), 1u);
-    EXPECT_EQ(result.sites.front().value.i32, 65534);
+    EXPECT_EQ(static_cast<ca::i32>(result.sites.front().value.intBits), 65534);
 }
 
 TEST(ConstantCallScan, EvaluatesTargetBodyThatLoadsPoolConstants)
@@ -221,7 +220,7 @@ TEST(ConstantCallScan, EvaluatesTargetBodyThatLoadsPoolConstants)
 
     const ScanResult result = scan(container);
     ASSERT_EQ(result.sites.size(), 1u);
-    EXPECT_EQ(result.sites.front().value.i32, 300000);
+    EXPECT_EQ(static_cast<ca::i32>(result.sites.front().value.intBits), 300000);
 }
 
 TEST(ConstantCallScan, RejectsNonStaticTarget)
@@ -326,7 +325,8 @@ TEST(ConstantCallScan, RejectsNonConstantArguments)
 
 TEST(ConstantCallScan, RejectsImpureTarget)
 {
-    // 目标读静态字段：求值子集不含字段访问，必须拒绝而不是猜值。
+    // 目标读静态字段：执行器静态面没有真值，未知值向结果传播，结果不可折叠，
+    // 必须拒绝而不是猜值。
     model::ResourceContainer container = makeContainer({
         {"fixture/Util",
          ".super java/lang/Object\n"
@@ -350,7 +350,7 @@ TEST(ConstantCallScan, RejectsImpureTarget)
 
     const ScanResult result = scan(container);
     EXPECT_TRUE(result.sites.empty());
-    EXPECT_NE(findReject(result, RejectReason::EvalUnsupported), nullptr);
+    EXPECT_NE(findReject(result, RejectReason::ValueKindUnsupported), nullptr);
 }
 
 TEST(ConstantCallScan, IgnoresTargetsOutsideContainer)

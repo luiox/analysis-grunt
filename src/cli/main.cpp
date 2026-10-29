@@ -39,7 +39,7 @@ constexpr const char* kUsage =
     "  -c  pack 配置 JSON 文件（可选，文本整体交给 pack 解析）\n"
     "  --list  列出本 pack 注册的全部 pass 后退出\n"
     "  --sim 类uri#方法名   对真方法跑一次模拟执行后退出（调试用，只读）\n"
-    "  --args v1,v2,...     --sim 的实参：十进制数 / s:文本 / x:十六进制 / u:（Unknown）\n"
+    "  --args v1,v2,...     --sim 的实参：十进制 / s:文本 / x:十六进制 / b:装箱整数 / u:（Unknown）\n"
     "  --exec               --sim 走跨方法执行器（子方法调用自动展开）；默认单方法裸跑\n"
     "  --dump               --sim 打印桥产物的反汇编视图（只读）\n"
     "  环境变量 GRUNT_SIM_TRACE=1 时打印逐步栈形\n";
