@@ -13,7 +13,10 @@
 #include "jbc/core/writer.hpp"
 #include "jbc/ir/units.hpp"
 
+#include "libca/core/tag_cast.hpp"
+
 #include "grunt/container.hpp"
+#include "grunt/indy_fold.hpp"
 #include "grunt/proof_toolbox.hpp"
 
 namespace grunt::dead_member {
@@ -75,6 +78,55 @@ bool fieldHasConstantValue(ir::ClassSession& s, const jbc::core::MemberInfo& fld
     return false;
 }
 
+/// @brief 递归收集注解元素值里的字符串面（保守保留依据）。
+///
+/// 's' 字符串值、'e' 枚举常量名、'c' 类描述符都收——运行时框架（mixin 等）
+/// 按这些名字反射定位成员，CP 的 Methodref 静态面看不见这类引用。
+void collectAnnoStrings(const jbc::core::AnnotationsAttr::ElemValue& v,
+                        const jbc::core::ClassFile& cf, std::set<std::string>& out)
+{
+    if (v.tag == 's' || v.tag == 'c') out.insert(cpUtf8(cf, v.cp));
+    if (v.tag == 'e') out.insert(cpUtf8(cf, v.constNameCp));
+    for (const auto& item : v.items) collectAnnoStrings(item, cf, out);
+    if (v.nested != nullptr) {
+        for (const auto& [nameCp, ev] : v.nested->values) {
+            (void)nameCp;
+            collectAnnoStrings(ev, cf, out);
+        }
+    }
+}
+
+/// @brief 类内全部注解字符串值：class/field/method 级 Runtime{Visible,
+/// Invisible}Annotations 递归展开。
+std::set<std::string> annotationStrings(ir::ClassSession& s)
+{
+    std::set<std::string> out;
+    jbc::core::ClassFile& cf = s.backing();
+
+    const auto walkAttrs = [&](std::vector<jbc::core::AttrSlot>& attrs) {
+        for (jbc::core::AttrSlot& slot : attrs) {
+            const std::string name(cf.utf8(slot.nameCp));
+            if (name != "RuntimeVisibleAnnotations" && name != "RuntimeInvisibleAnnotations") {
+                continue;
+            }
+            auto d = cf.decodeAttr(slot);
+            if (d.is_err()) continue;
+            auto* anno = ca::core::tag_cast::dyn_cast<jbc::core::AnnotationsAttr>(d.unwrap());
+            if (anno == nullptr) continue;
+            for (const auto& a : anno->annos) {
+                for (const auto& [nameCp, ev] : a.values) {
+                    (void)nameCp;
+                    collectAnnoStrings(ev, cf, out);
+                }
+            }
+        }
+    };
+    walkAttrs(cf.attrs);
+    for (auto& f : cf.fields) walkAttrs(f.attrs);
+    for (auto& m : cf.methods) walkAttrs(m.attrs);
+    return out;
+}
+
 /// @brief 压缩后 CP 的活引用快照：全容器枚举 Fieldref/Methodref/接口引用。
 struct CpSnap
 {
@@ -108,7 +160,16 @@ CpSnap collectCpSnap(ir::ClassSession& s)
 }
 
 /// @brief 类的形状候选收集（SCAN 本体）。
-ClassCand scanClass(ir::ClassSession& s, const std::string& uri)
+///
+/// indyTargets 是跨类运行时目标集（owner+name）：本类 BSM 盲区只覆盖「类内带
+/// BootstrapMethods」的形态，而 Grunt 的 BSM 常在 A 类、findStatic 的目标在
+/// B 类——普查看不见这种引用，必须由 indy_fold::scan 真跑 BSM 补上。
+/// bsmUnresolved（存在未收敛 BSM）时 synthetic/bridge 候选整档豁免：那是 indy
+/// 目标的形状（Grunt 给每个调用点造 public static bridge），目标名是解密产物，
+/// CP 里零引用；findStatic 跨类又要求 public，private 候选不在此列。
+ClassCand scanClass(ir::ClassSession& s, const std::string& uri,
+                    const std::set<std::pair<std::string, std::string>>& indyTargets,
+                    bool bsmUnresolved)
 {
     ClassCand              cand;
     cand.uri   = uri;
@@ -116,6 +177,15 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri)
 
     jbc::core::ClassFile&      cf   = s.backing();
     const ir::ClassUnit&       unit = s.unit();
+
+    // 运行时引用面（CP 普查的三类盲区，命中即跳过成员删除）：
+    // 1. BootstrapMethods——BSM 可在运行时经解密字符串 findStatic/findVirtual
+    //    本类任意成员（Grunt 形态：目标名是密文，字节码里没有明文引用）；
+    // 2. 注解字符串——mixin 框架按注解值里的方法名反射定位（@Redirect）；
+    // 3. 跨类 indy 目标——别类 BSM 运行时 findStatic 本类成员（indyTargets）。
+    // <clinit> 不受此限：它不可被反射句柄定位，只由 JVM 初始化触发。
+    const bool hasBsm = cf.findClassAttr("BootstrapMethods") != nullptr;
+    const std::set<std::string> annoNames = annotationStrings(s);
 
     for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
         const ir::MethodUnit& mu   = unit.methods[mi];
@@ -143,6 +213,9 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri)
         if (name == "main") continue;
         if ((mu.access & (kAccNative | kAccAbstract)) != 0) continue;
         if (!ir::hasCode(s, mi)) continue;
+        if (hasBsm) continue;                                // BSM 盲区：整类方法不删
+        if (annoNames.count(name) != 0) continue;            // 注解按名引用：不删
+        if (indyTargets.count({cand.owner, name}) != 0) continue;  // 跨类 BSM 目标：不删
 
         const bool gateA =
             (mu.access & kAccStatic) != 0
@@ -155,6 +228,7 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri)
         const bool gateB = (mu.access & (kAccSynthetic | kAccBridge)) != 0;
         const bool gateC = (mu.access & kAccPrivate) != 0;
         if (!gateA && !gateB && !gateC) continue;
+        if (bsmUnresolved && gateB && !gateC && !gateA) continue;  // indy 目标形状：宁留
 
         cand.methods.push_back(MethodCand{mu.backingIndex, name, desc,
                                           gateA ? MethodGate::PureArith
@@ -168,6 +242,8 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri)
         const std::string            fdesc = cpUtf8(cf, fld.descCp);
         if (fname == "serialVersionUID" || fname == "serialPersistentFields") continue;
         if (fieldHasConstantValue(s, fld)) continue;
+        if (hasBsm) continue;                               // BSM 盲区：整类字段不删
+        if (annoNames.count(fname) != 0) continue;          // 注解按名引用：不删
         const bool privateGate = (fld.access & kAccPrivate) != 0;
         const bool orphanArray = (fld.access & kAccStatic) != 0 && fdesc == "[I";
         if (!privateGate && !orphanArray) continue;
@@ -185,14 +261,32 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri)
 ScanResult scan(const mjbase::model::ResourceContainer& container)
 {
     ScanResult result;
-    forEachClass(container, [&](const ClassEntry& entry) {
-        auto session = openSession(*entry.bytes);
-        if (!session) {
-            ++result.classesSkipped;
-            return;
+
+    // 跨类 indy 目标普查：真跑全容器 BSM（indy_fold 的执行面），解析出的目标
+    // 方法按 owner+name 保护。BSM 在 A 类、目标在 B 类的引用静态普查看不见，
+    // 不保护就会删掉 BSM 运行时才解出的目标（NoSuchMethodError at findStatic）。
+    // BSM 未收敛的站点目标未知，计数进台账（链上 IndyFold 在前会先折掉大半）。
+    {
+        const indy_fold::ScanResult indyScan = indy_fold::scan(container);
+        std::set<std::pair<std::string, std::string>> indyTargets;
+        for (const indy_fold::Site& site : indyScan.sites) {
+            if (!site.target.owner.empty() && !site.target.name.empty()) {
+                indyTargets.insert({site.target.owner, site.target.name});
+            }
         }
-        result.classes.push_back(scanClass(*session, std::string(entry.uri)));
-    });
+        result.indyTargets   = indyTargets.size();
+        result.indyBsmFailed = indyScan.bsmFailed;
+        const bool bsmUnresolved = indyScan.bsmFailed != 0;
+        forEachClass(container, [&](const ClassEntry& entry) {
+            auto session = openSession(*entry.bytes);
+            if (!session) {
+                ++result.classesSkipped;
+                return;
+            }
+            result.classes.push_back(
+                scanClass(*session, std::string(entry.uri), indyTargets, bsmUnresolved));
+        });
+    }
     return result;
 }
 
