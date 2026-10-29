@@ -106,6 +106,15 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.BoogerAnnoStrip"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.IndyFold",
+            [] { return std::make_unique<IndyFoldPass>(); },
+            "Fold invokedynamic call sites whose bootstrap method resolves to a"
+            " plain static/virtual target: run the BSM under libjsim, read the"
+            " CallSite handle, and rewrite the site into a real invoke.");
+        r.is_err()) {
+        return Err(std::string("grunt.IndyFold"));
+    }
     return Ok();
 }
 

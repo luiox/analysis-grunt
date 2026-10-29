@@ -14,6 +14,7 @@
 #include "grunt/dead_code.hpp"
 #include "grunt/dead_member.hpp"
 #include "grunt/flags_strip.hpp"
+#include "grunt/indy_fold.hpp"
 #include "grunt/predicate_fold.hpp"
 #include "grunt/seed_strip.hpp"
 #include "grunt/trampoline_squeeze.hpp"
@@ -348,6 +349,46 @@ mjbase::spi::PreservedAnalyses BoogerAnnoStripPass::run(
                      dirty.classes, dirty.annos, proof.ok ? "ok" : "FAILED");
         for (const std::string& f : proof.failed) {
             std::fprintf(stderr, "[grunt.BoogerAnnoStrip] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses IndyFoldPass::run(mjbase::model::ResourceContainer& container,
+                                                mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+    const indy_fold::ScanResult scanned = indy_fold::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.IndyFold] scan: classes=%zu sites=%zu foldable=%zu bsmFailed=%zu\n",
+                     scanned.classes, scanned.sites.size(), scanned.foldable, scanned.bsmFailed);
+        if (std::getenv("GRUNT_INDY_FOLD_TRACE") != nullptr) {
+            for (const indy_fold::Site& site : scanned.sites) {
+                std::string verdict;
+                if (site.foldable) {
+                    verdict = site.target.owner + "." + site.target.name + site.target.desc;
+                } else {
+                    verdict = "skip: " + site.why;
+                }
+                std::fprintf(stderr, "[grunt.IndyFold]   %s#%zu pc=%zu %s%s → %s\n",
+                             site.uri.c_str(), site.methodIndex, site.insnPc,
+                             site.indyName.c_str(), site.indyDesc.c_str(), verdict.c_str());
+            }
+        }
+    }
+    if (scanned.foldable == 0) return mjbase::spi::PreservedAnalyses::all();
+
+    const indy_fold::DirtySet dirty = indy_fold::rewrite(container, scanned);
+    const indy_fold::ProofResult proof = indy_fold::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr, "[grunt.IndyFold] rewrite: classes=%zu sites=%zu proof=%s\n",
+                     dirty.classes, dirty.sites, proof.ok ? "ok" : "FAILED");
+        for (const std::string& f : proof.failed) {
+            std::fprintf(stderr, "[grunt.IndyFold] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
