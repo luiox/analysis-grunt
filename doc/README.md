@@ -16,6 +16,20 @@
 | [flags-strip.impl.md](flags-strip.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
 | [const-method.md](const-method.md) | 常量方法：形态、基元 `.TYPE` 桥、与常量字段的依赖关系 |
 | [const-method.impl.md](const-method.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
+| [trampoline-squeeze.md](trampoline-squeeze.md) | 蹦床：跳到顺序后继的 `goto` 的形态与来源 |
+| [trampoline-squeeze.impl.md](trampoline-squeeze.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
+| [predicate-fold.md](predicate-fold.md) | 常量谓词：分支 / `switch` 的静态可裁决形态 |
+| [predicate-fold.impl.md](predicate-fold.impl.md) | 本仓的 Scan / Rewrite / Proof，含帧链与链序约束 |
+| [dead-code.md](dead-code.md) | 死码：异常表作为隐藏控制流边、端点吸附规则 |
+| [dead-code.impl.md](dead-code.impl.md) | 本仓的 Scan / Rewrite / Proof，含异常表感知可达性 |
+| [const-value-promote.md](const-value-promote.md) | 常量字段：`clinit` 单次常量写 → `ConstantValue` 的形态 |
+| [const-value-promote.impl.md](const-value-promote.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
+| [seed-strip.md](seed-strip.md) | 种子建表：`int[]` 种子跨度的固定形状 |
+| [seed-strip.impl.md](seed-strip.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
+| [dead-member.md](dead-member.md) | 死成员：零引用方法 / 私有字段 / 空 `<clinit>` 的形态 |
+| [dead-member.impl.md](dead-member.impl.md) | 本仓的 Scan / Rewrite / Proof，含压池后算引用闭包 |
+| [booger-anno-strip.md](booger-anno-strip.md) | 残留 `@Booger` 注解：解密体被折成常量后留下的空壳 |
+| [booger-anno-strip.impl.md](booger-anno-strip.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
 
 ## 约定
 

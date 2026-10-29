@@ -1,0 +1,36 @@
+# dead_member：零引用成员与空 clinit 删除
+
+## 形态
+
+内联与折叠完成后大量成员只剩空壳：纯算术辅助方法（调用点已折成常量）、
+`/* bridge */ /* synthetic */` 转发器（调用点已内联）、private 辅助字段、
+拆空后的 `<clinit>`。
+
+## 判据
+
+形状候选（scan，S2 结构事实）：
+
+- 方法：`static` ∧ 方法体纯算术形态（常量/栈/算术/分支/return 词汇表，
+  LDC 单查数值类别），或 `ACC_SYNTHETIC/ACC_BRIDGE`，或 `private`；main /
+  native / abstract / 无码跳过；
+- 字段：`private`（public/包级零引用可能是按名反射面，宁留勿删），或
+  `static [I` 零访问孤儿数组（seed_strip 拆完建表后的形状，独立强证明）；
+  serialVersionUID / 带 ConstantValue 的不删；
+- `<clinit>`：方法体只剩 NOP/RETURN。
+
+引用门（rewrite 复核）：**先全容器 CP 压缩**——压缩闭包保证「池里枚举即
+活引用」；压缩失败的类整类放弃（死条目会污染零引用判定）。普查全部
+Fieldref/Methodref/接口引用得活引用集，候选必须在集合外。
+
+反射是理论逃逸面（按名反射方法拦不住）；台账如实记录每一次删除。
+
+## 改写
+
+全容器压缩 → 活引用普查 → 逐类删成员（名字+描述+backing 序三重定位复核，
+倒序 erase）→ 落盘 → 再压缩一次带走死描述符。
+
+## 台账
+
+`methods / fields / clinits / compacted / rejectedByRef` 分项计数。死类删
+除（v3 classStage 的零引用类不动点）挂账：mjbase ResourceContainer 尚无
+removeResource 接口。

@@ -52,4 +52,37 @@ inline std::unordered_set<ca::usize> roundTripSafe(const std::vector<ca::u8>&   
     return safe;
 }
 
+/// @brief PROOF 共同形状：类数不增 + 全部脏类可重新解析。
+///
+/// 各残留的 proof 段本体都是这两条（CONVENTION §0 的全局不变量 + 「写回的
+/// 字节必须仍是合法 classfile」），收口成一份，不许逐残留重抄。
+struct ClassIntactResult
+{
+    bool                     ok = true;
+    std::vector<std::string> failed;
+};
+
+inline ClassIntactResult classesIntact(const mjbase::model::ResourceContainer& container,
+                                       const std::vector<std::string>& uris,
+                                       ca::usize classesBefore)
+{
+    ClassIntactResult result;
+    if (countClasses(container) != classesBefore) {
+        result.ok = false;
+        result.failed.emplace_back("class-count");
+    }
+    for (const std::string& uri : uris) {
+        bool found = false;
+        forEachClass(container, [&](const ClassEntry& entry) {
+            if (found || entry.uri != uri) return;
+            found = openSession(*entry.bytes) != nullptr;
+        });
+        if (!found) {
+            result.ok = false;
+            result.failed.push_back(uri);
+        }
+    }
+    return result;
+}
+
 }   // namespace grunt::proof_tools

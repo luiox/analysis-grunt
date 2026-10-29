@@ -44,6 +44,68 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.ConstMethod"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.TrampolineSqueeze",
+            [] { return std::make_unique<TrampolineSqueezePass>(); },
+            "NOP out gotos that jump to their sequential successor (obfuscator"
+            " trampolines), keeping srcPc so downstream argument collection sees"
+            " through.");
+        r.is_err()) {
+        return Err(std::string("grunt.TrampolineSqueeze"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.PredicateFold",
+            [] { return std::make_unique<PredicateFoldPass>(); },
+            "Statically decide branches and switches whose operands are all"
+            " constant loads (decoy blocks become dead code).");
+        r.is_err()) {
+        return Err(std::string("grunt.PredicateFold"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.DeadCode",
+            [] { return std::make_unique<DeadCodePass>(); },
+            "Remove unreachable instruction sequences found by exception-table-aware"
+            " control-flow reachability; dead exception ranges are dropped and"
+            " endpoint anchors snapped forward to a live instruction.");
+        r.is_err()) {
+        return Err(std::string("grunt.DeadCode"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.ConstValuePromote",
+            [] { return std::make_unique<ConstValuePromotePass>(); },
+            "Back-fill clinit's single constant putstatic into the field's"
+            " ConstantValue attribute (plus ACC_FINAL).");
+        r.is_err()) {
+        return Err(std::string("grunt.ConstValuePromote"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.SeedStrip",
+            [] { return std::make_unique<SeedStripPass>(); },
+            "Erase int[] seed-table construction spans in <clinit> (NEWARRAY +"
+            " PUTSTATIC head, GETSTATIC/IASTORE groups), pruning orphan SMT"
+            " frames before lowering.");
+        r.is_err()) {
+        return Err(std::string("grunt.SeedStrip"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.DeadMember",
+            [] { return std::make_unique<DeadMemberPass>(); },
+            "Delete zero-reference methods (pure-arith / synthetic+bridge /"
+            " private gates), zero-reference private and orphan-array fields,"
+            " and empty <clinit>s; compacts the constant pool first so the"
+            " reference census is the live closure.");
+        r.is_err()) {
+        return Err(std::string("grunt.DeadMember"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.BoogerAnnoStrip",
+            [] { return std::make_unique<BoogerAnnoStripPass>(); },
+            "Strip @Booger runtime annotation entries once no class in the"
+            " container references the Booger class anymore (decryption bodies"
+            " folded away).");
+        r.is_err()) {
+        return Err(std::string("grunt.BoogerAnnoStrip"));
+    }
     return Ok();
 }
 
