@@ -11,6 +11,8 @@
 
 #include "grunt/pack.hpp"
 
+#include "cli/sim_probe.hpp"
+
 #include "mjbase/analysis/class_scan.hpp"
 #include "mjbase/hierarchy/class_hierarchy.hpp"
 #include "mjbase/hierarchy/summary.hpp"
@@ -35,7 +37,10 @@ constexpr const char* kUsage =
     "  -o  输出 jar\n"
     "  -p  逗号分隔 pass 名（grunt. 前缀）\n"
     "  -c  pack 配置 JSON 文件（可选，文本整体交给 pack 解析）\n"
-    "  --list  列出本 pack 注册的全部 pass 后退出\n";
+    "  --list  列出本 pack 注册的全部 pass 后退出\n"
+    "  --sim 类uri#方法名   对真方法跑一次模拟执行后退出（调试用，只读）\n"
+    "  --args v1,v2,...     --sim 的实参：十进制数 / s:文本 / u:（Unknown）\n"
+    "  环境变量 GRUNT_SIM_TRACE=1 时打印逐步栈形\n";
 
 std::string readFileText(const std::string& path)
 {
@@ -67,12 +72,18 @@ int main(int argc, char** argv)
     std::string output;
     std::string passList;
     std::string configPath;
+    std::string simTarget;
+    std::string simArgs;
     bool        list = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--list") {
             list = true;
+        } else if (arg == "--sim" && i + 1 < argc) {
+            simTarget = argv[++i];
+        } else if (arg == "--args" && i + 1 < argc) {
+            simArgs = argv[++i];
         } else if (arg == "-i" && i + 1 < argc) {
             input = argv[++i];
         } else if (arg == "-o" && i + 1 < argc) {
@@ -88,6 +99,15 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "未知参数：%s\n%s", arg.c_str(), kUsage);
             return 2;
         }
+    }
+
+    // 探针是独立通路：不进 pack、不进管线，只读容器跑一次模拟执行。
+    if (!simTarget.empty()) {
+        if (input.empty()) {
+            std::fputs("--sim 需要 -i 指定输入 jar\n", stderr);
+            return 2;
+        }
+        return grunt::cli::runSimProbe(input, simTarget, simArgs);
     }
 
     std::string configText;

@@ -13,6 +13,14 @@ if not os.isfile(path.join(mjbase_dir, "mjbase", "xmake.lua")) then
     raise("MJBASE_DIR 无效（缺 mjbase/xmake.lua）：" .. mjbase_dir)
 end
 
+-- libjsim：单方法模拟执行库（header-only，纯 std）。grunt 侧只用它跑
+-- 「拿真实 CodeUnit 做常量折叠/解密」这一件事，桥在 src/grunt/jsim_bridge.hpp
+-- （设计稿 §9：桥由消费方自备）。ext 是扩展包目录（str/num/reflect），
+-- 与核心同 include 前缀，按需 include。
+local libjsim_dir = os.getenv("LIBSIM_DIR")
+                    or path.join(os.scriptdir(), "..", "libjsim")
+libjsim_dir = path.absolute(libjsim_dir)
+
 -- 版本单源必须先于 libjbc.lua include（其内联包定义拼接这两个全局量）；
 -- 数值与 mjbase 根 xmake 保持同一字面量。
 LUIOX_LIBCA_VERSION = "0.0.16"
@@ -50,7 +58,7 @@ add_requires("libarchive 3.8.8", {configs = {openssl3 = false}})
 add_requires("zlib")
 
 add_requires("libca " .. LUIOX_LIBCA_VERSION, {configs = {modules = LUIOX_LIBCA_MODULES}})
-add_requires("libjbc 0.4.15")
+add_requires("libjbc 0.4.23")
 add_requires("libjstr 0.0.3")
 add_requires("libjbytecode 0.0.3")
 add_requires("libjzip 0.0.3")
@@ -102,6 +110,8 @@ target("grunt")
     add_packages("libjbc", "libca", {public = true})
     add_files("src/grunt/**.cpp")
     add_includedirs("src", {public = true})
+    add_includedirs(path.join(libjsim_dir, "src"), {public = true})
+    add_includedirs(path.join(libjsim_dir, "ext"), {public = true})
     if is_plat("windows") then
         add_cxflags("/utf-8", {tools = "cl"})
     end

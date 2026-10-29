@@ -5,3 +5,5 @@ build/
 *.exe
 *.pdb
 *.obj
+build_jsim/
+.workbuddy-ai/
