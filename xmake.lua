@@ -46,23 +46,17 @@ option("with_tests")
 option_end()
 
 add_repositories("luiox-repo https://github.com/luiox/luiox-repo.git")
--- libarchive 本地覆盖包：官方 xmake-repo 定义在 Linux 漏传 POSIX_REGEX_LIB=NONE
--- 而 cmake FATAL_ERROR，本仓覆盖对所有平台传 NONE（配方与 mjt 同源，见包文件头）。
-add_repositories("grunt-repo xmake/repo")
 
--- mjbase 包消费（0.0.4 = jasm 孤立代理回归 + libjhasm 0.3.3）。包面依赖
--- 已与源仓根 require 清单对齐（libjbc >=0.4.23 / libjstd / libjhasm
--- >=0.3.3 / libjstr / libjzip / libgarena / libjclassfile / libarchive /
--- zlib）。grunt 源码直接 include 的三面各按消费面显式声明：mjbase/* →
--- mjbase 包；jbc/* → libjbc（同一裸下界，与 mjbase 包解析到同一实例）；
+-- mjbase 包消费（0.0.5 = libarchive 死面摘除，包面不再携带 archive）。包面
+-- 依赖已与源仓根 require 清单对齐（libjbc >=0.4.22 / libjstd / libjhasm
+-- >=0.3.3 / libjstr / libjzip / libgarena / libjclassfile / zlib）。grunt 源码
+-- 直接 include 的三面各按消费面显式声明：mjbase/* → mjbase 包；jbc/* →
+-- libjbc（裸下界不低于 mjbase 包面，同一消费图归并解析到同一实例）；
 -- libca/* → libca（顶层钉版钉模块集，全图归并单实例——家族各包定义的
 -- 嵌套 libca 已统一为同一超集 modules，版本经顶层钉定收敛）。
-add_requires("mjbase 0.0.4")
+add_requires("mjbase 0.0.5")
 add_requires("libjbc >=0.4.23")
 add_requires("libca " .. LUIOX_LIBCA_VERSION, {configs = {modules = LUIOX_LIBCA_MODULES}})
--- mjbase model 资源解包后端：包沙箱内自足构建，包面不导出链接信息
--- （mjbase.lib 的 archive_* 符号由消费方闭包供给），消费方按同配置自备。
-add_requires("libarchive 3.8.8", {configs = {openssl3 = false}})
 add_requireconfs("mjbase.libca",     {version = LUIOX_LIBCA_VERSION, configs = {modules = LUIOX_LIBCA_MODULES}})
 add_requireconfs("libjbc.libca",     {version = LUIOX_LIBCA_VERSION, configs = {modules = LUIOX_LIBCA_MODULES}})
 add_requireconfs("mjbase.libjbc.libca", {version = LUIOX_LIBCA_VERSION, configs = {modules = LUIOX_LIBCA_MODULES}})
@@ -86,7 +80,7 @@ target("grunt")
 target("grunt_cli")
     set_kind("binary")
     add_deps("grunt")
-    add_packages("mjbase", "libjbc", "libca", "libarchive")
+    add_packages("mjbase", "libjbc", "libca")
     add_files("src/cli/**.cpp")
     if is_plat("windows") then
         add_cxflags("/utf-8", {tools = "cl"})
@@ -98,7 +92,7 @@ target("grunt_unittest")
         set_enabled(false)
     end
     add_deps("grunt")
-    add_packages("gtest", "mjbase", "libjbc", "libca", "libarchive")
+    add_packages("gtest", "mjbase", "libjbc", "libca")
     add_files("test/unittest/**.cpp")
     set_rundir("$(projectdir)")
     if is_plat("windows") then
