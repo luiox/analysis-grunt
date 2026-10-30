@@ -65,10 +65,12 @@ grunt.DeadMember,grunt.FlagsStrip,grunt.BoogerAnnoStrip
 
 ## Build
 
-需要本地 mjbase 检出且含 plugin 接口（plugin-api 分支及以上），默认找 `../mjbase-plugin-api`，用 `MJBASE_DIR` 覆盖：
+mjbase 经 luiox-repo 中心包仓消费（`xmake f` 自动添加仓源并拉取 mjbase /
+libjbc / libca 及传递闭包），无需本地 mjbase 检出。libjsim 仍是源码级
+header-only 依赖：默认找兄弟目录 `../libjsim`，用 `LIBSIM_DIR` 覆盖。
 
 ```sh
-MJBASE_DIR=/path/to/mjbase-plugin-api xmake f
+xmake f
 xmake build grunt_cli
 ```
 
