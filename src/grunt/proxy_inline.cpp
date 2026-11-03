@@ -17,6 +17,7 @@
 
 #include "grunt/container.hpp"
 #include "grunt/proof_toolbox.hpp"
+#include "grunt/scan_toolbox.hpp"
 
 namespace grunt::proxy_inline {
 
@@ -174,37 +175,8 @@ std::string keyOf(std::string_view owner, std::string_view name, std::string_vie
     return k;
 }
 
-/// owner 类 `<clinit>` 是否「中性」（缺失，或只剩 NOP/RETURN 且无异常表）。
-///
-/// 这是初始化暴露门的保守面：改指真实目标会丢掉对 owner 类的主动使用，
-/// 只有确认初始化器什么都不做时才允许 owner 外的调用点存活。
-bool clinitNeutral(ir::ClassSession& session)
-{
-    const ir::ClassUnit& unit        = session.unit();
-    ca::usize            clinitIndex = kNoIndex;
-    for (ca::usize i = 0; i < unit.methods.size(); ++i) {
-        if (unit.symbols().str(unit.methods[i].name) == "<clinit>") {
-            clinitIndex = i;
-            break;
-        }
-    }
-    if (clinitIndex == kNoIndex) return true;
-    if (!ir::hasCode(session, clinitIndex)) return true;
-
-    auto promoted = ir::promoteMethod(session, clinitIndex);
-    if (promoted.is_err()) return false;
-    ir::CodeUnit* cu = promoted.unwrap().get();
-    if (cu == nullptr) return false;
-    if (!cu->exc.empty()) return false;
-
-    for (const ir::InsnId id : cu->dom.order()) {
-        const ir::Insn* in = cu->dom.peek(id);
-        if (in == nullptr) continue;
-        if (in->op == Op::NOP || in->op == Op::RETURN) continue;
-        return false;
-    }
-    return true;
-}
+/// owner 类 `<clinit>` 中性判定收口在 scan_toolbox（classInitNeutral），
+/// 与 constant_call 的类初始化门同源。
 
 /// 代理定义：体形成立时记下转发目标。
 struct ProxyDef
@@ -462,7 +434,7 @@ void collectSites(const mjbase::model::ResourceContainer& container, const Proxy
                 auto session = openSession(*entry.bytes);
                 if (!session) return;
                 if (session->backing().thisName() != owner) return;
-                neutral = clinitNeutral(*session);
+                neutral = scan_tools::classInitNeutral(*session);
             });
             verdict = neutral ? 1 : 0;
             if (!neutral) {

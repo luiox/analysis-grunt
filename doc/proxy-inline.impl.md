@@ -60,5 +60,5 @@ pc（跨会话稳定），与其他 invoke 面残留同一套锚定方式。
   的 ACC_BRIDGE 豁免不再误保这些死代理体。
 - 转发目标可解析性不在本残留验：目标可以是容器外方法（JDK / 依赖库），
   改写只动调用点的方法引用，解析交给加载期。
-- owner 中性门复用了 constant_call 的 `classInitNeutral` 口径（当前各自
-  文件内实现），收敛进扫描工具箱是下批的事。
+- owner 中性门与 constant_call 的类初始化门同源：`classInitNeutral` 收口在
+  扫描工具箱（scan_toolbox.hpp），两个残留共用一份实现。

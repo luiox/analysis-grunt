@@ -23,6 +23,7 @@
 #include "grunt/knowledge/const_args.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/rewrite_toolbox.hpp"
+#include "grunt/scan_toolbox.hpp"
 
 #include "jsim/indy.hpp"
 #include "jsim/num.hpp"
@@ -117,40 +118,8 @@ void buildIndex(const mjbase::model::ResourceContainer& container, MethodIndex& 
     });
 }
 
-/// 被调类的 `<clinit>` 是否「中性」（缺失，或只剩 NOP/RETURN 且无异常表）。
-///
-/// 这是保守面而不是判据：删掉 invokestatic 会改变类初始化时机，只有确认
-/// 初始化器什么都不做时才允许折叠。
-bool classInitNeutral(ir::ClassSession& session)
-{
-    const ir::ClassUnit& unit = session.unit();
-    ca::usize            clinitIndex = kNoIndex;
-    for (ca::usize i = 0; i < unit.methods.size(); ++i) {
-        if (unit.symbols().str(unit.methods[i].name) == "<clinit>") {
-            clinitIndex = i;
-            break;
-        }
-    }
-    if (clinitIndex == kNoIndex) return true;
-    if (!ir::hasCode(session, clinitIndex)) return true;
-
-    auto promoted = ir::promoteMethod(session, clinitIndex);
-    if (promoted.is_err()) return false;
-    ir::CodeUnit* cu = promoted.unwrap().get();
-    if (cu == nullptr) return false;
-    if (!cu->exc.empty()) return false;
-
-    for (const ir::InsnId id : cu->dom.order()) {
-        const ir::Insn* in = cu->dom.peek(id);
-        if (in == nullptr) continue;
-        if (in->op == Op::NOP || in->op == Op::RETURN) continue;
-        return false;
-    }
-    return true;
-}
-
 /// 求值段：装好扩展包的 jsim 执行器逐站点跑目标方法；通过者写回 `value`，
-/// 失败者转成拒绝记录。类初始化门仍在目标会话上先判。
+/// 失败者转成拒绝记录。类初始化门（scan_tools::classInitNeutral）先判。
 void evaluateSites(const mjbase::model::ResourceContainer& container,
                    std::vector<Site>& sites, std::vector<RejectedSite>& rejects)
 {
@@ -176,7 +145,7 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
             const auto group = byOwner.find(std::string(self));
             if (group == byOwner.end()) return;
 
-            if (!classInitNeutral(*session)) {
+            if (!scan_tools::classInitNeutral(*session)) {
                 for (const ca::usize si : group->second) {
                     rejects.push_back(RejectedSite{sites[si].callerOwner, sites[si].callerMethod,
                                                    sites[si].callSrcPc,
