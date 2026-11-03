@@ -7,6 +7,7 @@
 # 用法：CORPUS=<dir> ./test/corpus-regress.sh
 #      NO_VERIFY=1 跳过校验器（无 JDK 环境）
 #      JAR_TIMEOUT=120 单罐上限秒数（0 = 不限时）；超时记 FAIL run 继续下一罐
+#      ONLY=<glob> 只跑名字匹配的罐（? * 通配，全名匹配 basename）；空 = 全跑
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,6 +33,14 @@ fail=0
 total=0
 for jar in "$CORPUS"/*.jar; do
     [ -e "$jar" ] || continue
+    name="$(basename "$jar" .jar)"
+    # 续跑过滤：只跑名字匹配 ONLY 通配的罐（空 = 全跑）。
+    if [ -n "${ONLY:-}" ]; then
+        case "$name" in
+        $ONLY) ;;
+        *) continue ;;
+        esac
+    fi
     total=$((total + 1))
     name="$(basename "$jar" .jar)"
     dst="$OUT/$name.out.jar"
