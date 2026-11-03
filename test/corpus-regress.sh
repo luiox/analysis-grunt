@@ -6,11 +6,13 @@
 #
 # 用法：CORPUS=<dir> ./test/corpus-regress.sh
 #      NO_VERIFY=1 跳过校验器（无 JDK 环境）
+#      JAR_TIMEOUT=120 单罐上限秒数（0 = 不限时）；超时记 FAIL run 继续下一罐
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CORPUS="${CORPUS:-$ROOT/../run-lab}"
-CLI="$ROOT/build/windows/x64/release/grunt_cli.exe"
+# GRUNT_CLI 可指向快照 exe：边开发边跑语料时，锁住当轮被测对象不被重建影响。
+CLI="${GRUNT_CLI:-$ROOT/build/windows/x64/release/grunt_cli.exe}"
 [ -x "$CLI" ] || CLI="$ROOT/build/linux/x64/release/grunt_cli"
 PASSES="${PASSES:-grunt.ConstantCall}"
 OUT="${OUT:-$(mktemp -d)}"
@@ -34,7 +36,8 @@ for jar in "$CORPUS"/*.jar; do
     name="$(basename "$jar" .jar)"
     dst="$OUT/$name.out.jar"
 
-    if ! "$CLI" -i "$jar" -o "$dst" -p "$PASSES" 2>"$OUT/$name.err"; then
+    # 单罐上限：循环互卡 / 死循环罐用 timeout 兜底，超时记 FAIL run 继续。
+    if ! timeout "${JAR_TIMEOUT:-0}" "$CLI" -i "$jar" -o "$dst" -p "$PASSES" 2>"$OUT/$name.err"; then
         echo "FAIL run   $name"
         sed -n '1,5p' "$OUT/$name.err" >&2
         fail=$((fail + 1))
@@ -51,7 +54,7 @@ for jar in "$CORPUS"/*.jar; do
     fi
 
     if [ "${NO_VERIFY:-0}" != "1" ] && command -v java >/dev/null 2>&1; then
-        if ! java -Xverify:all "$ROOT/test/tools/VerifyJar.java" "$dst" --quiet >"$OUT/$name.verify" 2>&1; then
+        if ! timeout "${JAR_TIMEOUT:-0}" java -Xverify:all "$ROOT/test/tools/VerifyJar.java" "$dst" --quiet >"$OUT/$name.verify" 2>&1; then
             echo "FAIL verify $name"
             sed -n '1,10p' "$OUT/$name.verify" >&2
             fail=$((fail + 1))
