@@ -17,6 +17,7 @@
 #include "grunt/indy_fold.hpp"
 #include "grunt/number_fold.hpp"
 #include "grunt/predicate_fold.hpp"
+#include "grunt/proxy_inline.hpp"
 #include "grunt/seed_strip.hpp"
 #include "grunt/trampoline_squeeze.hpp"
 
@@ -420,6 +421,43 @@ mjbase::spi::PreservedAnalyses NumberFoldPass::run(
                      dirty.skippedByRoundTrip, proof.ok ? "ok" : "FAILED");
         for (const std::string& f : proof.failed) {
             std::fprintf(stderr, "[grunt.NumberFold] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses ProxyInlinePass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+    const proxy_inline::ScanResult scanned = proxy_inline::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr, "[grunt.ProxyInline] scan: proxies=%zu sites=%zu rejects=%zu\n",
+                     scanned.proxiesFound, scanned.sites.size(), scanned.rejects.size());
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const proxy_inline::DirtySet dirty = proxy_inline::rewrite(container, scanned);
+    const proxy_inline::ProofResult proof =
+        proxy_inline::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.ProxyInline] rewrite: classes=%zu sites=%zu/%zu proxies=%zu"
+                     " skipped=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.applied, dirty.attempted, dirty.proxies,
+                     dirty.skippedByRoundTrip, proof.ok ? "ok" : "FAILED");
+        static const char* kRwReason[] = {"ok", "call-not-found", "member-mismatch", "slot-fail"};
+        for (ca::usize i = 0; i < dirty.failedByReason.size(); ++i) {
+            if (dirty.failedByReason[i] == 0) continue;
+            const char* name = i < sizeof(kRwReason) / sizeof(kRwReason[0]) ? kRwReason[i] : "?";
+            std::fprintf(stderr, "[grunt.ProxyInline]   %-16s %zu\n", name,
+                         dirty.failedByReason[i]);
+        }
+        for (const std::string& f : proof.failed) {
+            std::fprintf(stderr, "[grunt.ProxyInline] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

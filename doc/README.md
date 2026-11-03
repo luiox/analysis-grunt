@@ -34,6 +34,8 @@
 | [number-fold.impl.md](number-fold.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
 | [indy-fold.md](indy-fold.md) | indy 解密调用点：BSM 藏目标、模拟执行求真目标的形态 |
 | [indy-fold.impl.md](indy-fold.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
+| [proxy-inline.md](proxy-inline.md) | 代理方法：恒等转发体的形态与初始化时序约束 |
+| [proxy-inline.impl.md](proxy-inline.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
 
 ## 约定
 
