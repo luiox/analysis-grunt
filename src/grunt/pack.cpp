@@ -126,6 +126,16 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         return Err(std::string("grunt.NumberFold"));
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.FieldAccessProxy",
+            [] { return std::make_unique<FieldAccessProxyPass>(); },
+            "Rewrite call sites of static field-access proxy methods (body is a plain"
+            " argument walk plus a single field access) back to the real get/put field"
+            " in place; inlined proxy bodies become dead code for downstream"
+            " DeadMember/DeadCode.");
+        r.is_err()) {
+        return Err(std::string("grunt.FieldAccessProxy"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.ProxyInline",
             [] { return std::make_unique<ProxyInlinePass>(); },
             "Retarget call sites of static proxy methods (body is a plain"

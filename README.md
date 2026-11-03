@@ -23,16 +23,17 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.IndyFold` | 把 `invokedynamic` 调用点还原成真实 `invoke`：在 libjsim 里跑 bootstrap 方法，读出 `CallSite` 的 `MethodHandle` 静态目标后改写调用点 | BSM 在常量实参下可模拟执行 ∧ 产出的 `MethodHandle` 解析为 `invokeStatic`/`invokeVirtual` 形态 ∧ 目标可解析；BoogerV2 语料实测 foldable=0（BSM 形态不在纯目标子集内），判据面向换代样本 | S3 |
 | `grunt.NumberFold` | 把藏形数值常量跨度折回单条常量装载：XOR 隐匿 int 走廊（`I2L..LXOR..L2I` / `L2I..IXOR`）、基 32 `Long.parseUnsignedLong` long 跨度、`intBitsToFloat`/`longBitsToDouble` 位形包装 | 跨度逐条吻合 ∧ 操作数全为紧邻纯常量装载（基 32 键严格解析、radix 恒 32）∧ 包装引用三元组与实参类型精确吻合 ∧ 跨度中段无标签（合并点放弃） | S2 |
 | `grunt.ProxyInline` | 把 static 代理方法（体 = 实参逐槽过手 + 单次 static/virtual invoke + 匹配返回）的调用点原地改指回真实目标；内联后代理变零引用死码交下游 DeadMember/DeadCode | 方法体形状（直线无标签无异常表 ∧ 实参逐槽类型/槽位精确 ∧ 转发只认 invokestatic/invokevirtual ∧ static 目标描述符全等 / virtual 目标首参=接收者）∧ 引用普查有调用点 ∧ 调用点越出 owner 类时 owner `<clinit>` 中性（初始化暴露门）；不依赖方法名/标志/家族名 | S2 |
+| `grunt.FieldAccessProxy` | 把 static 字段代理方法（体 = 实参逐槽过手 + 单次字段访问 + 匹配返回）的调用点原地改回真实 get/put 字段；改回后代理变零引用死码交下游 DeadMember/DeadCode | 方法体形状（直线无标签无异常表 ∧ 实参逐槽类型/槽位精确 ∧ 唯一字段访问与描述符互证：描述符恰为按该字段该有的形状）∧ 引用普查有调用点 ∧ 调用点越出 owner 类时 owner `<clinit>` 中性（初始化暴露门，与 constant_call/proxy_inline 单源）；不依赖方法名/标志/家族名 | S2 |
 
 `S1` = 语义后果：混淆器为了保持功能必须如此，改了自己就坏。`S2` = 结构性清理：判据成立即安全，但混淆器换代可能换形态。`S3` = 面向未来形态的预留面：当前语料无站点，判据按形态写、按换代样本验收。判据不依赖方法名、签名形状、所在类或注入模板，所以 Grunt 换代不需要改这一行。
 
 ## 链序
 
-主线（13 pass，BoogerV2 语料整链验收）：
+主线（14 pass，BoogerV2 语料整链验收；FieldAccessProxy 为后续批次接入）：
 
 ```
 grunt.TrampolineSqueeze,grunt.NumberFold,grunt.IndyFold,grunt.ConstMethod,
-grunt.ProxyInline,grunt.ConstantCall,grunt.PredicateFold,grunt.SeedStrip,
+grunt.ProxyInline,grunt.FieldAccessProxy,grunt.ConstantCall,grunt.PredicateFold,grunt.SeedStrip,
 grunt.ConstValuePromote,grunt.DeadCode,grunt.DeadMember,grunt.FlagsStrip,
 grunt.BoogerAnnoStrip
 ```
@@ -84,7 +85,7 @@ xmake build grunt_cli
 
 ```sh
 ./build/windows/x64/release/grunt_cli.exe -i in.jar -o out.jar \
-  -p grunt.TrampolineSqueeze,grunt.IndyFold,grunt.ConstMethod,grunt.ProxyInline,grunt.ConstantCall,grunt.PredicateFold,grunt.SeedStrip,grunt.ConstValuePromote,grunt.DeadCode,grunt.DeadMember,grunt.FlagsStrip,grunt.BoogerAnnoStrip
+  -p grunt.TrampolineSqueeze,grunt.IndyFold,grunt.ConstMethod,grunt.ProxyInline,grunt.FieldAccessProxy,grunt.ConstantCall,grunt.PredicateFold,grunt.SeedStrip,grunt.ConstValuePromote,grunt.DeadCode,grunt.DeadMember,grunt.FlagsStrip,grunt.BoogerAnnoStrip
 ```
 
 直接调构建产物，别用 `xmake run grunt_cli --`：xmake 会吞掉/改写一部分参数（引号与逗号尤其容易走样）。

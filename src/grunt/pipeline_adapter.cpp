@@ -13,6 +13,7 @@
 #include "grunt/container.hpp"
 #include "grunt/dead_code.hpp"
 #include "grunt/dead_member.hpp"
+#include "grunt/field_access_proxy.hpp"
 #include "grunt/flags_strip.hpp"
 #include "grunt/indy_fold.hpp"
 #include "grunt/number_fold.hpp"
@@ -458,6 +459,45 @@ mjbase::spi::PreservedAnalyses ProxyInlinePass::run(
         }
         for (const std::string& f : proof.failed) {
             std::fprintf(stderr, "[grunt.ProxyInline] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+
+mjbase::spi::PreservedAnalyses FieldAccessProxyPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+    const field_access_proxy::ScanResult scanned = field_access_proxy::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.FieldAccessProxy] scan: proxies=%zu sites=%zu rejects=%zu\n",
+                     scanned.proxiesFound, scanned.sites.size(), scanned.rejects.size());
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const field_access_proxy::DirtySet dirty = field_access_proxy::rewrite(container, scanned);
+    const field_access_proxy::ProofResult proof =
+        field_access_proxy::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.FieldAccessProxy] rewrite: classes=%zu sites=%zu/%zu proxies=%zu"
+                     " skipped=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.applied, dirty.attempted, dirty.proxies,
+                     dirty.skippedByRoundTrip, proof.ok ? "ok" : "FAILED");
+        static const char* kRwReason[] = {"ok", "call-not-found", "member-mismatch", "slot-fail"};
+        for (ca::usize i = 0; i < dirty.failedByReason.size(); ++i) {
+            if (dirty.failedByReason[i] == 0) continue;
+            const char* name = i < sizeof(kRwReason) / sizeof(kRwReason[0]) ? kRwReason[i] : "?";
+            std::fprintf(stderr, "[grunt.FieldAccessProxy]   %-16s %zu\n", name,
+                         dirty.failedByReason[i]);
+        }
+        for (const std::string& f : proof.failed) {
+            std::fprintf(stderr, "[grunt.FieldAccessProxy] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
