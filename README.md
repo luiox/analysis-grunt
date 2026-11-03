@@ -18,7 +18,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.DeadCode` | 清掉不可达指令，并收敛因此失效的异常表项 | CFG 可达性之外的指令；可达性**含异常边**——保护区间内任一可达指令都可能抛进 handler，故 handler 以「区间∩可达集」为根迭代到不动点。全死区间删表项，端点锚在死指令上时向前吸附到存活指令 | S2 |
 | `grunt.ConstValuePromote` | 把 `clinit` 里对该字段的单条常量 `putstatic` 回填成字段 `ConstantValue` 属性（并补 `ACC_FINAL`） | 字段在 `clinit` 里恰有一次常量写 ∧ 全容器无其他读写 ∧ 类型与常量种类吻合 | S1 |
 | `grunt.SeedStrip` | 拆掉 `clinit` 里的 `int[]` 种子建表跨度（首条 NOP 保锚，其余擦除） | `NEWARRAY` + `PUTSTATIC` 头 + `GETSTATIC`/`IASTORE` 组的固定形状 ∧ 跨度内运算只含整长算术与转换（除法族排除，可能抛异常）；中段有标签放弃 | S2 |
-| `grunt.DeadMember` | 删零引用方法、零引用私有/孤儿数组字段、空 `<clinit>`；先压池再算引用闭包 | 引用普查为零（先 `compact` 常量池，否则池常量虚撑引用）；方法面另有纯算术 / `synthetic+bridge` / 私有门三道保守门，`ACC_BRIDGE` 成员零引用也豁免（虚分派经桥，引用普查看不见） | S2 |
+| `grunt.DeadMember` | 删零引用方法、零引用私有/孤儿数组字段、空 `<clinit>`；先压池再算引用闭包 | 引用普查为零（先 `compact` 常量池，否则池常量虚撑引用）；方法面另有纯算术 / `synthetic+bridge` / 私有门三道保守门；容器有未收敛 BSM 时 public `synthetic+bridge` 候选整档宁留（indy 目标无 CP 明文引用，dead_member.impl.md 有取证结论） | S2 |
 | `grunt.BoogerAnnoStrip` | 容器里已无类引用 Booger 解密类后，摘掉残留的 `@Booger` 运行时注解条目 | 全容器无 `Booger` 类引用（解密体已被 `ConstantCall` 折成常量）∧ 注解描述符指向 `@Booger` | S2 |
 | `grunt.IndyFold` | 把 `invokedynamic` 调用点还原成真实 `invoke`：在 libjsim 里跑 bootstrap 方法，读出 `CallSite` 的 `MethodHandle` 静态目标后改写调用点 | BSM 在常量实参下可模拟执行 ∧ 产出的 `MethodHandle` 解析为 `invokeStatic`/`invokeVirtual` 形态 ∧ 目标可解析；BoogerV2 语料实测 foldable=0（BSM 形态不在纯目标子集内），判据面向换代样本 | S3 |
 | `grunt.NumberFold` | 把藏形数值常量跨度折回单条常量装载：XOR 隐匿 int 走廊（`I2L..LXOR..L2I` / `L2I..IXOR`）、基 32 `Long.parseUnsignedLong` long 跨度、`intBitsToFloat`/`longBitsToDouble` 位形包装 | 跨度逐条吻合 ∧ 操作数全为紧邻纯常量装载（基 32 键严格解析、radix 恒 32）∧ 包装引用三元组与实参类型精确吻合 ∧ 跨度中段无标签（合并点放弃） | S2 |
