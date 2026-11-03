@@ -24,3 +24,24 @@ nop/const/locals（0x00-0x2d）、store（0x36-0x4e）、栈操作（0x57-0x5f�
 方法 `owner::name::desc`，字段 `owner::name`。BootstrapMethods 引用的
 MethodHandle→Methodref 在压缩闭包内存活，自然计入活引用——indy 引导方法
 引用的成员不会被误删。
+
+## 伪 bridge 豁免核查（本批取证结论，不改门）
+
+核查诉求：「ACC_BRIDGE 零引用豁免会误保伪 bridge 死代理，是否需要非真桥
+排除面（如带操作数 xload 的伪 bridge）」。取证结论：**不改**。
+
+- ACC_BRIDGE 在 Grunteon 3.0.0 生成面不携带信息：FakeSyntheticBridge（跑在
+  MethodRenamer 之后）给全体非 abstract 方法补 ACC_BRIDGE|ACC_SYNTHETIC——
+  真方法、indy 目标、死代理同一形状。「真桥排除面」（实例 + 同名转发体）
+  会把这类罐里几乎所有成员从豁免里摘出去，恰好打掉豁免要保的对象。
+- 豁免的触发条件是 bsmUnresolved（容器存在未收敛 BSM）：该前提下任何
+  public synthetic/bridge 成员都无法证明零引用死（BSM 运行时 findStatic
+  的目标没有 CP 明文引用），误保死代理是设计内的保守价。indy_fold 收敛后
+  （bsmFailed=0）豁免不再触发，死代理走 gateB + 引用普查正常删除；链序上
+  indy_fold 恒在 dead_member 之前。
+- 「带操作数 xload 的伪 bridge」体形排除对 indy 目标同样成立不了：indy
+  目标是真方法体，普遍带操作数装载，与死代理形状无法区分；pureArith
+  （gateA）已是唯一不进豁免的体形删除面。
+
+误保窗口只在 bsmUnresolved 轮打开，不构成正确性缺陷；ProxyInline /
+FieldAccessProxy 落地后死代理变多，同窗口内同价保留。
