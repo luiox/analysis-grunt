@@ -298,6 +298,94 @@ TEST(DeadMemberRuntime, KeepsSyntheticBridgeWhenBsmUnresolved)
     EXPECT_EQ(after.find("helper"), std::string::npos) << after;
 }
 
+// ============================================================================
+// ==== 空壳类回收：全成员死 + 全容器零引用 → 摘类 ==============================
+// ============================================================================
+
+TEST(DeadMemberShell, RemovesUnreferencedProxyShellClass)
+{
+    // 外置代理壳形态：C$InvokeProxy 全成员是死候选（零引用 private/合成），
+    // 删净后零成员零字段，且全容器无 CP 引用——整类摘除。
+    model::ResourceContainer container = makeContainer({
+        {"Host", hostPrelude() + hostTail()},
+        {"C$InvokeProxy",
+         ".super java/lang/Object\n"
+         ".class public super C$InvokeProxy {\n"
+         "  .method private static p (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      iadd\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ca::usize before = 2;
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    ASSERT_EQ(dirty.classes, 1u) << "代理壳类应整类摘除";
+    ASSERT_EQ(container.hasResource("C$InvokeProxy.class"), false);
+    const ProofResult verdict = proof(container, dirty, before);
+    EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
+}
+
+TEST(DeadMemberShell, KeepsShellClassReferencedByCp)
+{
+    // 反证：壳类形态但别类 CP 有引用（new/字段类型描述符）——不摘。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         hostPrelude() +
+             "  .method public static make ()LC$Proxy; {\n"
+             "    code: {\n"
+             "      aconst_null\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n" +
+             hostTail()},
+        {"C$Proxy",
+         ".super java/lang/Object\n"
+         ".class public super C$Proxy {\n"
+         "  .method private static p (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      iadd\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    EXPECT_EQ(dirty.classes, 0u) << "CP 描述符引用的壳类不摘";
+    EXPECT_EQ(container.hasResource("C$Proxy.class"), true);
+}
+
+TEST(DeadMemberShell, KeepsClassWithMainMethod)
+{
+    // 反证：main 所在类有成员（main 永不是删除候选），零成员门天然挡住；
+    // 只有 main 一个成员的类不摘。
+    model::ResourceContainer container = makeContainer({
+        {"Main",
+         ".super java/lang/Object\n"
+         ".class public super Main {\n"
+         "  .method public static main ([Ljava/lang/String;)V {\n"
+         "    code: {\n"
+         "      return\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    EXPECT_EQ(dirty.classes, 0u) << "含 main 的主类不摘";
+    EXPECT_EQ(container.hasResource("Main.class"), true);
+}
+
 TEST(DeadMemberRuntime, ProofHoldsOnRuntimeReferencedClass)
 {
     model::ResourceContainer container = makeContainer({
