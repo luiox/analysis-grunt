@@ -4,12 +4,21 @@
 /// 各插件仓自组 CLI：mjbase 出框架（注册表/管线/容器 IO/workspace 装配），
 /// 本仓只出 pack 与残留实现。
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <io.h>
+#endif
+
 #include "grunt/pack.hpp"
+#include "grunt/pipeline_adapter.hpp"
 
 #include "cli/sim_probe.hpp"
 
@@ -30,6 +39,29 @@
 #include "mjbase/spi/strict_type_resolver.hpp"
 
 namespace {
+
+/// @brief 罐级 fail-closed 的进程收口：未处理 SEH（堆损坏类硬崩——崩点在
+/// ntdll 堆管理器内部，catch(...) 既接不住也续不得）在此点名罐与崩时 pass，
+/// 以 rc=3 终止。只写字面量到 fd=2，不碰堆（此刻堆不可信）。
+const char* gCrashInput = nullptr;
+
+#if defined(_WIN32)
+LONG WINAPI crashFilter(EXCEPTION_POINTERS* ep)
+{
+    char        buf[256];
+    const LONG  code = ep != nullptr && ep->ExceptionRecord != nullptr
+                           ? ep->ExceptionRecord->ExceptionCode
+                           : 0;
+    const char* pass = grunt::gActivePass != nullptr ? grunt::gActivePass : "?";
+    const char* jar  = gCrashInput != nullptr ? gCrashInput : "?";
+    const int   n = _snprintf(buf, sizeof(buf) - 1,
+                             "罐级 fail-closed：硬崩（SEH %08lX @ pass %s）：%s\n",
+                             static_cast<unsigned long>(code), pass, jar);
+    if (n > 0) _write(2, buf, n);
+    ExitProcess(3);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
 
 constexpr const char* kUsage =
     "grunt_cli -i in.jar -o out.jar -p grunt.X[,grunt.Y...] [-c pack.json]\n"
@@ -68,6 +100,10 @@ std::vector<std::string> splitNames(const std::string& list)
 
 int main(int argc, char** argv)
 {
+#if defined(_WIN32)
+    SetUnhandledExceptionFilter(crashFilter);
+#endif
+
     mjbase::log::initDefaultLogger();
 
     std::string input;
@@ -159,6 +195,8 @@ int main(int argc, char** argv)
         return 2;
     }
 
+    gCrashInput = input.c_str();
+
     mjbase::spi::PipelineBuilder builder;
     for (const std::string& name : splitNames(passList)) {
         if (auto r = mjbase::spi::applyTo(registry, name, builder); r.is_err()) {
@@ -175,36 +213,46 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    mjbase::spi::PassJobContext job;
+    // 罐级 fail-closed：框架段（层次图装配/管线驱动/导出）的异常与 SEH 硬崩
+    // 不许无声穿透——pass 段已由 FailClosedPass 单点收口，这里是最后一道。
+    try {
+        mjbase::spi::PassJobContext job;
 
-    // 帧链接线（pass-contract §9：resolver 数据获取是调用方的事）：本 jar 的类
-    // 登记成层次图，Strict resolver 注入管线选项。折叠会改变方法体长度，既有
-    // StackMapTable 必须整体重算——未注入 resolver 时管线只做 relocation。
-    mjbase::KeyPool                                   pool;
-    mjbase::hierarchy::ClassHierarchy                 hierarchy(pool);
-    const std::vector<mjbase::analysis::ScannedClass> scanned =
-        mjbase::analysis::scanClassResources(container);
-    for (const mjbase::analysis::ScannedClass& sc : scanned) {
-        if (!sc.session) continue;
-        (void)hierarchy.addClass(mjbase::hierarchy::fillSummary(*sc.session, pool));
-    }
-    mjbase::spi::CommonSuperClassResolver  superResolver(hierarchy);
-    mjbase::spi::StrictTypeResolverAdapter typeResolver(superResolver);
-    mjbase::spi::PassPipelineOptions       options;
-    options.typeResolver = &typeResolver;
+        // 帧链接线（pass-contract §9：resolver 数据获取是调用方的事）：本 jar 的类
+        // 登记成层次图，Strict resolver 注入管线选项。折叠会改变方法体长度，既有
+        // StackMapTable 必须整体重算——未注入 resolver 时管线只做 relocation。
+        mjbase::KeyPool                                   pool;
+        mjbase::hierarchy::ClassHierarchy                 hierarchy(pool);
+        const std::vector<mjbase::analysis::ScannedClass> scanned =
+            mjbase::analysis::scanClassResources(container);
+        for (const mjbase::analysis::ScannedClass& sc : scanned) {
+            if (!sc.session) continue;
+            (void)hierarchy.addClass(mjbase::hierarchy::fillSummary(*sc.session, pool));
+        }
+        mjbase::spi::CommonSuperClassResolver  superResolver(hierarchy);
+        mjbase::spi::StrictTypeResolverAdapter typeResolver(superResolver);
+        mjbase::spi::PassPipelineOptions       options;
+        options.typeResolver = &typeResolver;
 
-    auto gpm = builder.buildNestedPipeline(job, nullptr, nullptr, options);
-    if (auto r = mjbase::spi::runContainerPipeline(container, gpm, job); r.is_err()) {
-        std::fprintf(stderr, "管线失败（%s@%s）：%s\n",
-                     mjbase::spi::to_string(r.unwrap_err().stage),
-                     r.unwrap_err().target.c_str(), r.unwrap_err().detail.c_str());
+        auto gpm = builder.buildNestedPipeline(job, nullptr, nullptr, options);
+        if (auto r = mjbase::spi::runContainerPipeline(container, gpm, job); r.is_err()) {
+            std::fprintf(stderr, "管线失败（%s@%s）：%s\n",
+                         mjbase::spi::to_string(r.unwrap_err().stage),
+                         r.unwrap_err().target.c_str(), r.unwrap_err().detail.c_str());
+            return 3;
+        }
+
+        if (auto m = mjbase::model::ResourceHelper::exportToJar(container, output); m.is_err()) {
+            std::fprintf(stderr, "jar 导出失败（%s）：%s\n", mjbase::model::to_string(m.unwrap_err()),
+                         output.c_str());
+            return 2;
+        }
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "罐级 fail-closed：异常穿透（%s）：%s\n", e.what(), input.c_str());
         return 3;
-    }
-
-    if (auto m = mjbase::model::ResourceHelper::exportToJar(container, output); m.is_err()) {
-        std::fprintf(stderr, "jar 导出失败（%s）：%s\n", mjbase::model::to_string(m.unwrap_err()),
-                     output.c_str());
-        return 2;
+    } catch (...) {
+        std::fprintf(stderr, "罐级 fail-closed：硬崩（SEH 穿透）：%s\n", input.c_str());
+        return 3;
     }
     return 0;
 }

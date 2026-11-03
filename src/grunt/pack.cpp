@@ -22,7 +22,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
 {
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.ConstantCall",
-            [] { return std::make_unique<ConstantCallPass>(); },
+            [] { return makeFailClosed<ConstantCallPass>("grunt.ConstantCall"); },
             "Fold invokestatic sites whose arguments are all constants and whose target"
             " is a pure numeric method into a single constant load.");
         r.is_err()) {
@@ -30,7 +30,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.FlagsStrip",
-            [] { return std::make_unique<FlagsStripPass>(); },
+            [] { return makeFailClosed<FlagsStripPass>("grunt.FlagsStrip"); },
             "Clear bogus ACC_SYNTHETIC/ACC_BRIDGE access flags on static members"
             " (Java 11+ non-enum classes only).");
         r.is_err()) {
@@ -38,7 +38,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.ConstMethod",
-            [] { return std::make_unique<ConstMethodPass>(); },
+            [] { return makeFailClosed<ConstMethodPass>("grunt.ConstMethod"); },
             "Inline invokestatic calls whose target body is a single constant producer"
             " (primitive TYPE getters, int constants, null) into a constant load.");
         r.is_err()) {
@@ -46,7 +46,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.TrampolineSqueeze",
-            [] { return std::make_unique<TrampolineSqueezePass>(); },
+            [] { return makeFailClosed<TrampolineSqueezePass>("grunt.TrampolineSqueeze"); },
             "NOP out gotos that jump to their sequential successor (obfuscator"
             " trampolines), keeping srcPc so downstream argument collection sees"
             " through.");
@@ -55,7 +55,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.PredicateFold",
-            [] { return std::make_unique<PredicateFoldPass>(); },
+            [] { return makeFailClosed<PredicateFoldPass>("grunt.PredicateFold"); },
             "Statically decide branches and switches whose operands are all"
             " constant loads (decoy blocks become dead code).");
         r.is_err()) {
@@ -63,7 +63,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.DeadCode",
-            [] { return std::make_unique<DeadCodePass>(); },
+            [] { return makeFailClosed<DeadCodePass>("grunt.DeadCode"); },
             "Remove unreachable instruction sequences found by exception-table-aware"
             " control-flow reachability; dead exception ranges are dropped and"
             " endpoint anchors snapped forward to a live instruction.");
@@ -72,7 +72,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.ConstValuePromote",
-            [] { return std::make_unique<ConstValuePromotePass>(); },
+            [] { return makeFailClosed<ConstValuePromotePass>("grunt.ConstValuePromote"); },
             "Back-fill clinit's single constant putstatic into the field's"
             " ConstantValue attribute (plus ACC_FINAL).");
         r.is_err()) {
@@ -80,7 +80,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.SeedStrip",
-            [] { return std::make_unique<SeedStripPass>(); },
+            [] { return makeFailClosed<SeedStripPass>("grunt.SeedStrip"); },
             "Erase int[] seed-table construction spans in <clinit> (NEWARRAY +"
             " PUTSTATIC head, GETSTATIC/IASTORE groups), pruning orphan SMT"
             " frames before lowering.");
@@ -89,7 +89,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.DeadMember",
-            [] { return std::make_unique<DeadMemberPass>(); },
+            [] { return makeFailClosed<DeadMemberPass>("grunt.DeadMember"); },
             "Delete zero-reference methods (pure-arith / synthetic+bridge /"
             " private gates), zero-reference private and orphan-array fields,"
             " and empty <clinit>s; compacts the constant pool first so the"
@@ -99,7 +99,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.BoogerAnnoStrip",
-            [] { return std::make_unique<BoogerAnnoStripPass>(); },
+            [] { return makeFailClosed<BoogerAnnoStripPass>("grunt.BoogerAnnoStrip"); },
             "Strip @Booger runtime annotation entries once no class in the"
             " container references the Booger class anymore (decryption bodies"
             " folded away).");
@@ -108,7 +108,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.IndyFold",
-            [] { return std::make_unique<IndyFoldPass>(); },
+            [] { return makeFailClosed<IndyFoldPass>("grunt.IndyFold"); },
             "Fold invokedynamic call sites whose bootstrap method resolves to a"
             " plain static/virtual target: run the BSM under libjsim, read the"
             " CallSite handle, and rewrite the site into a real invoke.");
@@ -117,7 +117,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.NumberFold",
-            [] { return std::make_unique<NumberFoldPass>(); },
+            [] { return makeFailClosed<NumberFoldPass>("grunt.NumberFold"); },
             "Restore hidden numeric constants: XOR-through-long int spans,"
             " base-32 Long.parseUnsignedLong long spans, and their"
             " intBitsToFloat/longBitsToDouble wrappers fold into single"
@@ -127,7 +127,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.FieldAccessProxy",
-            [] { return std::make_unique<FieldAccessProxyPass>(); },
+            [] { return makeFailClosed<FieldAccessProxyPass>("grunt.FieldAccessProxy"); },
             "Rewrite call sites of static field-access proxy methods (body is a plain"
             " argument walk plus a single field access) back to the real get/put field"
             " in place; inlined proxy bodies become dead code for downstream"
@@ -137,7 +137,7 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.ProxyInline",
-            [] { return std::make_unique<ProxyInlinePass>(); },
+            [] { return makeFailClosed<ProxyInlinePass>("grunt.ProxyInline"); },
             "Retarget call sites of static proxy methods (body is a plain"
             " argument walk plus a single static/virtual invoke) back to the"
             " real target in place; inlined proxy bodies become dead code for"

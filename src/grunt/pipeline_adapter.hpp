@@ -4,9 +4,60 @@
 /// CONVENTION §9：deobf 核心零 pipeline 知识，编排词汇只活在本文件。
 #pragma once
 
+#include <cstdio>
+#include <exception>
+#include <memory>
+
 #include "mjbase/spi/pass_pipeline.hpp"
 
 namespace grunt {
+
+/// @brief 当前正在执行的 pass 名（崩溃过滤器点名用；管线外为空）。
+extern const char* gActivePass;
+
+/// @brief fail-closed 装饰器：pass 体抛出的异常（含 /EHa 下的 SEH 硬崩）不再
+/// 穿透管线——stderr 点名后按「本 pass 产出丢弃」收场，罐不拖垮整轮语料。
+///
+/// 口径对齐既有保守面：崩在哪一 pass 就丢哪一 pass 的产出，容器保有此前
+/// 已落盘状态；PreservedAnalyses 全弃（失效面最大，宁枉勿纵）。
+template <class Inner>
+class FailClosedPass final : public mjbase::spi::GlobalPass
+{
+public:
+    explicit FailClosedPass(const char* name) : name_(name) {}
+
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override
+    {
+        struct Scoped
+        {
+            const char* prev;
+            Scoped(const char* n) : prev(gActivePass) { gActivePass = n; }
+            ~Scoped() { gActivePass = prev; }
+        } scoped(name_);
+        try {
+            return inner_.run(container, am);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[grunt] fail-closed：%s 异常穿透（%s），本 pass 产出丢弃\n",
+                         name_, e.what());
+        } catch (...) {
+            std::fprintf(stderr, "[grunt] fail-closed：%s 硬崩（SEH 穿透），本 pass 产出丢弃\n",
+                         name_);
+        }
+        return mjbase::spi::PreservedAnalyses::none();
+    }
+
+private:
+    Inner       inner_;
+    const char* name_;
+};
+
+/// @brief 注册点统一入口：所有 pass 经此成 pass，异常面单点收口。
+template <class Inner>
+std::unique_ptr<mjbase::spi::GlobalPass> makeFailClosed(const char* name)
+{
+    return std::make_unique<FailClosedPass<Inner>>(name);
+}
 
 /// @brief `grunt.ConstantCall`：常量调用折叠的管线入口。
 ///
