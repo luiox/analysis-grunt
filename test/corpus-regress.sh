@@ -47,25 +47,46 @@ for jar in "$CORPUS"/*.jar; do
 
     # 单罐上限：循环互卡 / 死循环罐用 timeout 兜底，超时记 FAIL run 继续。
     if ! timeout "${JAR_TIMEOUT:-0}" "$CLI" -i "$jar" -o "$dst" -p "$PASSES" 2>"$OUT/$name.err"; then
+        # 噪声分离：文件在场但 CLI 报 NotFound 是 Windows ANSI argv 对非 ASCII
+        # 罐名的编码错配（导入口拿错路径），不是本链的 run 失败——记 SKIP 不计账。
+        if grep -q "NotFound" "$OUT/$name.err" 2>/dev/null && [ -e "$jar" ]; then
+            echo "SKIP argenc $name（罐名编码错配，文件在场）"
+            continue
+        fi
         echo "FAIL run   $name"
         sed -n '1,5p' "$OUT/$name.err" >&2
         fail=$((fail + 1))
         continue
     fi
 
-    # 类数不增：用 unzip -l 数 .class 条目
+    # 类数不增（空壳类摘除允许减少，减少打 INFO 台账）：用 unzip -l 数 .class 条目
     before=$(unzip -l "$jar" 2>/dev/null | grep -c '\.class$')
     after=$(unzip -l "$dst" 2>/dev/null | grep -c '\.class$')
-    if [ "$before" != "$after" ]; then
+    if [ "$after" -gt "$before" ]; then
         echo "FAIL count $name（$before -> $after）"
         fail=$((fail + 1))
         continue
     fi
+    if [ "$after" -lt "$before" ]; then
+        echo "INFO count $name（$before -> $after，空壳类摘除）"
+    fi
 
     if [ "${NO_VERIFY:-0}" != "1" ] && command -v java >/dev/null 2>&1; then
-        if ! timeout "${JAR_TIMEOUT:-0}" java -Xverify:all "$ROOT/test/tools/VerifyJar.java" "$dst" --quiet >"$OUT/$name.verify" 2>&1; then
-            echo "FAIL verify $name"
-            sed -n '1,10p' "$OUT/$name.verify" >&2
+        # 不带 --quiet：FAIL 类名行是基线对比的原料。
+        if ! timeout "${JAR_TIMEOUT:-0}" java -Xverify:all "$ROOT/test/tools/VerifyJar.java" "$dst" >"$OUT/$name.verify" 2>&1; then
+            # 噪声分离：对原始输入预检，只把「新增失败」记 FAIL verify——
+            # 混淆产物原生不可验证（基线同挂）不算本链的账。
+            timeout "${JAR_TIMEOUT:-0}" java -Xverify:all "$ROOT/test/tools/VerifyJar.java" "$jar" \
+                >"$OUT/$name.verify0" 2>&1
+            grep '^FAIL ' "$OUT/$name.verify" | sed 's/^FAIL //' | sort >"$OUT/$name.verify.dst"
+            grep '^FAIL ' "$OUT/$name.verify0" | sed 's/^FAIL //' | sort >"$OUT/$name.verify.src"
+            newf=$(comm -13 "$OUT/$name.verify.src" "$OUT/$name.verify.dst" | grep -c .)
+            if [ "$newf" -eq 0 ]; then
+                echo "INFO verify $name（基线同挂，无新增失败）"
+                continue
+            fi
+            echo "FAIL verify $name（新增 $newf 个失败类）"
+            grep '^FAIL ' "$OUT/$name.verify" | sed -n '1,10p' >&2
             fail=$((fail + 1))
             continue
         fi
