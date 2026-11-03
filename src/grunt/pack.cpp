@@ -115,6 +115,16 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.IndyFold"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.NumberFold",
+            [] { return std::make_unique<NumberFoldPass>(); },
+            "Restore hidden numeric constants: XOR-through-long int spans,"
+            " base-32 Long.parseUnsignedLong long spans, and their"
+            " intBitsToFloat/longBitsToDouble wrappers fold into single"
+            " constant loads.");
+        r.is_err()) {
+        return Err(std::string("grunt.NumberFold"));
+    }
     return Ok();
 }
 

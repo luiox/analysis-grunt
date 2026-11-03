@@ -99,4 +99,12 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
+/// @brief `grunt.NumberFold`：藏形数值常量还原（XOR 隐匿/基 32 长整/位形包装）。
+class NumberFoldPass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
 }   // namespace grunt

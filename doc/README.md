@@ -30,6 +30,8 @@
 | [dead-member.impl.md](dead-member.impl.md) | 本仓的 Scan / Rewrite / Proof，含压池后算引用闭包 |
 | [booger-anno-strip.md](booger-anno-strip.md) | 残留 `@Booger` 注解：解密体被折成常量后留下的空壳 |
 | [booger-anno-strip.impl.md](booger-anno-strip.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
+| [number-fold.md](number-fold.md) | 藏形数值常量：XOR 隐匿跨度、基 32 长整跨度、位形包装的形态 |
+| [number-fold.impl.md](number-fold.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
 
 ## 约定
 

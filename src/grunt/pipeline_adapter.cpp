@@ -15,6 +15,7 @@
 #include "grunt/dead_member.hpp"
 #include "grunt/flags_strip.hpp"
 #include "grunt/indy_fold.hpp"
+#include "grunt/number_fold.hpp"
 #include "grunt/predicate_fold.hpp"
 #include "grunt/seed_strip.hpp"
 #include "grunt/trampoline_squeeze.hpp"
@@ -389,6 +390,36 @@ mjbase::spi::PreservedAnalyses IndyFoldPass::run(mjbase::model::ResourceContaine
                      dirty.classes, dirty.sites, proof.ok ? "ok" : "FAILED");
         for (const std::string& f : proof.failed) {
             std::fprintf(stderr, "[grunt.IndyFold] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses NumberFoldPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+    const number_fold::ScanResult scanned = number_fold::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr, "[grunt.NumberFold] scan: sites=%zu skipped=%zu\n",
+                     scanned.sites.size(), scanned.classesSkipped);
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const number_fold::DirtySet dirty = number_fold::rewrite(container, scanned);
+    const number_fold::ProofResult proof =
+        number_fold::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.NumberFold] rewrite: classes=%zu sites=%zu/%zu failed=%zu"
+                     " roundtrip-skip=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.sites, dirty.attempted, dirty.failed,
+                     dirty.skippedByRoundTrip, proof.ok ? "ok" : "FAILED");
+        for (const std::string& f : proof.failed) {
+            std::fprintf(stderr, "[grunt.NumberFold] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

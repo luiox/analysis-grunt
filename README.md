@@ -21,24 +21,28 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.DeadMember` | 删零引用方法、零引用私有/孤儿数组字段、空 `<clinit>`；先压池再算引用闭包 | 引用普查为零（先 `compact` 常量池，否则池常量虚撑引用）；方法面另有纯算术 / `synthetic+bridge` / 私有门三道保守门，`ACC_BRIDGE` 成员零引用也豁免（虚分派经桥，引用普查看不见） | S2 |
 | `grunt.BoogerAnnoStrip` | 容器里已无类引用 Booger 解密类后，摘掉残留的 `@Booger` 运行时注解条目 | 全容器无 `Booger` 类引用（解密体已被 `ConstantCall` 折成常量）∧ 注解描述符指向 `@Booger` | S2 |
 | `grunt.IndyFold` | 把 `invokedynamic` 调用点还原成真实 `invoke`：在 libjsim 里跑 bootstrap 方法，读出 `CallSite` 的 `MethodHandle` 静态目标后改写调用点 | BSM 在常量实参下可模拟执行 ∧ 产出的 `MethodHandle` 解析为 `invokeStatic`/`invokeVirtual` 形态 ∧ 目标可解析；BoogerV2 语料实测 foldable=0（BSM 形态不在纯目标子集内），判据面向换代样本 | S3 |
+| `grunt.NumberFold` | 把藏形数值常量跨度折回单条常量装载：XOR 隐匿 int 走廊（`I2L..LXOR..L2I` / `L2I..IXOR`）、基 32 `Long.parseUnsignedLong` long 跨度、`intBitsToFloat`/`longBitsToDouble` 位形包装 | 跨度逐条吻合 ∧ 操作数全为紧邻纯常量装载（基 32 键严格解析、radix 恒 32）∧ 包装引用三元组与实参类型精确吻合 ∧ 跨度中段无标签（合并点放弃） | S2 |
 
 `S1` = 语义后果：混淆器为了保持功能必须如此，改了自己就坏。`S2` = 结构性清理：判据成立即安全，但混淆器换代可能换形态。`S3` = 面向未来形态的预留面：当前语料无站点，判据按形态写、按换代样本验收。判据不依赖方法名、签名形状、所在类或注入模板，所以 Grunt 换代不需要改这一行。
 
 ## 链序
 
-主线（11 pass，BoogerV2 语料整链验收）：
+主线（12 pass，BoogerV2 语料整链验收）：
 
 ```
-grunt.TrampolineSqueeze,grunt.IndyFold,grunt.ConstMethod,grunt.ConstantCall,
-grunt.PredicateFold,grunt.SeedStrip,grunt.ConstValuePromote,grunt.DeadCode,
-grunt.DeadMember,grunt.FlagsStrip,grunt.BoogerAnnoStrip
+grunt.TrampolineSqueeze,grunt.NumberFold,grunt.IndyFold,grunt.ConstMethod,
+grunt.ConstantCall,grunt.PredicateFold,grunt.SeedStrip,grunt.ConstValuePromote,
+grunt.DeadCode,grunt.DeadMember,grunt.FlagsStrip,grunt.BoogerAnnoStrip
 ```
 
-两条硬约束：
+三条硬约束：
 
 - **`TrampolineSqueeze` 排在实参收集面之前**：它把蹦床 `goto` 置 NOP 并保
-  `srcPc`，`ConstantCall` / `PredicateFold` 的紧邻常量收集才能看穿被压住
-  的操作数区。
+  `srcPc`，`NumberFold` / `ConstantCall` / `PredicateFold` 的紧邻常量收集
+  才能看穿被压住的操作数区。
+- **`NumberFold` 排在实参收集面之前**：它把藏形数值跨度折成纯常量装载，
+  `ConstantCall` / `PredicateFold` / `ConstMethod` 的实参收集只认纯常量
+  装载——藏形跨度夹在实参区里，下游整站失明。
 - **`ConstantCall` 排在折叠/清死之前**：它把调用点变成常量字面量，下游的
   `PredicateFold` / `ConstValuePromote` / 死码删除才有东西可折可清。
 
@@ -104,7 +108,7 @@ done
 xmake f --with_tests=y && xmake build grunt_unittest && xmake run grunt_unittest
 ```
 
-`test/unittest/constant_call_test.cpp` 覆盖三段判据：正例（短形态值、需落池的值）+ 逐条反证（非 static / void / synchronized / 实参非常量 / 目标不纯 / 目标不在容器 / 类初始化非空），改写侧断言「调用消失、字面量出现、实参装载全清」，proof 侧断言类数门。`flags_strip_test.cpp` 覆盖标志判据（清位面、`$` 名保留、旧类版本、枚举跳过、逐位精确），`const_method_test.cpp` 覆盖常量方法判据（基元 `.TYPE` 内联、数值/ null 体、非 `.TYPE` getstatic 拒绝、宿主 `<clinit>` 纯性门），`predicate_fold_test.cpp` 覆盖常量谓词判据（分支裁决、`switch` 键裁决、操作数区中段有标签则放弃、改写后帧链自洽）。夹具一律用 jasm 源码现场汇编（`JvmJasmService::assemble`），不落二进制、不依赖语料目录。
+`test/unittest/constant_call_test.cpp` 覆盖三段判据：正例（短形态值、需落池的值）+ 逐条反证（非 static / void / synchronized / 实参非常量 / 目标不纯 / 目标不在容器 / 类初始化非空），改写侧断言「调用消失、字面量出现、实参装载全清」，proof 侧断言类数门。`flags_strip_test.cpp` 覆盖标志判据（清位面、`$` 名保留、旧类版本、枚举跳过、逐位精确），`const_method_test.cpp` 覆盖常量方法判据（基元 `.TYPE` 内联、数值/ null 体、非 `.TYPE` getstatic 拒绝、宿主 `<clinit>` 纯性门），`predicate_fold_test.cpp` 覆盖常量谓词判据（分支裁决、`switch` 键裁决、操作数区中段有标签则放弃、改写后帧链自洽），`number_fold_test.cpp` 覆盖藏形数值判据（XOR 走廊两式、基 32 long、位形包装、radix/键面/被调/中段标签反证、折叠后不可再成站点）。夹具一律用 jasm 源码现场汇编（`JvmJasmService::assemble`），不落二进制、不依赖语料目录。
 
 语料回归：
 
@@ -127,5 +131,6 @@ xmake build grunt_cli && ./test/corpus-regress.sh
 - [doc/seed-strip.md](doc/seed-strip.md) / [.impl.md](doc/seed-strip.impl.md)：种子建表跨度。
 - [doc/dead-member.md](doc/dead-member.md) / [.impl.md](doc/dead-member.impl.md)：死成员与引用闭包。
 - [doc/booger-anno-strip.md](doc/booger-anno-strip.md) / [.impl.md](doc/booger-anno-strip.impl.md)：残留 `@Booger` 注解。
+- [doc/number-fold.md](doc/number-fold.md) / [.impl.md](doc/number-fold.impl.md)：藏形数值常量跨度。
 
 口径分工：`doc/` 只写**通用技术形态**与实现；具体样本的取证过程（jar、类名、指令偏移、折叠期望值）记在仓外研究笔记，不进本仓。
