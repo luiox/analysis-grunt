@@ -40,6 +40,29 @@ constexpr ca::u32 kAccStatic       = 0x0008;
 constexpr ca::u32 kAccSynchronized = 0x0020;
 constexpr ca::usize kNoIndex       = static_cast<ca::usize>(-1);
 
+/// 扫描面 fail-closed 包裹：单个类里的任何异常只丢该类的候选，不放大成
+/// 整条管线失败。本残留是全局 pass，异常会一路穿到 mjbase 管线的
+/// `catch (...)`，CLI 直接 exit 3（「unknown exception」整包拒绝）——
+/// 对齐仓内保守口径（rewrite_toolbox::mutateMethodWithFrames 的两级收口）：
+/// std::exception 带 what()，其余兜底；该类跳过并打 stderr 日志。
+template <class Fn>
+bool scanGuard(std::string_view stage, std::string_view uri, Fn&& fn)
+{
+    try {
+        fn();
+        return true;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[grunt.ConstantCall] %.*s skip class %.*s: %s\n",
+                     static_cast<int>(stage.size()), stage.data(),
+                     static_cast<int>(uri.size()), uri.data(), e.what());
+    } catch (...) {
+        std::fprintf(stderr, "[grunt.ConstantCall] %.*s skip class %.*s: unknown exception\n",
+                     static_cast<int>(stage.size()), stage.data(),
+                     static_cast<int>(uri.size()), uri.data());
+    }
+    return false;
+}
+
 // ============================================================================
 // ==== SCAN ==================================================================
 // ============================================================================
@@ -78,17 +101,19 @@ std::string keyOf(std::string_view owner, std::string_view name, std::string_vie
 void buildIndex(const mjbase::model::ResourceContainer& container, MethodIndex& index)
 {
     forEachClass(container, [&](const ClassEntry& entry) {
-        auto session = openSession(*entry.bytes);
-        if (!session) return;
-        const ir::ClassUnit&   unit = session->unit();
-        const std::string_view self = session->backing().thisName();
-        for (ca::usize i = 0; i < unit.methods.size(); ++i) {
-            const ir::MethodUnit&  mu   = unit.methods[i];
-            const std::string_view name = unit.symbols().str(mu.name);
-            const std::string_view desc = unit.symbols().str(mu.desc);
-            index.emplace(keyOf(self, name, desc),
-                          MethodLoc{std::string(self), std::string(desc), i, mu.access});
-        }
+        scanGuard("index", entry.uri, [&] {
+            auto session = openSession(*entry.bytes);
+            if (!session) return;
+            const ir::ClassUnit&   unit = session->unit();
+            const std::string_view self = session->backing().thisName();
+            for (ca::usize i = 0; i < unit.methods.size(); ++i) {
+                const ir::MethodUnit&  mu   = unit.methods[i];
+                const std::string_view name = unit.symbols().str(mu.name);
+                const std::string_view desc = unit.symbols().str(mu.desc);
+                index.emplace(keyOf(self, name, desc),
+                              MethodLoc{std::string(self), std::string(desc), i, mu.access});
+            }
+        });
     });
 }
 
@@ -143,58 +168,61 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
     jsim::indy::install(exec.session());
 
     forEachClass(container, [&](const ClassEntry& entry) {
-        auto session = openSession(*entry.bytes);
-        if (!session) return;
-        const std::string_view self = session->backing().thisName();
+        scanGuard("evaluate", entry.uri, [&] {
+            auto session = openSession(*entry.bytes);
+            if (!session) return;
+            const std::string_view self = session->backing().thisName();
 
-        const auto group = byOwner.find(std::string(self));
-        if (group == byOwner.end()) return;
+            const auto group = byOwner.find(std::string(self));
+            if (group == byOwner.end()) return;
 
-        if (!classInitNeutral(*session)) {
+            if (!classInitNeutral(*session)) {
+                for (const ca::usize si : group->second) {
+                    rejects.push_back(RejectedSite{sites[si].callerOwner, sites[si].callerMethod,
+                                                   sites[si].callSrcPc,
+                                                   RejectReason::ClassInitPresent});
+                    ok[si] = 2;
+                }
+                return;
+            }
+
             for (const ca::usize si : group->second) {
-                rejects.push_back(RejectedSite{sites[si].callerOwner, sites[si].callerMethod,
-                                               sites[si].callSrcPc,
-                                               RejectReason::ClassInitPresent});
-                ok[si] = 2;
-            }
-            return;
-        }
+                Site& site = sites[si];
 
-        for (const ca::usize si : group->second) {
-            Site& site = sites[si];
+                if (!ir::hasCode(*session, site.targetMethodIndex)) {
+                    rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod,
+                                                   site.callSrcPc, RejectReason::TargetNoCode});
+                    ok[si] = 2;
+                    continue;
+                }
 
-            if (!ir::hasCode(*session, site.targetMethodIndex)) {
-                rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod, site.callSrcPc,
-                                               RejectReason::TargetNoCode});
-                ok[si] = 2;
-                continue;
+                const SimOutcome out =
+                    exec.invoke(site.targetOwner, site.targetName + site.targetDesc, site.args);
+                if (out.kind == SimOutcome::Kind::Void) {
+                    rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod,
+                                                   site.callSrcPc, RejectReason::TargetVoid});
+                    ok[si] = 2;
+                    continue;
+                }
+                if (!out.ok()) {
+                    rejects.push_back(RejectedSite{
+                        site.callerOwner, site.callerMethod, site.callSrcPc,
+                        out.kind == SimOutcome::Kind::LimitHit ? RejectReason::EvalStepLimit
+                                                               : RejectReason::EvalBadState});
+                    ok[si] = 2;
+                    continue;
+                }
+                if (!out.value.known || out.value.type == jsim::ValType::Ref) {
+                    rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod,
+                                                   site.callSrcPc,
+                                                   RejectReason::ValueKindUnsupported});
+                    ok[si] = 2;
+                    continue;
+                }
+                site.value = out.value;
+                ok[si]     = 1;
             }
-
-            const SimOutcome out =
-                exec.invoke(site.targetOwner, site.targetName + site.targetDesc, site.args);
-            if (out.kind == SimOutcome::Kind::Void) {
-                rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod, site.callSrcPc,
-                                               RejectReason::TargetVoid});
-                ok[si] = 2;
-                continue;
-            }
-            if (!out.ok()) {
-                rejects.push_back(RejectedSite{
-                    site.callerOwner, site.callerMethod, site.callSrcPc,
-                    out.kind == SimOutcome::Kind::LimitHit ? RejectReason::EvalStepLimit
-                                                           : RejectReason::EvalBadState});
-                ok[si] = 2;
-                continue;
-            }
-            if (!out.value.known || out.value.type == jsim::ValType::Ref) {
-                rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod, site.callSrcPc,
-                                               RejectReason::ValueKindUnsupported});
-                ok[si] = 2;
-                continue;
-            }
-            site.value = out.value;
-            ok[si]     = 1;
-        }
+        });
     });
 
     // 没被任何目标类覆盖的站点（目标类解析失败等）统一拒绝。
@@ -407,80 +435,83 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
     buildIndex(container, index);
 
     forEachClass(container, [&](const ClassEntry& entry) {
-        auto session = openSession(*entry.bytes);
-        if (!session) return;
-        ir::ClassSession&     s    = *session;
-        const ir::ClassUnit&  unit = s.unit();
-        const std::string_view self = s.backing().thisName();
+        scanGuard("scan", entry.uri, [&] {
+            auto session = openSession(*entry.bytes);
+            if (!session) return;
+            ir::ClassSession&     s    = *session;
+            const ir::ClassUnit&  unit = s.unit();
+            const std::string_view self = s.backing().thisName();
 
-        for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
-            if (!ir::hasCode(s, mi)) continue;
-            auto promoted = ir::promoteMethod(s, mi);
-            if (promoted.is_err()) continue;
-            ir::CodeUnit* cu = promoted.unwrap().get();
-            if (cu == nullptr) continue;
+            for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
+                if (!ir::hasCode(s, mi)) continue;
+                auto promoted = ir::promoteMethod(s, mi);
+                if (promoted.is_err()) continue;
+                ir::CodeUnit* cu = promoted.unwrap().get();
+                if (cu == nullptr) continue;
 
-            const std::string_view         name  = unit.symbols().str(unit.methods[mi].name);
-            const std::string_view         desc  = unit.symbols().str(unit.methods[mi].desc);
-            const std::vector<ir::InsnId>& order = cu->dom.order();
+                const std::string_view         name  = unit.symbols().str(unit.methods[mi].name);
+                const std::string_view         desc  = unit.symbols().str(unit.methods[mi].desc);
+                const std::vector<ir::InsnId>& order = cu->dom.order();
 
-            for (ca::usize pos = 0; pos < order.size(); ++pos) {
-                const ir::Insn* in = cu->dom.peek(order[pos]);
-                if (in == nullptr || in->op != Op::INVOKESTATIC) continue;
+                for (ca::usize pos = 0; pos < order.size(); ++pos) {
+                    const ir::Insn* in = cu->dom.peek(order[pos]);
+                    if (in == nullptr || in->op != Op::INVOKESTATIC) continue;
 
-                ir::ClassSession::MemberSem enc;
-                if (!s.memberOf(*in, enc)) continue;
-                if (enc.kind != ir::ClassSession::MemberSem::Kind::Method) continue;
+                    ir::ClassSession::MemberSem enc;
+                    if (!s.memberOf(*in, enc)) continue;
+                    if (enc.kind != ir::ClassSession::MemberSem::Kind::Method) continue;
 
-                const auto it = index.find(keyOf(enc.owner, enc.name, enc.desc));
-                if (it == index.end()) continue;   // 容器外目标：不构成候选
-                const MethodLoc& loc = it->second;
+                    const auto it = index.find(keyOf(enc.owner, enc.name, enc.desc));
+                    if (it == index.end()) continue;   // 容器外目标：不构成候选
+                    const MethodLoc& loc = it->second;
 
-                const auto reject = [&](RejectReason r) {
-                    result.rejects.push_back(RejectedSite{
-                        std::string(self), std::string(name), in->srcPc, r});
-                };
+                    const auto reject = [&](RejectReason r) {
+                        result.rejects.push_back(RejectedSite{
+                            std::string(self), std::string(name), in->srcPc, r});
+                    };
 
-                if ((loc.access & kAccStatic) == 0) {
-                    reject(RejectReason::TargetNotStatic);
-                    continue;
+                    if ((loc.access & kAccStatic) == 0) {
+                        reject(RejectReason::TargetNotStatic);
+                        continue;
+                    }
+                    if ((loc.access & kAccSynchronized) != 0) {
+                        reject(RejectReason::TargetSynchronized);
+                        continue;
+                    }
+                    if (!enc.name.empty() && enc.name.front() == '<') {
+                        reject(RejectReason::TargetInitializer);
+                        continue;
+                    }
+                    if (returnChar(enc.desc) == 'V') {
+                        reject(RejectReason::TargetVoid);
+                        continue;
+                    }
+
+                    std::vector<ir::InsnId>     producers;
+                    std::vector<jsim::SimValue> args;
+                    if (!const_args::collectArgs(s, cu->dom, order, pos,
+                                                 const_args::argSlots(enc.desc),
+                                                 producers, args)) {
+                        reject(RejectReason::ArgsNotConstant);
+                        continue;
+                    }
+
+                    Site site;
+                    site.callerUri         = std::string(entry.uri);
+                    site.callerOwner       = std::string(self);
+                    site.callerMethod      = std::string(name);
+                    site.callerDesc        = std::string(desc);
+                    site.callerMethodIndex = mi;
+                    site.callSrcPc         = in->srcPc;
+                    site.targetOwner       = std::string(enc.owner);
+                    site.targetName        = std::string(enc.name);
+                    site.targetDesc        = std::string(enc.desc);
+                    site.targetMethodIndex = loc.index;
+                    site.args              = std::move(args);
+                    result.sites.push_back(std::move(site));
                 }
-                if ((loc.access & kAccSynchronized) != 0) {
-                    reject(RejectReason::TargetSynchronized);
-                    continue;
-                }
-                if (!enc.name.empty() && enc.name.front() == '<') {
-                    reject(RejectReason::TargetInitializer);
-                    continue;
-                }
-                if (returnChar(enc.desc) == 'V') {
-                    reject(RejectReason::TargetVoid);
-                    continue;
-                }
-
-                std::vector<ir::InsnId>     producers;
-                std::vector<jsim::SimValue> args;
-                if (!const_args::collectArgs(s, cu->dom, order, pos, const_args::argSlots(enc.desc),
-                                             producers, args)) {
-                    reject(RejectReason::ArgsNotConstant);
-                    continue;
-                }
-
-                Site site;
-                site.callerUri         = std::string(entry.uri);
-                site.callerOwner       = std::string(self);
-                site.callerMethod      = std::string(name);
-                site.callerDesc        = std::string(desc);
-                site.callerMethodIndex = mi;
-                site.callSrcPc         = in->srcPc;
-                site.targetOwner       = std::string(enc.owner);
-                site.targetName        = std::string(enc.name);
-                site.targetDesc        = std::string(enc.desc);
-                site.targetMethodIndex = loc.index;
-                site.args              = std::move(args);
-                result.sites.push_back(std::move(site));
             }
-        }
+        });
     });
 
     evaluateSites(container, result.sites, result.rejects);
@@ -504,6 +535,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     std::vector<PendingWrite> pending;
 
     forEachClass(container, [&](const ClassEntry& entry) {
+        scanGuard("rewrite", entry.uri, [&] {
         const auto it = byUri.find(std::string(entry.uri));
         if (it == byUri.end()) return;
 
@@ -603,6 +635,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             return;
         }
         pending.push_back(PendingWrite{std::string(entry.uri), std::move(encoded).unwrap()});
+        });
     });
 
     for (PendingWrite& item : pending) {

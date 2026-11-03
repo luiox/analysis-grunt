@@ -32,6 +32,8 @@
 | [booger-anno-strip.impl.md](booger-anno-strip.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
 | [number-fold.md](number-fold.md) | 藏形数值常量：XOR 隐匿跨度、基 32 长整跨度、位形包装的形态 |
 | [number-fold.impl.md](number-fold.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
+| [indy-fold.md](indy-fold.md) | indy 解密调用点：BSM 藏目标、模拟执行求真目标的形态 |
+| [indy-fold.impl.md](indy-fold.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
 
 ## 约定
 

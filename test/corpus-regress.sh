@@ -19,6 +19,8 @@ if [ ! -x "$CLI" ]; then
     echo "找不到 CLI，先跑 xmake build grunt_cli" >&2
     exit 2
 fi
+# OUT 目录不自动创建时，stderr 重定向直接失败，所有 jar 都会伪装成 FAIL run。
+mkdir -p "$OUT"
 if [ ! -d "$CORPUS" ]; then
     echo "语料目录不存在：$CORPUS（用 CORPUS=<dir> 指定）" >&2
     exit 2
