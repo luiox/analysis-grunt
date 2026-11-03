@@ -30,13 +30,15 @@
 /// ## 改写（rewrite）
 ///
 /// 先全容器 CP 压缩（引用闭包前提）→ 普查活引用 → 逐类删成员（backing
-/// 序倒序 erase）→ 落盘 → 再压缩一次带走死描述符。方法删除不动任何方法
-/// 体，无布局/SMT 面。
+/// 序倒序 erase）→ 落盘 → 空壳类回收（全成员删净且全容器零引用的类整体
+/// 摘除）→ 再压缩一次带走死描述符。方法删除不动任何方法体，无布局/SMT 面。
 ///
-/// ## 台账
-///
-/// DirtySet.methods / fields / clinits 分项计数；compacted 是仅压缩变小的
-/// 类数；被删成员的 owner::name::desc 在 trace 面逐条可开。
+/// 空壳类回收的判据（保守门）：删后 methods/fields 全空 ∧ 非 module-info /
+/// package-info（含 main 的类天然有成员，被前门挡住）∧ 全容器其余类的 CP
+/// 无 Classref、无同名 utf8（按名字符串/SourceFile 面）、无 `L<name>;`
+/// 描述符引用。注解类/父类/接口/异常表都走 CP Class 条目，普查看得见；
+/// jar 级非类资源（MANIFEST、外部按名配置）是理论逃逸面——含 main 的主类
+/// 不可能为空壳，Main-Class 门天然成立，其余记录台账。
 #pragma once
 
 #include <map>
@@ -94,10 +96,12 @@ struct ScanResult
 struct DirtySet
 {
     std::vector<std::string> uris;   ///< 落过盘的类（含仅压缩）
+    std::vector<std::string> removedUris;   ///< 整类摘除的空壳（proof 门跳过重解析）
 
     ca::usize methods   = 0;
     ca::usize fields    = 0;
     ca::usize clinits   = 0;
+    ca::usize classes   = 0;   ///< 整类摘除数（空壳回收）
     ca::usize compacted = 0;   ///< 仅压缩变小的类数
     ca::usize attempted = 0;
     ca::usize rejectedByRef = 0;   ///< 形状过关但引用门拦下

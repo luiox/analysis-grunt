@@ -3,6 +3,8 @@
 #include "grunt/dead_member.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <set>
 #include <string>
 #include <unordered_set>
@@ -277,14 +279,31 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
         result.indyTargets   = indyTargets.size();
         result.indyBsmFailed = indyScan.bsmFailed;
         const bool bsmUnresolved = indyScan.bsmFailed != 0;
+        static const bool dmTrace = std::getenv("GRUNT_DM_TRACE") != nullptr;
         forEachClass(container, [&](const ClassEntry& entry) {
+            if (dmTrace) {
+                std::fprintf(stderr, "[grunt.DeadMember] scan class %s\n",
+                             std::string(entry.uri).c_str());
+            }
             auto session = openSession(*entry.bytes);
             if (!session) {
                 ++result.classesSkipped;
                 return;
             }
-            result.classes.push_back(
-                scanClass(*session, std::string(entry.uri), indyTargets, bsmUnresolved));
+            // 类级 fail-closed：单类形状扫描崩了（libjsim/jbc 抛点或 SEH 硬崩）
+            // 只跳过该类，其余类照常出候选。
+            try {
+                result.classes.push_back(
+                    scanClass(*session, std::string(entry.uri), indyTargets, bsmUnresolved));
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "[grunt.DeadMember] scan 类跳过：%s（异常穿透：%s）\n",
+                             std::string(entry.uri).c_str(), e.what());
+                ++result.classesSkipped;
+            } catch (...) {
+                std::fprintf(stderr, "[grunt.DeadMember] scan 类跳过：%s（SEH 硬崩）\n",
+                             std::string(entry.uri).c_str());
+                ++result.classesSkipped;
+            }
         });
     }
     return result;
@@ -297,6 +316,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
 DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result)
 {
     DirtySet dirty;
+    static const bool dmTrace = std::getenv("GRUNT_DM_TRACE") != nullptr;
 
     // (1) 全容器 CP 压缩：引用闭包前提（死条目会污染零引用判定）。压缩失败
     // 的类不做成员删除，也不作为引用方计入——两边都宁留勿删。
@@ -307,20 +327,31 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             snapshot.emplace_back(std::string(entry.uri), *entry.bytes);
         });
         for (auto& [uri, bytes] : snapshot) {
-            auto session = openSession(bytes);
-            if (!session || ir::compactConstantPool(*session).is_err()) {
+            // 类级 fail-closed：单类压缩崩了按「压缩失败」收场（两边都宁留勿删）。
+            try {
+                auto session = openSession(bytes);
+                if (!session || ir::compactConstantPool(*session).is_err()) {
+                    compactFailed.insert(uri);
+                    continue;
+                }
+                auto encoded = jbc::core::writeClass(session->backing());
+                if (encoded.is_err()) {
+                    compactFailed.insert(uri);
+                    continue;
+                }
+                std::vector<ca::u8> fresh = std::move(encoded).unwrap();
+                if (fresh != bytes) {
+                    replaceClass(container, uri, std::move(fresh));
+                    ++dirty.compacted;
+                }
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "[grunt.DeadMember] compact 类跳过：%s（异常穿透：%s）\n",
+                             uri.c_str(), e.what());
                 compactFailed.insert(uri);
-                continue;
-            }
-            auto encoded = jbc::core::writeClass(session->backing());
-            if (encoded.is_err()) {
+            } catch (...) {
+                std::fprintf(stderr, "[grunt.DeadMember] compact 类跳过：%s（SEH 硬崩）\n",
+                             uri.c_str());
                 compactFailed.insert(uri);
-                continue;
-            }
-            std::vector<ca::u8> fresh = std::move(encoded).unwrap();
-            if (fresh != bytes) {
-                replaceClass(container, uri, std::move(fresh));
-                ++dirty.compacted;
             }
         }
     }
@@ -332,9 +363,16 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         if (compactFailed.count(std::string(entry.uri)) != 0) return;
         auto session = openSession(*entry.bytes);
         if (!session) return;
-        const CpSnap snap = collectCpSnap(*session);
-        liveMethods.insert(snap.methodKeys.begin(), snap.methodKeys.end());
-        liveFields.insert(snap.fieldKeys.begin(), snap.fieldKeys.end());
+        // 类级 fail-closed：普查崩了的类不计入引用方（宁留勿删口径）。
+        try {
+            const CpSnap snap = collectCpSnap(*session);
+            liveMethods.insert(snap.methodKeys.begin(), snap.methodKeys.end());
+            liveFields.insert(snap.fieldKeys.begin(), snap.fieldKeys.end());
+        } catch (...) {
+            std::fprintf(stderr, "[grunt.DeadMember] 引用普查类跳过：%s（异常穿透）\n",
+                         std::string(entry.uri).c_str());
+            compactFailed.insert(std::string(entry.uri));
+        }
     });
 
     // (3) 逐类删成员。候选定位按名字+描述复核（scan 之后池已重排，backing
@@ -354,6 +392,9 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             return;
         }
 
+        // 类级 fail-closed：删成员崩了整类放弃（容器保有原字节——本 lambda 的
+        // 全部改动都落在局部 session，pending 只在成功末尾追加）。
+        try {
         auto session = openSession(*entry.bytes);
         if (!session) return;
         ir::ClassSession&     s    = *session;
@@ -446,11 +487,91 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         dirty.methods += hitMethods;
         dirty.fields += hitFields;
         dirty.clinits += hitClinits;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[grunt.DeadMember] 删成员类跳过：%s（异常穿透：%s）\n",
+                         uri.c_str(), e.what());
+        } catch (...) {
+            std::fprintf(stderr, "[grunt.DeadMember] 删成员类跳过：%s（SEH 硬崩）\n", uri.c_str());
+        }
     });
 
     for (auto& [uri, bytes] : pending) {
         replaceClass(container, uri, std::move(bytes));
         dirty.uris.push_back(uri);
+    }
+
+    // (3.5) 空壳类回收：全成员删净且全容器零类级引用的外置壳类整体摘除。
+    // 判据保守：删后 methods/fields 全空 ∧ 非 module-info/package-info ∧
+    // 其余全类 CP 无 Classref / 同名 utf8 / L<name>; 描述符引用。含 main 的
+    // 主类不可能过第一道门（main 是成员）。经 getResources() 可变视图摘除。
+    {
+        std::vector<std::string> shellUris;
+        std::vector<std::string> shellNames;
+        forEachClass(container, [&](const ClassEntry& entry) {
+            auto session = openSession(*entry.bytes);
+            if (!session) return;
+            jbc::core::ClassFile& cf = session->backing();
+            // 零存活成员门：fields 全空；methods 只剩 <init>（真实代理壳带的
+            // 默认构造器）——外部构造需要 CP Class 引用，引用普查会拦。带
+            // main / <clinit> 的类不可能过此门。
+            if (!cf.fields.empty()) return;
+            for (const jbc::core::MemberInfo& m : cf.methods) {
+                if (cpUtf8(cf, m.nameCp) == "<init>") continue;
+                return;
+            }
+            const std::string name(cf.thisName());
+            if (name == "module-info" || name == "package-info") return;
+            shellUris.emplace_back(entry.uri);
+            shellNames.push_back(name);
+        });
+        if (!shellUris.empty()) {
+            std::vector<bool> shellDead(shellUris.size(), true);
+            forEachClass(container, [&](const ClassEntry& entry) {
+                const std::string self(entry.uri);
+                for (ca::usize i = 0; i < shellUris.size(); ++i) {
+                    if (!shellDead[i] || shellUris[i] == self) continue;
+                    auto session = openSession(*entry.bytes);
+                    if (!session) return;
+                    const jbc::core::ClassFile& cf = session->backing();
+                    const std::string           descNeedle
+                        = "L" + shellNames[i] + ";";
+                    if (dmTrace) {
+                        std::fprintf(stderr, "[grunt.DeadMember] 引用普查 %s → 查 %s\n",
+                                     std::string(entry.uri).c_str(), shellNames[i].c_str());
+                    }
+                    for (ca::u32 ci = 1; ci < cf.cp.size(); ++ci) {
+                        if (!cf.cp.valid(ci)) continue;
+                        const auto& e = cf.cp.at(ci);
+                        using T       = jbc::core::CpTag;
+                        if (e.tag == T::Class) {
+                            if (cpUtf8(cf, e.a) == shellNames[i]) shellDead[i] = false;
+                        } else if (e.tag == T::Utf8) {
+                            const std::string s(cpUtf8(cf, ci));
+                            if (dmTrace && !s.empty()) {
+                                std::fprintf(stderr, "[grunt.DeadMember]   utf8[%u]=%s\n", ci,
+                                             s.c_str());
+                            }
+                            if (s == shellNames[i] || s.find(descNeedle) != std::string::npos) {
+                                shellDead[i] = false;
+                            }
+                        }
+                        if (!shellDead[i]) break;
+                    }
+                }
+            });
+            auto& resources = container.getResources();
+            for (ca::usize i = 0; i < shellUris.size(); ++i) {
+                if (!shellDead[i]) continue;
+                std::fprintf(stderr, "[grunt.DeadMember] 空壳类摘除：%s\n", shellUris[i].c_str());
+                resources.erase(std::string(shellUris[i]));
+                // 摘除的类不再进 proof 重解析面（可能刚在本轮删过成员落过盘）。
+                for (auto it = dirty.uris.begin(); it != dirty.uris.end();) {
+                    if (*it == shellUris[i]) it = dirty.uris.erase(it); else ++it;
+                }
+                dirty.removedUris.push_back(shellUris[i]);
+                ++dirty.classes;
+            }
+        }
     }
 
     // (4) 删除后重开压缩一次，把被删成员的描述符 utf8 从池里带走；仅压缩
@@ -461,20 +582,29 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             after.emplace_back(std::string(entry.uri), *entry.bytes);
         });
         for (auto& [uri, bytes] : after) {
-            auto session = openSession(bytes);
-            if (!session) continue;
-            if (ir::compactConstantPool(*session).is_err()) continue;
-            auto encoded = jbc::core::writeClass(session->backing());
-            if (encoded.is_err()) continue;
-            std::vector<ca::u8> fresh = std::move(encoded).unwrap();
-            if (fresh != bytes) {
-                replaceClass(container, uri, std::move(fresh));
-                bool counted = false;
-                for (const std::string& u : dirty.uris) counted |= (u == uri);
-                if (!counted) {
-                    dirty.uris.push_back(uri);
-                    ++dirty.compacted;
+            // 类级 fail-closed：二次压缩崩了的类保有删成员后的字节，不再压缩。
+            try {
+                auto session = openSession(bytes);
+                if (!session) continue;
+                if (ir::compactConstantPool(*session).is_err()) continue;
+                auto encoded = jbc::core::writeClass(session->backing());
+                if (encoded.is_err()) continue;
+                std::vector<ca::u8> fresh = std::move(encoded).unwrap();
+                if (fresh != bytes) {
+                    replaceClass(container, uri, std::move(fresh));
+                    bool counted = false;
+                    for (const std::string& u : dirty.uris) counted |= (u == uri);
+                    if (!counted) {
+                        dirty.uris.push_back(uri);
+                        ++dirty.compacted;
+                    }
                 }
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "[grunt.DeadMember] 二次压缩类跳过：%s（异常穿透：%s）\n",
+                             uri.c_str(), e.what());
+            } catch (...) {
+                std::fprintf(stderr, "[grunt.DeadMember] 二次压缩类跳过：%s（SEH 硬崩）\n",
+                             uri.c_str());
             }
         }
     }
@@ -488,11 +618,26 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,
                   ca::usize classesBefore)
 {
-    const proof_tools::ClassIntactResult intact =
-        proof_tools::classesIntact(container, dirty.uris, classesBefore);
-    ProofResult result;
-    result.ok     = intact.ok;
-    result.failed = intact.failed;
+    // 类数门：整类摘除（dirty.classes）按预期递减核账，其余场合类数不变；
+    // 落盘类必须可重解析——整类摘除的 URI 已不在场，不进重解析面。
+    ProofResult      result;
+    const ca::usize  expected = classesBefore - dirty.classes;
+    const ca::usize  now      = countClasses(container);
+    if (now != expected) {
+        result.ok = false;
+        result.failed.push_back("class-count");
+    }
+    for (const std::string& uri : dirty.uris) {
+        bool found = false;
+        forEachClass(container, [&](const ClassEntry& entry) {
+            if (found || entry.uri != uri) return;
+            found = openSession(*entry.bytes) != nullptr;
+        });
+        if (!found) {
+            result.ok = false;
+            result.failed.push_back(uri);
+        }
+    }
     return result;
 }
 
