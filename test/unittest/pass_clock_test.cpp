@@ -6,14 +6,20 @@
 /// 全部走真路径。
 #include "grunt/pass_clock.hpp"
 
+#include "jbc/core/class_file.hpp"
+#include "jbc/core/writer.hpp"
+#include "jbc/ir/units.hpp"
 #include "libca/core/tag_cast.hpp"
+#include "mjbase/jasm/jvm_jasm_service.hpp"
 #include "mjbase/model/resource_container.hpp"
 #include "mjbase/model/resource_model.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/proof_toolbox.hpp"
 
 #include <gtest/gtest.h>
 
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -21,6 +27,38 @@ namespace grunt {
 namespace {
 
 namespace model = mjbase::model;
+
+ca::str::Utf16String utf16(const std::string& value)
+{
+    return ca::str::Utf16String::from_utf8_string(ca::str::Utf8StringRef::from_data(
+        reinterpret_cast<const ca::u8*>(value.data()), value.size()));
+}
+
+/// 最小真实类夹具：proof 面（classesIntact）要 openSession 真解析。
+std::vector<ca::u8> probeClassBytes()
+{
+    const char* kSource =
+        ".super java/lang/Object\n"
+        ".class public super fixture/Probe {\n"
+        "  .method public static ok ()I {\n"
+        "    code: {\n"
+        "      iconst_1\n"
+        "      ireturn\n"
+        "    }\n"
+        "  }\n"
+        "}\n";
+    mjbase::jasm::JvmJasmService service;
+    auto    sourceName = utf16("fixture/Probe.jasm");
+    auto    text       = utf16(kSource);
+    auto    assembled  = service.assemble(sourceName.ref(), text.ref());
+    if (!assembled.isOk()) throw std::runtime_error("jasm 夹具汇编失败");
+    auto session = openSession(std::move(assembled.value->bytes));
+    if (!session) throw std::runtime_error("夹具无法解析");
+    session->backing().major = 61;
+    auto encoded = jbc::core::writeClass(session->backing());
+    if (encoded.is_err()) throw std::runtime_error("夹具回写失败");
+    return std::move(encoded).unwrap();
+}
 
 /// 哑类夹具：forEachClass 只认「非空 ClassResource」，不需要合法类字节。
 void addDummy(model::ResourceContainer& container, const std::string& name)
@@ -114,6 +152,23 @@ TEST(PassClockTest, AdmitNamesFirstBlockedOnly)
     EXPECT_FALSE(scope.clock().admit("b.class"));
     EXPECT_FALSE(scope.clock().admit("c.class"));
     EXPECT_EQ(scope.clock().skipped(), ca::usize{2});
+}
+
+TEST(PassClockTest, ProofFaceIgnoresExpiredClock)
+{
+    model::ResourceContainer container;
+    const std::string        uri = "fixture/Probe.class";
+    container.addResource(uri,
+                          std::make_unique<model::ClassResource>(uri, probeClassBytes()));
+    pass_clock::PassScope scope("grunt.Test", 1);
+    scope.clock().forceExpire();
+    // 效力门不许被时间片截短：超墙后脏类仍要查到并真解析，类数门全量。
+    const ca::usize before = countClasses(container);
+    const proof_tools::ClassIntactResult intact =
+        proof_tools::classesIntact(container, {uri}, before);
+    EXPECT_TRUE(intact.ok);
+    EXPECT_TRUE(intact.failed.empty());
+    EXPECT_EQ(scope.clock().skipped(), ca::usize{0});
 }
 
 }   // namespace

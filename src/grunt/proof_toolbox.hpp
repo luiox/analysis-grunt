@@ -66,6 +66,9 @@ inline ClassIntactResult classesIntact(const mjbase::model::ResourceContainer& c
                                        const std::vector<std::string>& uris,
                                        ca::usize classesBefore)
 {
+    // proof 是效力门（不变量复核），不许被 pass 级时间片截短——挂起期间
+    // forEachClass 全量放行，否则过期时钟会把全部脏类误报成 proof failed。
+    pass_clock::Suspend    suspend;
     ClassIntactResult result;
     if (countClasses(container) != classesBefore) {
         result.ok = false;
