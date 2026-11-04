@@ -30,6 +30,8 @@
 #include "jbc/core/writer.hpp"
 #include "jbc/ir/units.hpp"
 
+#include "mjbase/util/annotation_depth.hpp"
+
 #include "jsim/engine.hpp"
 #include "jsim/indy.hpp"
 #include "jsim/num.hpp"
@@ -64,6 +66,10 @@ const std::vector<jbc::core::BootstrapMethodsAttr::Entry>* bsmEntries(
     jbc::core::ClassFile& cf = s.backing();
     jbc::core::AttrSlot* slot = cf.findClassAttr("BootstrapMethods");
     if (slot == nullptr) return nullptr;
+    // 解码前先过注解族深度预检（mjbase #158）：BootstrapMethods 本身不在
+    // 注解族，守卫对它恒放行；挂同一道门是让本文件一切 decodeAttr 直调位
+    // 保持单一形状——将来若有注解族解码落进来，守卫已在位。
+    if (!mjbase::util::attrSafeToDecode(cf, *slot)) return nullptr;
     auto decoded = cf.decodeAttr(*slot);
     if (decoded.is_err()) return nullptr;
     // 不用 dynamic_cast：本仓关 RTTI（/GR-），走 libca 的 tag_cast 约定

@@ -16,10 +16,13 @@
 #include "libca/core/tag_cast.hpp"
 
 #include "grunt/pass_clock.hpp"
+#include "jbc/core/attribute.hpp"
+#include "jbc/core/class_file.hpp"
 #include "jbc/ir/units.hpp"
 
 #include "mjbase/model/resource_container.hpp"
 #include "mjbase/model/resource_model.hpp"
+#include "mjbase/util/annotation_depth.hpp"
 
 namespace grunt {
 
@@ -55,6 +58,40 @@ inline std::shared_ptr<jbc::ir::ClassSession> openSession(const std::vector<ca::
     auto loaded = jbc::ir::makeSessionFromBytes(jbc::core::ByteView(bytes));
     if (loaded.is_err()) return nullptr;
     return std::move(loaded).unwrap();
+}
+
+/// @brief 类级注解族深度预检：CP 压缩（cp_compact 面）的守卫前置。
+///
+/// jbc::ir::cp_compact 会对全部属性槽（类/字段/方法 + Code 嵌套）decodeAttr
+/// 以重映射注解内的 CP 引用，而 libjbc attr_codec 注解族解码互递归无界
+/// （mjbase #158 同源，上游挂账）：敌意深嵌注解不走 Result 错误通道，直接
+/// 栈溢出。故 compact 前对同一批槽位过一遍 attrSafeToDecode，任一注解族槽
+/// 越限即返回 false——调用方按既有 compact 失败通道「原样保真」跳过该类
+/// （CP 不重编号，字节不动）。Code 槽本身解码有界（非注解族），仅借它下探
+/// 嵌套属性；Code 解不开时放行——cp_compact 对它回 MalformedAttr，优雅。
+inline bool classAnnoDepthSafe(jbc::core::ClassFile& cf)
+{
+    const auto slotsOk = [&](const std::vector<jbc::core::AttrSlot>& slots) {
+        for (const jbc::core::AttrSlot& slot : slots) {
+            if (!mjbase::util::attrSafeToDecode(cf, slot)) return false;
+        }
+        return true;
+    };
+    if (!slotsOk(cf.attrs)) return false;
+    for (const jbc::core::MemberInfo& f : cf.fields) {
+        if (!slotsOk(f.attrs)) return false;
+    }
+    for (jbc::core::MemberInfo& m : cf.methods) {
+        if (!slotsOk(m.attrs)) return false;
+        for (jbc::core::AttrSlot& slot : m.attrs) {
+            if (cf.utf8(slot.nameCp) != "Code") continue;
+            auto d = cf.decodeAttr(slot);
+            if (d.is_err()) continue;   // cp_compact 自会按 MalformedAttr 优雅失败
+            auto& code = static_cast<jbc::core::CodeAttr&>(*d.unwrap());
+            if (!slotsOk(code.attrs)) return false;
+        }
+    }
+    return true;
 }
 
 /// @brief 回写类字节（替换容器内同 uri 条目）。

@@ -11,6 +11,8 @@
 #include "jbc/ir/cp_compact.hpp"
 #include "jbc/ir/units.hpp"
 
+#include "mjbase/util/annotation_depth.hpp"
+
 #include "grunt/container.hpp"
 #include "grunt/knowledge/booger_names.hpp"
 #include "grunt/proof_toolbox.hpp"
@@ -27,6 +29,10 @@ ca::usize stripTable(ir::ClassSession& s, std::vector<jbc::core::AttrSlot>& slot
     ca::usize removed = 0;
     std::vector<ca::usize> dropSlots;
     for (ca::usize si = 0; si < slots.size(); ++si) {
+        // 注解族槽先过嵌套深度预检（mjbase #158）：libjbc attr_codec 注解码码
+        // 互递归无界，敌意深嵌注解会在 decodeAttr 内栈溢出；预检拒绝按
+        // 「解不开原样保真」fail-open 跳过——少剥一条注解，进程不被打爆。
+        if (!mjbase::util::attrSafeToDecode(s.backing(), slots[si])) continue;
         auto d = s.backing().decodeAttr(slots[si]);
         if (d.is_err()) continue;
         jbc::core::AttrBody* body = d.unwrap();
@@ -85,6 +91,8 @@ ca::usize countAnnos(ir::ClassSession& s)
     jbc::core::ClassFile&        cf = s.backing();
     const auto countIn = [&](std::vector<jbc::core::AttrSlot>& slots) {
         for (jbc::core::AttrSlot& slot : slots) {
+            // 同 stripTable：注解族槽先过深度预检，敌意输入 fail-open 跳过。
+            if (!mjbase::util::attrSafeToDecode(s.backing(), slot)) continue;
             auto d = s.backing().decodeAttr(slot);
             if (d.is_err()) continue;
             jbc::core::AttrBody* body = d.unwrap();
@@ -170,9 +178,13 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     });
 
     for (PendingWrite& item : pending) {
-        // 压缩一次带走死 Utf8（注解描述符 / 参数名）。
+        // 压缩一次带走死 Utf8（注解描述符 / 参数名）。压缩前先过注解族深度
+        // 预检（classAnnoDepthSafe）：cp_compact 会解全部属性槽，敌意深嵌
+        // 注解在 libjbc 互递归解码里栈溢出；预检拒绝就跳过压缩，剥过注解
+        // 的字节照常落盘（CP 不压缩只是少带走死条目）。
         auto session = openSession(item.bytes);
-        if (session && ir::compactConstantPool(*session).is_ok()) {
+        if (session && classAnnoDepthSafe(session->backing())
+            && ir::compactConstantPool(*session).is_ok()) {
             auto encoded2 = jbc::core::writeClass(session->backing());
             if (encoded2.is_ok()) item.bytes = std::move(encoded2).unwrap();
         }

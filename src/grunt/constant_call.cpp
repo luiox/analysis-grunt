@@ -18,6 +18,8 @@
 #include "jbc/ir/code_editor.hpp"
 #include "jbc/ir/units.hpp"
 
+#include "mjbase/util/annotation_depth.hpp"
+
 #include "grunt/container.hpp"
 #include "grunt/jsim_executor.hpp"
 #include "grunt/knowledge/const_args.hpp"
@@ -255,6 +257,11 @@ void dumpPcRefs(ir::ClassSession& session, ca::usize methodIndex,
         }
     }
     if (codeSlot == kNoIndex) return;
+    // Code 槽与嵌套属性统一先过注解族深度预检（mjbase #158）：Code 内可挂
+    // 注解族（TypeAnnotations），libjbc 注解码码互递归无界，敌意深嵌输入
+    // 会在 decodeAttr 内栈溢出；预检拒绝按「解不开原样保真」跳过，诊断面
+    // 少打一行，进程不被打爆。
+    if (!mjbase::util::attrSafeToDecode(cf, attrs[codeSlot])) return;
     auto d = cf.decodeAttr(attrs[codeSlot]);
     if (d.is_err()) return;
     auto& code = static_cast<jbc::core::CodeAttr&>(*d.unwrap());
@@ -264,6 +271,7 @@ void dumpPcRefs(ir::ClassSession& session, ca::usize methodIndex,
     std::fprintf(stderr, " | codeLen=%zu nested=%zu\n", code.code.size(), code.attrs.size());
 
     for (jbc::core::AttrSlot& nested : code.attrs) {
+        if (!mjbase::util::attrSafeToDecode(cf, nested)) continue;
         auto nd = cf.decodeAttr(nested);
         if (nd.is_err()) continue;
         jbc::core::AttrBody* nb = nd.unwrap();

@@ -17,7 +17,7 @@ rewrite 之间容器不变（三段同进程顺序调用），门结果直接复
 注解类本体（dev/realme/Booger 类文件）的删除属死类删除，挂账于
 ResourceContainer 缺 removeResource（见 dead-member.md 台账节）。
 
-## 注解码码深度守卫接线核查（budget-argv 批，结论：挂账）
+## 注解码码深度守卫接线（mjbase 0.0.18 随升批，已接线）
 
 mjbase #158 回执：`oo.class` 崩因是 libjbc 注解码码互递归栈耗尽，守卫
 （`annotation_depth`）落在 member_remapper 的注解族解码收口。本仓 grunt
@@ -25,12 +25,25 @@ mjbase #158 回执：`oo.class` 崩因是 libjbc 注解码码互递归栈耗尽�
 
 | 直调位 | 解码对象 |
 |---|---|
-| `booger_anno_strip.cpp:30,88` | 方法/字段属性槽（注解族） |
-| `constant_call.cpp:258,267` | Code 属性 + 嵌套属性 |
-| `dead_member.cpp:114` | 属性槽普查 |
-| `indy_fold.cpp:65` | BootstrapMethods |
+| `booger_anno_strip.cpp` stripTable / countIn | 类/方法/字段属性槽（注解族） |
+| `constant_call.cpp` dumpPcRefs（Code + 嵌套） | 诊断面属性槽 |
+| `dead_member.cpp` annotationStrings | 注解族属性槽普查 |
+| `indy_fold.cpp` bsmEntries | BootstrapMethods（守卫恒放行，形状归一） |
 
-接线条件是 include `mjbase/util/annotation_depth.hpp`（自包含伞头）。
-**mjbase 0.0.5 钉版包里没有该头**（`util/` 只有 pair/span/time_util/triple），
-按红线不跨仓改、不动钉版——挂账等 mjbase 升级后接线。届时六处直调位
-按「注解族解码前查深度」接线即可，调用点形状不变。
+mjbase 0.0.18 入包后（`mjbase/util/annotation_depth.hpp` 伞头可用）上述
+直调位已按「注解族解码前查深度」接线（`mjbase::util::attrSafeToDecode`，
+预检拒绝按「解不开原样保真」fail-open 跳过），调用点形状不变。
+
+**负例测试咬出第 7 面：cp_compact**。`jbc::ir::cp_compact` 会对全部属性槽
+（类/字段/方法 + Code 嵌套）`decodeAttr` 重映射注解内 CP 引用（jbc
+cp_compact.cpp `planAttr`），敌意深嵌注解不走 Result 错误通道、直接栈溢出
+（单测进程实证）。libjbc 上游挂账不动，grunt 侧在 `container.hpp` 加
+`classAnnoDepthSafe`（同一批槽位过 `attrSafeToDecode`，Code 槽借道下探嵌
+套属性），compact 前置到三处调用点：`dead_member.cpp` 首轮压缩与二次压缩、
+`booger_anno_strip.cpp` 剥注解后压缩——越限类按既有 compact 失败通道
+「原样保真」（CP 不重编号、字节不动，宁少带走死 Utf8）。
+
+负例测试 `test/unittest/annotation_guard_test.cpp`（原始字节夹具，jasm 表
+达不了千层嵌套）：5000 层 `'@'` 深嵌注解类过 BoogerAnnoStrip / DeadMember
+不栈溢出、字节原样保真、不牵连同容器普通类清理；合法浅嵌 `@Booger` 照常
+普查剥离（fail-open 回归）。

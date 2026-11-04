@@ -17,6 +17,8 @@
 
 #include "libca/core/tag_cast.hpp"
 
+#include "mjbase/util/annotation_depth.hpp"
+
 #include "grunt/container.hpp"
 #include "grunt/indy_fold.hpp"
 #include "grunt/proof_toolbox.hpp"
@@ -111,6 +113,11 @@ std::set<std::string> annotationStrings(ir::ClassSession& s)
             if (name != "RuntimeVisibleAnnotations" && name != "RuntimeInvisibleAnnotations") {
                 continue;
             }
+            // 注解族槽先过嵌套深度预检（mjbase #158）：libjbc attr_codec 注解
+            // 解码互递归无界，敌意深嵌注解会在 decodeAttr 内栈溢出；预检拒绝
+            // 按「解不开原样保真」fail-open 跳过——少保一条注解字符串值，
+            // 进程不被打爆。
+            if (!mjbase::util::attrSafeToDecode(cf, slot)) continue;
             auto d = cf.decodeAttr(slot);
             if (d.is_err()) continue;
             auto* anno = ca::core::tag_cast::dyn_cast<jbc::core::AnnotationsAttr>(d.unwrap());
@@ -328,9 +335,13 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         });
         for (auto& [uri, bytes] : snapshot) {
             // 类级 fail-closed：单类压缩崩了按「压缩失败」收场（两边都宁留勿删）。
+            // 压缩前先过注解族深度预检（classAnnoDepthSafe）：cp_compact 会解
+            // 全部属性槽，敌意深嵌注解在 libjbc 互递归解码里栈溢出（不走
+            // Result 错误通道），预检拒绝按「压缩失败」同一通道原样保真。
             try {
                 auto session = openSession(bytes);
-                if (!session || ir::compactConstantPool(*session).is_err()) {
+                if (!session || !classAnnoDepthSafe(session->backing())
+                    || ir::compactConstantPool(*session).is_err()) {
                     compactFailed.insert(uri);
                     continue;
                 }
@@ -586,6 +597,9 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             try {
                 auto session = openSession(bytes);
                 if (!session) continue;
+                // 二次压缩同一道注解族深度预检：越限类保有删成员后的字节，
+                // 不再压缩（与 compact 失败同一「原样保真」口径）。
+                if (!classAnnoDepthSafe(session->backing())) continue;
                 if (ir::compactConstantPool(*session).is_err()) continue;
                 auto encoded = jbc::core::writeClass(session->backing());
                 if (encoded.is_err()) continue;
