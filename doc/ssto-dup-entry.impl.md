@@ -52,3 +52,19 @@
 （同名首视图逐条目 magic/CRC）、`Probe2.java`（指定名全条目序列）、
 `mini/`（JVM 末现口径对照实验）、`p1.jar`（单 pass 复现产物）、
 `full13.jar`（全链复现产物）。
+
+## 闭环（mjbase 0.0.18 随升批，2026-11-05）
+
+基座挂账由 mjbase #160（main 7999684）修掉：jar 导入同名重复条目改
+**末现保留**，与 JVM 类加载口径对齐。grunt 随升 0.0.5 → 0.0.18
+（`build(grunt)` 批）后整链复跑对账，账本清账：
+
+| 口径 | 升级前（mjbase 0.0.5，master a1cd06f） | 升级后（mjbase 0.0.18） |
+|---|---|---|
+| 输入 .class 条目 | 10456（6971 名 + 3485 Dup 垃圾） | 同左（输入只读） |
+| 输出 .class 条目 | 6971（同名位剩垃圾条目，真类丢失） | 6971（真类各就位） |
+| verify 对基线新增失败 | **+1527**（`ClassFormatError magic 0x32f9d4b4`） | **0**（基线同挂，无新增） |
+| corpus-regress 判定 | `FAIL verify` | `INFO verify（基线同挂）` |
+
+（快照 exe `grunt_cli_mjup0018.exe` sha256 前缀 84fe28d19ceb287f，14-pass
+链，JAR_TIMEOUT=120；本文件原「升级前」列数字即上文取证节，出处同。）

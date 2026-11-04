@@ -47,14 +47,15 @@ option_end()
 
 add_repositories("luiox-repo https://github.com/luiox/luiox-repo.git")
 
--- mjbase 包消费（0.0.5 = libarchive 死面摘除，包面不再携带 archive）。包面
+-- mjbase 包消费（0.0.5 = libarchive 死面摘除；0.0.18 = jar 导入 Dup 名末现
+-- 保留对齐 JVM 类加载口径 #160 + 注解递归畸形输入边界守卫 #158）。包面
 -- 依赖已与源仓根 require 清单对齐（libjbc >=0.4.22 / libjstd / libjhasm
 -- >=0.3.3 / libjstr / libjzip / libgarena / libjclassfile / zlib）。grunt 源码
 -- 直接 include 的三面各按消费面显式声明：mjbase/* → mjbase 包；jbc/* →
 -- libjbc（裸下界不低于 mjbase 包面，同一消费图归并解析到同一实例）；
 -- libca/* → libca（顶层钉版钉模块集，全图归并单实例——家族各包定义的
 -- 嵌套 libca 已统一为同一超集 modules，版本经顶层钉定收敛）。
-add_requires("mjbase 0.0.5")
+add_requires("mjbase 0.0.18")
 add_requires("libjbc >=0.4.23")
 add_requires("libca " .. LUIOX_LIBCA_VERSION, {configs = {modules = LUIOX_LIBCA_MODULES}})
 add_requireconfs("mjbase.libca",     {version = LUIOX_LIBCA_VERSION, configs = {modules = LUIOX_LIBCA_MODULES}})
