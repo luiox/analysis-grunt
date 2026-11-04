@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "libca/core/datatype.hpp"
+
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -20,6 +22,7 @@
 #include "grunt/pack.hpp"
 #include "grunt/pipeline_adapter.hpp"
 
+#include "cli/argv_utf8.hpp"
 #include "cli/sim_probe.hpp"
 
 #include "mjbase/analysis/class_scan.hpp"
@@ -98,13 +101,29 @@ std::vector<std::string> splitNames(const std::string& list)
 
 }   // namespace
 
+#if defined(_WIN32)
+int wmain(int argc, wchar_t** argv)
+#else
 int main(int argc, char** argv)
+#endif
 {
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(crashFilter);
 #endif
 
     mjbase::log::initDefaultLogger();
+
+    // argv 编码根修：Windows 取宽字符 argv 转 UTF-8（窄字符 main 的 ANSI argv
+    // 对非 ASCII 罐名必然错配）；POSIX 直通。
+    std::vector<std::string> args;
+#if defined(_WIN32)
+    if (!grunt::cli::utf8Args(argc, argv, args)) {
+        std::fprintf(stderr, "argv 含不可编码字符（UTF-8 转换失败）\n%s", kUsage);
+        return 2;
+    }
+#else
+    grunt::cli::utf8Args(argc, argv, args);
+#endif
 
     std::string input;
     std::string output;
@@ -116,26 +135,26 @@ int main(int argc, char** argv)
     bool        simDump = false;
     bool        list = false;
 
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
+    for (ca::usize i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
         if (arg == "--list") {
             list = true;
-        } else if (arg == "--sim" && i + 1 < argc) {
-            simTarget = argv[++i];
-        } else if (arg == "--args" && i + 1 < argc) {
-            simArgs = argv[++i];
+        } else if (arg == "--sim" && i + 1 < args.size()) {
+            simTarget = args[++i];
+        } else if (arg == "--args" && i + 1 < args.size()) {
+            simArgs = args[++i];
         } else if (arg == "--exec") {
             simExec = true;
         } else if (arg == "--dump") {
             simDump = true;
-        } else if (arg == "-i" && i + 1 < argc) {
-            input = argv[++i];
-        } else if (arg == "-o" && i + 1 < argc) {
-            output = argv[++i];
-        } else if (arg == "-p" && i + 1 < argc) {
-            passList = argv[++i];
-        } else if (arg == "-c" && i + 1 < argc) {
-            configPath = argv[++i];
+        } else if (arg == "-i" && i + 1 < args.size()) {
+            input = args[++i];
+        } else if (arg == "-o" && i + 1 < args.size()) {
+            output = args[++i];
+        } else if (arg == "-p" && i + 1 < args.size()) {
+            passList = args[++i];
+        } else if (arg == "-c" && i + 1 < args.size()) {
+            configPath = args[++i];
         } else if (arg == "-h" || arg == "--help") {
             std::fputs(kUsage, stdout);
             return 0;

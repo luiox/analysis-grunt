@@ -94,6 +94,8 @@ target("grunt_unittest")
     add_deps("grunt")
     add_packages("gtest", "mjbase", "libjbc", "libca")
     add_files("test/unittest/**.cpp")
+    -- CLI argv 转换单测：转换函数是 cli/ 下的独立编译单元，与被测面一致。
+    add_files("src/cli/argv_utf8.cpp")
     set_rundir("$(projectdir)")
     if is_plat("windows") then
         add_cxflags("/utf-8", {tools = "cl"})
