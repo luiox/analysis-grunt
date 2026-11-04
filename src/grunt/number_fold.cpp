@@ -5,6 +5,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -14,6 +15,7 @@
 #include "jbc/ir/units.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/iter_budget.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/rewrite_toolbox.hpp"
 
@@ -260,18 +262,20 @@ jsim::SimValue simOf(const ValueLoad& v)
     }
 }
 
-void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& uri,
-                ScanResult& result)
+/// @brief 单方法 SCAN。@return false = 类级迭代预算超限（调用方放弃该类剩余方法）。
+bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& uri,
+                ScanResult& result, iter_budget::ClassBudget& budget)
 {
-    if (!ir::hasCode(s, methodIndex)) return;
+    if (!ir::hasCode(s, methodIndex)) return true;
     auto promoted = ir::promoteMethod(s, methodIndex);
-    if (promoted.is_err()) return;
+    if (promoted.is_err()) return true;
     ir::CodeUnit* cu = promoted.unwrap().get();
-    if (cu == nullptr) return;
+    if (cu == nullptr) return true;
 
     const std::vector<ir::InsnId>& order = cu->dom.order();
     ca::usize                      pos   = 0;
     while (pos < order.size()) {
+        if (!budget.tick()) return false;   ///< 逐位置记账：超限即停，类保守跳过
         const ir::Insn* in = cu->dom.peek(order[pos]);
         if (in == nullptr || in->op == Op::NOP) {
             ++pos;
@@ -286,6 +290,7 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
         }
         ++pos;
     }
+    return true;
 }
 
 /// @brief 单方法 REWRITE。@return 折叠成功的站点数；failed 走出参。
@@ -293,13 +298,27 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
 /// cu 由 mutateMethodWithFrames 提升好：promote 只发生一次。站点按 srcPc+op
 /// 重定位后全量复核（scan 之后字节可能已被同方法前站改写，不盲改），锚点
 /// 原地改成结果常量装载，跨度其余非 NOP 指令擦除。
+/// @brief 单方法 REWRITE。@return 折叠成功的站点数；failed 走出参。
+///
+/// cu 由 mutateMethodWithFrames 提升好：promote 只发生一次。站点按 srcPc+op
+/// 重定位后全量复核（scan 之后字节可能已被同方法前站改写，不盲改），锚点
+/// 原地改成结果常量装载，跨度其余非 NOP 指令擦除。
+/// budget 逐站点按方法指令数记账（重定位是线性扫）；超限时剩余站点保守放弃。
 ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
-                        const std::vector<const Site*>& sites, ca::usize& failed)
+                        const std::vector<const Site*>& sites, ca::usize& failed,
+                        ca::usize& skippedByBudget, iter_budget::ClassBudget& budget)
 {
     const std::vector<ir::InsnId>& order = cu->dom.order();
     ca::usize                      hit   = 0;
+    ca::usize                      tried = 0;   ///< 本方法已尝试的站点数
 
     for (const Site* site : sites) {
+        // 逐站点按方法指令数记账：重定位 + 复核都是对 order 的线性扫。
+        if (!budget.tick(order.size())) {
+            skippedByBudget += sites.size() - tried;   ///< 余下站点保守放弃
+            return hit;
+        }
+        ++tried;
         // 重定位：srcPc + op 跨会话稳定（InsnId 不带出去）。
         ca::usize anchorPos = static_cast<ca::usize>(-1);
         for (ca::usize pos = 0; pos < order.size(); ++pos) {
@@ -369,19 +388,27 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
 // ==== SCAN ==================================================================
 // ============================================================================
 
-ScanResult scan(const mjbase::model::ResourceContainer& container)
+ScanResult scan(const mjbase::model::ResourceContainer& container,
+                const iter_budget::ClassBudget& budgetTemplate)
 {
     ScanResult result;
+    ca::usize  named = 0;
     forEachClass(container, [&](const ClassEntry& entry) {
         auto session = openSession(*entry.bytes);
         if (!session) {
             ++result.classesSkipped;
             return;
         }
-        ir::ClassSession&    s    = *session;
-        const ir::ClassUnit& unit = s.unit();
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+        ir::ClassSession&        s      = *session;
+        const ir::ClassUnit&     unit   = s.unit();
         for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
-            scanMethod(s, mi, std::string(entry.uri), result);
+            if (!scanMethod(s, mi, std::string(entry.uri), result, budget)) {
+                ++result.classesSkippedByBudget;
+                iter_budget::reportExhausted("grunt.NumberFold", "scan",
+                                             std::string(entry.uri), budget, named);
+                return;   ///< 该类剩余方法不再扫（保守跳过）
+            }
         }
     });
     return result;
@@ -391,15 +418,18 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
 // ==== REWRITE ===============================================================
 // ============================================================================
 
-DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result)
+DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result,
+                 const iter_budget::ClassBudget& budgetTemplate)
 {
     DirtySet dirty;
 
     // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
     rewrite_tools::FrameContext frames(container);
 
-    std::set<std::string> uris;
-    for (const Site& site : result.sites) uris.insert(site.uri);
+    // 站点按 uri 聚类（一遍建索引；此前逐类线性筛全站点的做法在万类大罐上
+    // 是 classes × sites 的平方账）。
+    std::unordered_map<std::string, std::vector<const Site*>> byUri;
+    for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
 
     struct PendingWrite
     {
@@ -409,14 +439,12 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     };
     std::vector<PendingWrite> pending;
 
+    ca::usize named = 0;
     forEachClass(container, [&](const ClassEntry& entry) {
         const std::string uri(entry.uri);
-        if (uris.count(uri) == 0) return;
-
-        std::vector<const Site*> sitesOf;
-        for (const Site& site : result.sites) {
-            if (site.uri == uri) sitesOf.push_back(&site);
-        }
+        const auto        it = byUri.find(uri);
+        if (it == byUri.end()) return;
+        const std::vector<const Site*>& sitesOf = it->second;
 
         auto session = openSession(*entry.bytes);
         if (!session) return;
@@ -425,14 +453,17 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+
         // 前置门：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
         const std::unordered_set<ca::usize> safe =
             proof_tools::roundTripSafe(*entry.bytes,
                                        std::vector<ca::usize>(methodIdxs.begin(),
                                                               methodIdxs.end()));
 
-        ca::usize hit    = 0;
-        ca::usize failed = 0;
+        ca::usize hit             = 0;
+        ca::usize failed          = 0;
+        ca::usize skippedByBudget = 0;
         for (const ca::usize mi : methodIdxs) {
             std::vector<const Site*> sitesOfMethod;
             for (const Site* site : sitesOf) {
@@ -447,7 +478,8 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             const bool ok = rewrite_tools::mutateMethodWithFrames(
                 s, mi, frames.resolver(),
                 [&](ir::CodeUnit& cu) {
-                    methodHit = rewriteMethod(s, &cu, sitesOfMethod, failed);
+                    methodHit = rewriteMethod(s, &cu, sitesOfMethod, failed,
+                                              skippedByBudget, budget);
                     return methodHit > 0;
                 });
             if (!ok) {
@@ -458,6 +490,10 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             hit += methodHit;
         }
         dirty.failed += failed;
+        dirty.skippedByBudget += skippedByBudget;
+        if (skippedByBudget > 0) {
+            iter_budget::reportExhausted("grunt.NumberFold", "rewrite", uri, budget, named);
+        }
         if (hit == 0) return;
 
         auto encoded = jbc::core::writeClass(s.backing());

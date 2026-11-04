@@ -180,6 +180,45 @@ TEST(IndyFoldScan, RejectsSiteWhenBsmDoesNotConverge)
     EXPECT_FALSE(site.why.empty());
 }
 
+/// 双调用点变体：同一类里再加一个 indy 调用方法（scan 预算按类记账的夹具）。
+std::string hostSourceTwoCalls(const std::string& bsmBody)
+{
+    const std::string base = hostSource(bsmBody);
+    const std::string call2 =
+        "  .method public static call2 ()I {\n"
+        "    code: {\n"
+        "      bipush 3\n"
+        "      bipush 4\n"
+        "      invokedynamic t (II)I { invokestatic, IndyHost.a, "
+        "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;"
+        "Ljava/lang/String;Ljava/lang/String;Ljava/lang/invoke/MethodType;)"
+        "Ljava/lang/invoke/CallSite; } "
+        "{ \"t\", \"IndyHost\", (II)I }\n"
+        "      ireturn\n"
+        "    }\n"
+        "  }\n";
+    const ca::usize tail = base.rfind('}');
+    return base.substr(0, tail) + call2 + "}\n";
+}
+
+/// scan 预算超限：站点数超限的类余下站点不再跑 BSM（保守跳过，计数上报）。
+TEST(IndyFoldScan, OverBudgetStopsBsmRunsConservatively)
+{
+    model::ResourceContainer container =
+        makeContainer({{"IndyHost", hostSourceTwoCalls(foldableBsmBody())}});
+
+    // 默认预算：两个站点都跑（正常罐不触限）。
+    const ScanResult normal = scan(container);
+    EXPECT_EQ(normal.sites.size(), 2u);
+    EXPECT_EQ(normal.classesSkippedByBudget, 0u);
+
+    // 预算 1：首站点跑完，次站点起超限——余下站点保守跳过。
+    const ScanResult starved = scan(container, iter_budget::ClassBudget{1});
+    EXPECT_EQ(starved.sites.size(), 1u);
+    EXPECT_EQ(starved.classesSkippedByBudget, 1u);
+    EXPECT_EQ(starved.foldable, 1u);
+}
+
 // ============================================================================
 // ==== REWRITE ===============================================================
 // ============================================================================

@@ -18,6 +18,7 @@
 #include "jbc/ir/units.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/iter_budget.hpp"
 #include "grunt/knowledge/runtime_names.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/rewrite_toolbox.hpp"
@@ -384,9 +385,11 @@ RwResult rewriteSite(ir::ClassSession& session, ir::CodeUnit& cu, const Site& si
 // ==== 对外三段 ==============================================================
 // ============================================================================
 
-ScanResult scan(const mjbase::model::ResourceContainer& container)
+ScanResult scan(const mjbase::model::ResourceContainer& container,
+                const iter_budget::ClassBudget& budgetTemplate)
 {
     ScanResult result;
+    ca::usize  named = 0;
 
     ConstMethodIndex defs;
     buildDefs(container, defs, result.rejects);
@@ -395,6 +398,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
     forEachClass(container, [&](const ClassEntry& entry) {
         auto session = openSession(*entry.bytes);
         if (!session) return;
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
         ir::ClassSession&     s    = *session;
         const ir::ClassUnit&  unit = s.unit();
         const std::string_view self = s.backing().thisName();
@@ -411,6 +415,12 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
             const std::vector<ir::InsnId>& order = cu->dom.order();
 
             for (ca::usize pos = 0; pos < order.size(); ++pos) {
+                if (!budget.tick()) {   ///< 逐位置记账：超限即停，类保守跳过
+                    ++result.classesSkippedByBudget;
+                    iter_budget::reportExhausted("grunt.ConstMethod", "scan",
+                                                 std::string(entry.uri), budget, named);
+                    return;
+                }
                 const ir::Insn* in = cu->dom.peek(order[pos]);
                 if (in == nullptr || in->op != Op::INVOKESTATIC) continue;
 
@@ -439,13 +449,16 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
     return result;
 }
 
-DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result)
+DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result,
+                 const iter_budget::ClassBudget& budgetTemplate)
 {
     DirtySet dirty;
     if (result.sites.empty()) return dirty;
 
     std::unordered_map<std::string, std::vector<const Site*>> byUri;
     for (const Site& s : result.sites) byUri[s.callerUri].push_back(&s);
+
+    ca::usize named = 0;
 
     // 两遍式：上面只收动作清单，这里逐类「开会话 → 改写 → lower → 立即回写」，
     // 峰值内存是单类会话而不是整 jar 的改写字节（同 flags_strip 的理由）。
@@ -464,6 +477,8 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         for (const auto& slot : byMethod) candidates.push_back(slot.first);
         const std::unordered_set<ca::usize> safe = proof_tools::roundTripSafe(*bytes, candidates);
 
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+
         bool changed = false;
         bool abandoned = false;   ///< 任一方法 lower 失败：整类放弃回写（粒度=类）
         for (auto& [methodIndex, methodSites] : byMethod) {
@@ -476,8 +491,19 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             ir::CodeUnit* cu = promoted.unwrap().get();
             if (cu == nullptr) continue;
 
-            bool methodChanged = false;
+            const ca::usize orderSize = cu->dom.order().size();
+
+            bool    methodChanged = false;
+            ca::usize tried        = 0;   ///< 本方法已尝试的站点数
             for (const Site* site : methodSites) {
+                if (!budget.tick(orderSize)) {   ///< 逐站点按指令数记账：超限弃余
+                    dirty.skippedByBudget += methodSites.size() - tried;
+                    iter_budget::reportExhausted("grunt.ConstMethod", "rewrite", uri,
+                                                 budget, named);
+                    abandoned = true;   ///< 余下方法不再尝试；已完成站点保留
+                    break;
+                }
+                ++tried;
                 const RwResult r = rewriteSite(s, *cu, *site);
                 ++dirty.attempted;
                 if (r == RwResult::Ok) {
@@ -489,6 +515,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                     ++dirty.failedByReason[idx];
                 }
             }
+            if (abandoned) break;
             if (!methodChanged) continue;
             auto lowered = ir::lowerMethod(s, methodIndex);
             if (lowered.is_err()) {

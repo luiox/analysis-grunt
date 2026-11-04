@@ -582,4 +582,48 @@ TEST(NumberFoldProof, RejectsClassCountGrowth)
     EXPECT_EQ(proofed.failed[0], "class-count");
 }
 
+// ============================================================================
+// ==== 迭代预算 ==============================================================
+// ============================================================================
+
+/// scan 预算超限：位置数超限的类保守跳过（计数进 ScanResult），默认预算不触限。
+TEST(NumberFoldBudget, ScanOverBudgetSkipsClassConservatively)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfIntViaLong", kIntViaLong);
+
+    // 极小预算（1 个位置）：首位置的跨度产出保留，其后位置不再扫，
+    // 类记预算跳过（预算语义：超限前的产出保留，超限后保守放弃）。
+    const ScanResult starved = scan(container, iter_budget::ClassBudget{1});
+    EXPECT_EQ(starved.sites.size(), 1u);
+    EXPECT_EQ(starved.classesSkippedByBudget, 1u);
+
+    // 默认预算：正常夹具绝不触限（预算不改变正常罐行为）。
+    const ScanResult normal = scan(container);
+    ASSERT_EQ(normal.sites.size(), 1u);
+    EXPECT_EQ(normal.classesSkippedByBudget, 0u);
+}
+
+/// rewrite 预算超限：站点复核指令数超限的站点保守放弃，产物保持原样。
+TEST(NumberFoldBudget, RewriteOverBudgetLeavesClassUntouched)
+{
+    model::ResourceContainer container;
+    const std::string uri = addFixture(container, "fixture/NfIntViaLong", kIntViaLong);
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+
+    // 复核记账单位是方法指令数（本夹具 7 条）；预算 1 必在首站点即超限。
+    const DirtySet dirty = rewrite(container, scanned, iter_budget::ClassBudget{1});
+    EXPECT_EQ(dirty.uris.size(), 0u) << "超限类不许被改写";
+    EXPECT_EQ(dirty.skippedByBudget, 1u);
+
+    // 产物面：类保持原样（跨度还在）。
+    const model::IResource* raw = container.getResource(uri);
+    const auto* cls = ca::core::tag_cast::dyn_cast<const model::ClassResource>(raw);
+    ASSERT_NE(cls, nullptr);
+    const std::vector<jbc::core::Op> ops = realOps(cls->get());
+    EXPECT_TRUE(contains(ops, jbc::core::Op::LXOR)) << "预算超限后跨度不应被改";
+}
+
 }   // namespace grunt::number_fold

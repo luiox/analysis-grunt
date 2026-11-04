@@ -34,7 +34,14 @@
 
 #include "mjbase/model/resource_container.hpp"
 
+#include "grunt/iter_budget.hpp"
+
 namespace grunt::trampoline_squeeze {
+
+/// 单类迭代预算默认值（口径与余量依据同 grunt::number_fold 的同名常量；
+/// scan 记扫描位置数，rewrite 记站点复核指令数）。
+inline constexpr ca::usize kScanClassBudget    = 1'000'000;
+inline constexpr ca::usize kRewriteClassBudget = 4'000'000;
 
 /// @brief 一个蹦床站点：方法用 backing 前的方法下标定位，`srcPc` 跨会话稳定。
 struct Site
@@ -49,15 +56,17 @@ struct Site
 struct ScanResult
 {
     std::vector<Site> sites;
-    ca::usize         classesSkipped = 0;
+    ca::usize         classesSkipped         = 0;
+    ca::usize         classesSkippedByBudget = 0;   ///< 迭代预算超限的类（保守跳过）
 };
 
 /// @brief 被改写的类与统计。
 struct DirtySet
 {
     std::vector<std::string> uris;
-    ca::usize                squeezed  = 0;
-    ca::usize                attempted = 0;
+    ca::usize                squeezed         = 0;
+    ca::usize                attempted        = 0;
+    ca::usize                skippedByBudget  = 0;   ///< 预算超限后放弃尝试的站点数
 };
 
 /// @brief 验收结果。
@@ -68,10 +77,16 @@ struct ProofResult
 };
 
 /// @brief SCAN：纯读。产出全部「目标即顺序后继」的蹦床站点。
-ScanResult scan(const mjbase::model::ResourceContainer& container);
+/// 单类迭代超预算时该类剩余方法保守跳过。
+ScanResult scan(const mjbase::model::ResourceContainer& container,
+                const iter_budget::ClassBudget& budget
+                = iter_budget::ClassBudget{kScanClassBudget});
 
 /// @brief REWRITE：纯写。逐站点原地置 NOP；lower 失败整类放弃。
-DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result);
+/// 单类迭代超预算时该类剩余站点保守放弃（已完成的站点保留）。
+DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result,
+                 const iter_budget::ClassBudget& budget
+                 = iter_budget::ClassBudget{kRewriteClassBudget});
 
 /// @brief PROOF：纯判。类数不增 + 脏类可重新解析。
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,

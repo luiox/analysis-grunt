@@ -46,8 +46,15 @@
 #include "mjbase/model/resource_container.hpp"
 
 #include "grunt/knowledge/const_args.hpp"
+#include "grunt/iter_budget.hpp"
 
 namespace grunt::number_fold {
+
+/// 单类迭代预算默认值（语料实测：正常类单段工作量在数万操作内，取 20 倍以
+/// 上余量；快照 63c4f33 实测 NumberFold 在 3362 类罐上单段 26s，超时尾部是
+/// 个别类失控）。limit 口径：scan 记扫描位置数，rewrite 记站点复核指令数。
+inline constexpr ca::usize kScanClassBudget    = 1'000'000;
+inline constexpr ca::usize kRewriteClassBudget = 4'000'000;
 
 /// @brief 一个可折叠站点。`anchorSrcPc`/`anchorOp` 跨会话稳定，rewrite 靠它重定位。
 struct Site
@@ -64,6 +71,7 @@ struct ScanResult
 {
     std::vector<Site> sites;
     ca::usize         classesSkipped = 0;   ///< 会话开不了的类（fail-closed 跳过）
+    ca::usize         classesSkippedByBudget = 0;   ///< 迭代预算超限的类（保守跳过）
 };
 
 /// @brief 被改写的类 + 站点级统计。
@@ -75,6 +83,7 @@ struct DirtySet
     ca::usize attempted         = 0;   ///< 进入 rewrite 的站点数
     ca::usize failed            = 0;   ///< 复核/标签门/擦除/帧链拦下的站点数
     ca::usize skippedByRoundTrip = 0;   ///< 原样往返不了的方法上的站点数
+    ca::usize skippedByBudget   = 0;   ///< 迭代预算超限后放弃尝试的站点数
 };
 
 /// @brief 验收结果。
@@ -84,11 +93,16 @@ struct ProofResult
     std::vector<std::string> failed;
 };
 
-/// @brief SCAN：纯读。产出可折叠站点。
-ScanResult scan(const mjbase::model::ResourceContainer& container);
+/// @brief SCAN：纯读。产出可折叠站点。单类迭代超预算时该类剩余方法保守跳过。
+ScanResult scan(const mjbase::model::ResourceContainer& container,
+                const iter_budget::ClassBudget& budget
+                = iter_budget::ClassBudget{kScanClassBudget});
 
 /// @brief REWRITE：纯写。只消费 ScanResult，按 anchorSrcPc 重定位后复核再改。
-DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result);
+/// 单类迭代超预算时该类剩余站点保守放弃（已完成的站点保留，类照常写回）。
+DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result,
+                 const iter_budget::ClassBudget& budget
+                 = iter_budget::ClassBudget{kRewriteClassBudget});
 
 /// @brief PROOF：纯判。类数不增 + 脏类可重新解析。
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,

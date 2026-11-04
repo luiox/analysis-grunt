@@ -4,6 +4,7 @@
 
 #include <set>
 #include <string>
+#include <unordered_map>
 
 #include "jbc/core/class_file.hpp"
 #include "jbc/core/opcode.hpp"
@@ -11,6 +12,7 @@
 #include "jbc/ir/units.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/iter_budget.hpp"
 #include "grunt/proof_toolbox.hpp"
 
 namespace grunt::trampoline_squeeze {
@@ -20,17 +22,19 @@ namespace {
 namespace ir = jbc::ir;
 
 /// @brief 单方法 SCAN：收集「目标即顺序后继」的 goto/goto_w。
-void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& uri,
-                ScanResult& result)
+/// @return false = 类级迭代预算超限（调用方放弃该类剩余方法）。
+bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& uri,
+                ScanResult& result, iter_budget::ClassBudget& budget)
 {
-    if (!ir::hasCode(s, methodIndex)) return;
+    if (!ir::hasCode(s, methodIndex)) return true;
     auto promoted = ir::promoteMethod(s, methodIndex);
-    if (promoted.is_err()) return;
+    if (promoted.is_err()) return true;
     ir::CodeUnit* cu = promoted.unwrap().get();
-    if (cu == nullptr) return;
+    if (cu == nullptr) return true;
 
     const std::vector<ir::InsnId>& order = cu->dom.order();
     for (ca::usize i = 0; i < order.size(); ++i) {
+        if (!budget.tick()) return false;   ///< 逐位置记账：超限即停，类保守跳过
         const ir::Insn* in = cu->dom.peek(order[i]);
         if (in == nullptr) continue;
         if (in->op != jbc::core::Op::GOTO && in->op != jbc::core::Op::GOTO_W) continue;
@@ -45,12 +49,16 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
         result.sites.push_back(
             Site{uri, methodIndex, in->srcPc, in->op == jbc::core::Op::GOTO_W});
     }
+    return true;
 }
 
 /// @brief 单方法 REWRITE：按 srcPc 重定位蹦床，原地置 NOP。
 /// @return 命中数。
+///
+/// budget 逐站点按方法指令数记账（重定位是线性扫）；超限时剩余站点保守放弃。
 ca::usize rewriteMethod(ir::ClassSession& s, ca::usize methodIndex,
-                        const std::vector<const Site*>& sites)
+                        const std::vector<const Site*>& sites, ca::usize& skippedByBudget,
+                        iter_budget::ClassBudget& budget)
 {
     if (!ir::hasCode(s, methodIndex)) return 0;
     auto promoted = ir::promoteMethod(s, methodIndex);
@@ -58,9 +66,16 @@ ca::usize rewriteMethod(ir::ClassSession& s, ca::usize methodIndex,
     ir::CodeUnit* cu = promoted.unwrap().get();
     if (cu == nullptr) return 0;
 
-    ca::usize hit = 0;
+    ca::usize hit   = 0;
+    ca::usize tried = 0;   ///< 本方法已尝试的站点数（含复核失败的）
     for (const Site* site : sites) {
+        // 逐站点按方法指令数记账：重定位 + 定位都是对 order 的线性扫。
         const std::vector<ir::InsnId>& order = cu->dom.order();
+        if (!budget.tick(order.size())) {
+            skippedByBudget += sites.size() - tried;   ///< 余下站点保守放弃
+            return hit;
+        }
+        ++tried;
         for (const ir::InsnId id : order) {
             const ir::Insn* in = cu->dom.peek(id);
             if (in == nullptr) continue;
@@ -99,20 +114,27 @@ ca::usize rewriteMethod(ir::ClassSession& s, ca::usize methodIndex,
 // ==== SCAN ==================================================================
 // ============================================================================
 
-ScanResult scan(const mjbase::model::ResourceContainer& container)
+ScanResult scan(const mjbase::model::ResourceContainer& container,
+                const iter_budget::ClassBudget& budgetTemplate)
 {
     ScanResult result;
-
+    ca::usize  named = 0;
     forEachClass(container, [&](const ClassEntry& entry) {
         auto session = openSession(*entry.bytes);
         if (!session) {
             ++result.classesSkipped;
             return;
         }
-        ir::ClassSession&    s    = *session;
-        const ir::ClassUnit& unit = s.unit();
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+        ir::ClassSession&        s      = *session;
+        const ir::ClassUnit&     unit   = s.unit();
         for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
-            scanMethod(s, mi, std::string(entry.uri), result);
+            if (!scanMethod(s, mi, std::string(entry.uri), result, budget)) {
+                ++result.classesSkippedByBudget;
+                iter_budget::reportExhausted("grunt.TrampolineSqueeze", "scan",
+                                             std::string(entry.uri), budget, named);
+                return;   ///< 该类剩余方法不再扫（保守跳过）
+            }
         }
     });
     return result;
@@ -122,13 +144,15 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
 // ==== REWRITE ===============================================================
 // ============================================================================
 
-DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result)
+DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result,
+                 const iter_budget::ClassBudget& budgetTemplate)
 {
     DirtySet dirty;
 
-    // 按 uri 聚合站点（容器遍历序 = scan 序，逐类一次性处理）。
-    std::set<std::string> uris;
-    for (const Site& site : result.sites) uris.insert(site.uri);
+    // 站点按 uri 聚类（一遍建索引；逐类线性筛全站点的做法在万类大罐上是
+    // classes × sites 的平方账）。
+    std::unordered_map<std::string, std::vector<const Site*>> byUri;
+    for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
 
     struct PendingWrite
     {
@@ -138,14 +162,12 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     };
     std::vector<PendingWrite> pending;
 
+    ca::usize named = 0;
     forEachClass(container, [&](const ClassEntry& entry) {
         const std::string uri(entry.uri);
-        if (uris.count(uri) == 0) return;
-
-        std::vector<const Site*> sitesOf;
-        for (const Site& site : result.sites) {
-            if (site.uri == uri) sitesOf.push_back(&site);
-        }
+        const auto        found = byUri.find(uri);
+        if (found == byUri.end()) return;
+        const std::vector<const Site*>& sitesOf = found->second;
 
         auto session = openSession(*entry.bytes);
         if (!session) return;
@@ -155,10 +177,18 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
-        ca::usize hit = 0;
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+
+        ca::usize hit             = 0;
+        ca::usize skippedByBudget = 0;
         for (const ca::usize mi : methodIdxs) {
             dirty.attempted += 1;
-            hit += rewriteMethod(s, mi, sitesOf);
+            hit += rewriteMethod(s, mi, sitesOf, skippedByBudget, budget);
+        }
+        dirty.skippedByBudget += skippedByBudget;
+        if (skippedByBudget > 0) {
+            iter_budget::reportExhausted("grunt.TrampolineSqueeze", "rewrite", uri,
+                                         budget, named);
         }
         if (hit == 0) return;
 

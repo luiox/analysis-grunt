@@ -113,8 +113,9 @@ mjbase::spi::PreservedAnalyses ConstMethodPass::run(
 
     const const_method::ScanResult scanned = const_method::scan(container);
     if (traceEnabled()) {
-        std::fprintf(stderr, "[grunt.ConstMethod] scan: sites=%zu rejects=%zu\n",
-                     scanned.sites.size(), scanned.rejects.size());
+        std::fprintf(stderr, "[grunt.ConstMethod] scan: sites=%zu rejects=%zu budget-skip=%zu\n",
+                     scanned.sites.size(), scanned.rejects.size(),
+                     scanned.classesSkippedByBudget);
     }
     if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
 
@@ -123,9 +124,11 @@ mjbase::spi::PreservedAnalyses ConstMethodPass::run(
         const_method::proof(container, dirty, before);
     if (traceEnabled()) {
         std::fprintf(stderr,
-                     "[grunt.ConstMethod] rewrite: classes=%zu applied=%zu/%zu skipped=%zu proof=%s\n",
+                     "[grunt.ConstMethod] rewrite: classes=%zu applied=%zu/%zu skipped=%zu"
+                     " budget-skip=%zu proof=%s\n",
                      dirty.uris.size(), dirty.applied, dirty.attempted,
-                     dirty.skippedByRoundTrip, proof.ok ? "ok" : "FAILED");
+                     dirty.skippedByRoundTrip, dirty.skippedByBudget,
+                     proof.ok ? "ok" : "FAILED");
         static const char* kRwReason[] = {"ok", "call-not-found", "member-mismatch",
                                           "load-fail", "slot-fail"};
         for (ca::usize i = 0; i < dirty.failedByReason.size(); ++i) {
@@ -150,8 +153,9 @@ mjbase::spi::PreservedAnalyses TrampolineSqueezePass::run(
     const ca::usize before = countClasses(container);
     const trampoline_squeeze::ScanResult scanned = trampoline_squeeze::scan(container);
     if (traceEnabled()) {
-        std::fprintf(stderr, "[grunt.TrampolineSqueeze] scan: sites=%zu skipped=%zu\n",
-                     scanned.sites.size(), scanned.classesSkipped);
+        std::fprintf(stderr, "[grunt.TrampolineSqueeze] scan: sites=%zu skipped=%zu budget-skip=%zu\n",
+                     scanned.sites.size(), scanned.classesSkipped,
+                     scanned.classesSkippedByBudget);
     }
     if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
 
@@ -161,8 +165,10 @@ mjbase::spi::PreservedAnalyses TrampolineSqueezePass::run(
         trampoline_squeeze::proof(container, dirty, before);
     if (traceEnabled()) {
         std::fprintf(stderr,
-                     "[grunt.TrampolineSqueeze] rewrite: classes=%zu squeezed=%zu proof=%s\n",
-                     dirty.uris.size(), dirty.squeezed, proof.ok ? "ok" : "FAILED");
+                     "[grunt.TrampolineSqueeze] rewrite: classes=%zu squeezed=%zu"
+                     " budget-skip=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.squeezed, dirty.skippedByBudget,
+                     proof.ok ? "ok" : "FAILED");
         for (const std::string& f : proof.failed) {
             std::fprintf(stderr, "[grunt.TrampolineSqueeze] proof failed: %s\n", f.c_str());
         }
@@ -370,8 +376,10 @@ mjbase::spi::PreservedAnalyses IndyFoldPass::run(mjbase::model::ResourceContaine
     const indy_fold::ScanResult scanned = indy_fold::scan(container);
     if (traceEnabled()) {
         std::fprintf(stderr,
-                     "[grunt.IndyFold] scan: classes=%zu sites=%zu foldable=%zu bsmFailed=%zu\n",
-                     scanned.classes, scanned.sites.size(), scanned.foldable, scanned.bsmFailed);
+                     "[grunt.IndyFold] scan: classes=%zu sites=%zu foldable=%zu bsmFailed=%zu"
+                     " budget-skip=%zu\n",
+                     scanned.classes, scanned.sites.size(), scanned.foldable, scanned.bsmFailed,
+                     scanned.classesSkippedByBudget);
         if (std::getenv("GRUNT_INDY_FOLD_TRACE") != nullptr) {
             for (const indy_fold::Site& site : scanned.sites) {
                 std::string verdict;
@@ -409,8 +417,9 @@ mjbase::spi::PreservedAnalyses NumberFoldPass::run(
     const ca::usize before = countClasses(container);
     const number_fold::ScanResult scanned = number_fold::scan(container);
     if (traceEnabled()) {
-        std::fprintf(stderr, "[grunt.NumberFold] scan: sites=%zu skipped=%zu\n",
-                     scanned.sites.size(), scanned.classesSkipped);
+        std::fprintf(stderr, "[grunt.NumberFold] scan: sites=%zu skipped=%zu budget-skip=%zu\n",
+                     scanned.sites.size(), scanned.classesSkipped,
+                     scanned.classesSkippedByBudget);
     }
     if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
 
@@ -420,9 +429,10 @@ mjbase::spi::PreservedAnalyses NumberFoldPass::run(
     if (traceEnabled()) {
         std::fprintf(stderr,
                      "[grunt.NumberFold] rewrite: classes=%zu sites=%zu/%zu failed=%zu"
-                     " roundtrip-skip=%zu proof=%s\n",
+                     " roundtrip-skip=%zu budget-skip=%zu proof=%s\n",
                      dirty.uris.size(), dirty.sites, dirty.attempted, dirty.failed,
-                     dirty.skippedByRoundTrip, proof.ok ? "ok" : "FAILED");
+                     dirty.skippedByRoundTrip, dirty.skippedByBudget,
+                     proof.ok ? "ok" : "FAILED");
         for (const std::string& f : proof.failed) {
             std::fprintf(stderr, "[grunt.NumberFold] proof failed: %s\n", f.c_str());
         }

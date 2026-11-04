@@ -40,7 +40,14 @@
 
 #include "mjbase/model/resource_container.hpp"
 
+#include "grunt/iter_budget.hpp"
+
 namespace grunt::const_method {
+
+/// 单类迭代预算默认值（口径与余量依据同 grunt::number_fold 的同名常量；
+/// scan 记扫描位置数，rewrite 记站点复核指令数）。
+inline constexpr ca::usize kScanClassBudget    = 1'000'000;
+inline constexpr ca::usize kRewriteClassBudget = 4'000'000;
 
 /// @brief 内联值：能落成调用点上一条指令的静态常量。
 struct ConstValue
@@ -94,6 +101,7 @@ struct ScanResult
 {
     std::vector<Site>           sites;
     std::vector<RejectedMethod> rejects;
+    ca::usize                   classesSkippedByBudget = 0;   ///< 预算超限的类（保守跳过）
 };
 
 /// @brief 被改写的类与站点级统计（trace 用）。
@@ -105,6 +113,7 @@ struct DirtySet
     ca::usize              applied   = 0;
     std::vector<ca::usize> failedByReason;   ///< 按 rewrite 失败原因分类计数
     ca::usize              skippedByRoundTrip = 0;
+    ca::usize              skippedByBudget    = 0;   ///< 预算超限后放弃尝试的站点数
 };
 
 /// @brief 验收结果。
@@ -115,10 +124,16 @@ struct ProofResult
 };
 
 /// @brief SCAN：纯读。产出内联站点与定义侧拒绝面。
-ScanResult scan(const mjbase::model::ResourceContainer& container);
+/// 单类迭代超预算时该类剩余方法保守跳过。
+ScanResult scan(const mjbase::model::ResourceContainer& container,
+                const iter_budget::ClassBudget& budget
+                = iter_budget::ClassBudget{kScanClassBudget});
 
 /// @brief REWRITE：纯写。只消费 ScanResult，按 callSrcPc 原地替换调用指令。
-DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result);
+/// 单类迭代超预算时该类剩余站点保守放弃（已完成的站点保留）。
+DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result,
+                 const iter_budget::ClassBudget& budget
+                 = iter_budget::ClassBudget{kRewriteClassBudget});
 
 /// @brief PROOF：纯判。类数不增 + 脏类可重新解析。
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,

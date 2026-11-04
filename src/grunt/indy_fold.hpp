@@ -51,9 +51,16 @@
 
 #include "mjbase/model/resource_container.hpp"
 
+#include "grunt/iter_budget.hpp"
+
 #include "jsim/indy.hpp"
 
 namespace grunt::indy_fold {
+
+/// 单类 scan 迭代预算默认值：每类处理的 indy 站点数上限。每站点要真跑一次
+/// BSM（jsim 引擎单次上限 4096 步），万站点类是分钟级尾部——超限类保守跳过
+/// （语料实测：Grunteon 3362 类 10285 站点，单类均值约 3，此值 3000 倍余量）。
+inline constexpr ca::usize kScanClassBudget = 10'000;
 
 /// BSM 静态参数的值。只收折叠用得到的形态——收不全就整站放弃，不猜。
 struct BsmValue
@@ -103,6 +110,7 @@ struct ScanResult
     ca::usize         foldable  = 0;
     ca::usize         bsmFailed = 0;
     bool              engineReady = true;  ///< 执行器是否可用（容器能开类）
+    ca::usize         classesSkippedByBudget = 0;   ///< 预算超限的类（保守跳过）
 };
 
 struct DirtySet
@@ -120,7 +128,10 @@ struct ProofResult
 };
 
 /// @brief SCAN：纯读。普查调用点 + 跑 BSM 求目标（模拟不写容器）。
-ScanResult scan(const mjbase::model::ResourceContainer& container);
+/// 单类站点数超预算时该类剩余站点保守跳过（BSM 不再跑）。
+ScanResult scan(const mjbase::model::ResourceContainer& container,
+                const iter_budget::ClassBudget& budget
+                = iter_budget::ClassBudget{kScanClassBudget});
 
 /// @brief REWRITE：纯写。按 scan 的结论就地改指令。
 DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result);

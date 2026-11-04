@@ -372,6 +372,64 @@ TEST(ConstMethodRewrite, ReplacesCallWithIntLiteral)
     EXPECT_NE(after.find("bipush 42"), std::string::npos) << after;
 }
 
+/// rewrite 预算超限：站点复核指令数超限的站点保守放弃，产物保持原样。
+TEST(ConstMethodRewrite, OverBudgetLeavesCallUntouched)
+{
+    model::ResourceContainer container = makeContainer({
+        {"fixture/TypeUtil", kTypeUtilSource},
+        {"fixture/Caller",
+         ".super java/lang/Object\n"
+         ".class public super fixture/Caller {\n"
+         "  .method public static caller ()Ljava/lang/Class; {\n"
+         "    code: {\n"
+         "      invokestatic fixture/TypeUtil.t ()Ljava/lang/Class;\n"
+         "      areturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+
+    // 复核记账单位是方法指令数（调用方法 2 条）；预算 1 必在首站点即超限。
+    const DirtySet dirty = rewrite(container, scanned, iter_budget::ClassBudget{1});
+    EXPECT_EQ(dirty.applied, 0u) << "超限类不许被改写";
+    EXPECT_EQ(dirty.skippedByBudget, 1u);
+
+    const std::string after = disassemble(classBytes(container, "fixture/Caller.class"));
+    EXPECT_NE(after.find("invokestatic"), std::string::npos) << after;
+}
+
+/// scan 预算超限：位置数超限的类保守跳过（计数进 ScanResult）。
+TEST(ConstMethodScan, OverBudgetSkipsClassConservatively)
+{
+    model::ResourceContainer container = makeContainer({
+        {"fixture/TypeUtil", kTypeUtilSource},
+        {"fixture/Caller",
+         ".super java/lang/Object\n"
+         ".class public super fixture/Caller {\n"
+         "  .method public static caller ()Ljava/lang/Class; {\n"
+         "    code: {\n"
+         "      invokestatic fixture/TypeUtil.t ()Ljava/lang/Class;\n"
+         "      areturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    // 预算 1：两个类各扫 1 个位置即超限（首位置上的站点被保留），其后不再扫，
+    // 两类都记预算跳过（预算语义：超限前的产出保留，超限后保守放弃）。
+    const ScanResult starved = scan(container, iter_budget::ClassBudget{1});
+    EXPECT_EQ(starved.sites.size(), 1u);
+    EXPECT_EQ(starved.classesSkippedByBudget, 2u);
+
+    // 默认预算：正常夹具绝不触限。
+    const ScanResult normal = scan(container);
+    EXPECT_EQ(normal.sites.size(), 1u);
+    EXPECT_EQ(normal.classesSkippedByBudget, 0u);
+}
+
 // ============================================================================
 // ==== PROOF =================================================================
 // ============================================================================

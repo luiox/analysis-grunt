@@ -7,6 +7,8 @@
 
 #include "grunt/indy_fold.hpp"
 
+#include "grunt/iter_budget.hpp"
+
 #include "libca/core/tag_cast.hpp"
 
 #include <cstdio>
@@ -213,10 +215,12 @@ bool judge(const Site& site, const jsim::indy::Target& target, std::string& why)
 // ==== SCAN ==================================================================
 // ============================================================================
 
-ScanResult scan(const mjbase::model::ResourceContainer& container)
+ScanResult scan(const mjbase::model::ResourceContainer& container,
+                const iter_budget::ClassBudget& budgetTemplate)
 {
     ScanResult result;
     Engine     engine(container);
+    ca::usize  named = 0;
 
     forEachClass(container, [&](const ClassEntry& entry) {
         const std::string uri(entry.uri);
@@ -232,7 +236,9 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
         const std::string              owner(unit.symbols().str(unit.thisClass));
 
         bool any = false;
-        for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
+        bool overBudget = false;   ///< 本类站点数超预算：余下站点不再跑 BSM
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+        for (ca::usize mi = 0; mi < unit.methods.size() && !overBudget; ++mi) {
             if (!jbc::ir::hasCode(*session, mi)) continue;
             auto promoted = jbc::ir::promoteMethod(*session, mi);
             if (promoted.is_err()) continue;
@@ -240,9 +246,17 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
             if (cu == nullptr) continue;
 
             const std::vector<jbc::ir::InsnId>& order = cu->dom.order();
-            for (ca::usize pc = 0; pc < order.size(); ++pc) {
+            for (ca::usize pc = 0; pc < order.size() && !overBudget; ++pc) {
                 const jbc::ir::Insn* in = cu->dom.peek(order[pc]);
                 if (in == nullptr || in->op != jbc::core::Op::INVOKEDYNAMIC) continue;
+                // 站点记账（1 站点 = 一次 BSM 模拟，引擎内部另有 4096 步上限）。
+                if (!budget.tick()) {
+                    overBudget = true;
+                    ++result.classesSkippedByBudget;
+                    iter_budget::reportExhausted("grunt.IndyFold", "scan", uri, budget,
+                                                 named);
+                    break;
+                }
 
                 Site site;
                 site.uri         = uri;
