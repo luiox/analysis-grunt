@@ -8,6 +8,7 @@
 #include <exception>
 #include <memory>
 
+#include "grunt/pass_clock.hpp"
 #include "mjbase/spi/pass_pipeline.hpp"
 
 namespace grunt {
@@ -35,6 +36,9 @@ public:
             Scoped(const char* n) : prev(gActivePass) { gActivePass = n; }
             ~Scoped() { gActivePass = prev; }
         } scoped(name_);
+        // pass 级 wall-clock 时间片（与 iter_budget 类级预算互补：类级封迭代
+        // 尾，pass 级封时间墙）。超墙后 forEachClass 对余下类保守止步。
+        const pass_clock::PassScope slice(name_);
         try {
             return inner_.run(container, am);
         } catch (const std::exception& e) {

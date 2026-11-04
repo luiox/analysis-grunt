@@ -15,6 +15,7 @@
 #include "libca/core/datatype.hpp"
 #include "libca/core/tag_cast.hpp"
 
+#include "grunt/pass_clock.hpp"
 #include "jbc/ir/units.hpp"
 
 #include "mjbase/model/resource_container.hpp"
@@ -30,6 +31,9 @@ struct ClassEntry
 };
 
 /// @brief 按资源序回调容器内全部非空类条目；非类资源与空条目直接跳过。
+///
+/// pass 级时间片门（pass_clock，见该头注）：有活动片且已超墙时，余下类
+/// 不再下发（整类保守跳过），首停类 stderr 点名 + 逐类计数。
 template <class Fn>
 void forEachClass(const mjbase::model::ResourceContainer& container, Fn&& fn)
 {
@@ -37,6 +41,10 @@ void forEachClass(const mjbase::model::ResourceContainer& container, Fn&& fn)
         const auto* cls =
             ca::core::tag_cast::dyn_cast<const mjbase::model::ClassResource>(&resource);
         if (cls == nullptr || cls->get().empty()) return;
+        if (pass_clock::gActiveClock != nullptr &&
+            !pass_clock::gActiveClock->admit(uri)) {
+            return;
+        }
         fn(ClassEntry{uri, &cls->get()});
     });
 }
@@ -69,9 +77,12 @@ inline const std::vector<ca::u8>* findClassBytes(
 }
 
 /// @brief 容器内类条目数（proof 的类数门用）。
+///
+/// 计数挂起时间片：类数不增门必须看到全量类，不许被超墙截短。
 inline ca::usize countClasses(const mjbase::model::ResourceContainer& container)
 {
-    ca::usize n = 0;
+    ca::usize           n = 0;
+    pass_clock::Suspend suspend;
     forEachClass(container, [&](const ClassEntry&) { ++n; });
     return n;
 }
