@@ -45,3 +45,22 @@ MethodHandle→Methodref 在压缩闭包内存活，自然计入活引用——i
 
 误保窗口只在 bsmUnresolved 轮打开，不构成正确性缺陷；ProxyInline /
 FieldAccessProxy 落地后死代理变多，同窗口内同价保留。
+
+## TEST-obf「2 空类」取证（budget-argv 批，结论：不复现，门不动）
+
+上批交接称 TEST-obf 输出残留 2 个空类（`<init>`-only 门没接住）。本轮逐
+成员取证三面核对，**全部为零**，原观察在现存产物上不可复现：
+
+| 面取的样 | 空壳形态类数 |
+|---|---|
+| TEST-obf 输入罐（210 类） | 0 |
+| 上批 base 链输出（63c4f33 快照） | 0 |
+| 上批 cur 链输出（ce8b4a7） | 0 |
+| 本轮 fix/budget-argv 全链输出 | 0 |
+
+「空壳形态」口径：fields 空 ∧ methods 只剩 `<init>`（含参算子一并算，
+含全零成员类）。TEST-obf 上 DeadMember 的空壳摘除门零触发（无候选、
+无摘除行）——上批 2f432e0 落的「`<init>`-only + 零字段 + 全容器引用
+普查 + main 门」已把该罐吃干净。**不新增「仅 public 无参构造 + 零字段」
+放行形态**：没有活样本支撑，放行只会在无证据面扩大摘除权。若后续语料
+再现此形态，先补罐再议。
