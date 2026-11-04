@@ -7,7 +7,8 @@
 # 用法：CORPUS=<dir> ./test/corpus-regress.sh
 #      NO_VERIFY=1 跳过校验器（无 JDK 环境）
 #      JAR_TIMEOUT=120 单罐上限秒数（0 = 不限时）；超时记 FAIL run 继续下一罐
-#      ONLY=<glob> 只跑名字匹配的罐（? * 通配，全名匹配 basename）；空 = 全跑
+#      ONLY=<glob> 只跑名字匹配的罐（bash case 语义：? * [] 都是通配符，全名匹配 basename；
+#                  字面 [ 要转义成 \[，或设 ONLY_LITERAL=1 按字面匹配免转义）；空 = 全跑
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,12 +35,18 @@ total=0
 for jar in "$CORPUS"/*.jar; do
     [ -e "$jar" ] || continue
     name="$(basename "$jar" .jar)"
-    # 续跑过滤：只跑名字匹配 ONLY 通配的罐（空 = 全跑）。
+    # 续跑过滤：只跑名字匹配 ONLY 的罐（空 = 全跑）。
+    # ONLY_LITERAL=1 时按字面整名比较（不走 case 通配），罐名自带
+    # [ ] * ? 等字符时不用转义；默认走 case 通配（? * [] 都是元字符）。
     if [ -n "${ONLY:-}" ]; then
-        case "$name" in
-        $ONLY) ;;
-        *) continue ;;
-        esac
+        if [ "${ONLY_LITERAL:-0}" = "1" ]; then
+            [ "$name" = "$ONLY" ] || continue
+        else
+            case "$name" in
+            $ONLY) ;;
+            *) continue ;;
+            esac
+        fi
     fi
     total=$((total + 1))
     name="$(basename "$jar" .jar)"
