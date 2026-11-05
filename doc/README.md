@@ -40,6 +40,8 @@
 | [indy-decode.impl.md](indy-decode.impl.md) | 本仓的 Scan / Rewrite / Proof，含注入面、插入式锚保留与语料账本 |
 | [string-cache-fold.md](string-cache-fold.md) | Kasumi 字符串缓存：读缓存/直接解密两形态调用点、TSV 旁证路线的形态 |
 | [string-cache-fold.impl.md](string-cache-fold.impl.md) | 本仓的 Scan / Rewrite / Proof，含 `--tsv` 注入面、旁证降级与语料账本 |
+| [metadata-strip.md](metadata-strip.md) | Kasumi 元数据残留：`@Metadata` 注解、水印字段、反 LLM 注入资源的形态 |
+| [metadata-strip.impl.md](metadata-strip.impl.md) | 本仓的 Scan / Rewrite / Proof，含资源删除动词、资源对账门与语料账本 |
 
 ## 约定
 

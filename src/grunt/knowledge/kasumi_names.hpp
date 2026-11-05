@@ -123,10 +123,29 @@ inline constexpr std::string_view kKasumiMetadataAnnoDesc = "Ldev/kasumi/interna
 /// @brief 水印串：`PROTECTED BY Kasumi` 子串命中。
 inline constexpr std::string_view kKasumiWatermarkText = "PROTECTED BY Kasumi";
 
+/// @brief 水印串：`Gruntpocalypse` 子串命中（树版 isKasumiWatermarkString 的
+///        第三条判据，逐字取自 kasumi_metadata_cleanup_pass.cpp——树版水印
+///        口径把姊妹家族的署名串一并当水印清）。
+inline constexpr std::string_view kKasumiWatermarkAltText = "Gruntpocalypse";
+
 /// @brief 水印串：`kasumi_` 前缀命中。
 inline constexpr std::string_view kKasumiWatermarkKeyPrefix = "kasumi_";
 
 /// @brief 反 LLM 注入资源 URI 前缀（`META-INF/Kasumi/cybersecurity/analysis-*.md`）。
 inline constexpr std::string_view kKasumiResourcePrefix = "META-INF/Kasumi/";
+
+/// @brief 反 LLM 注入资源 URI 后缀（树版 endsWith(uri, ".md") 逐字口径）。
+inline constexpr std::string_view kKasumiResourceSuffix = ".md";
+
+/// @brief 反 LLM 注入资源内容探针（树版 isKasumiAntiLlmResource 的五条逐字
+///        取自 kasumi_metadata_cleanup_pass.cpp）：URI 形状命中之外，字节里
+///        任一探针子串在场才算注入内容——S1 互证面，删的是内容坐实的资源。
+inline constexpr std::string_view kKasumiResourceProbes[] = {
+    "anti-llm",
+    "developer-message",
+    "jailbreak",
+    "prompt injection",
+    "PROTECTED BY Kasumi",
+};
 
 }   // namespace grunt::knowledge

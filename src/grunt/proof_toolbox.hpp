@@ -1,13 +1,17 @@
 /// @file        proof_toolbox.hpp
-/// @brief       PROOF 工具箱：跨残留共享的往返自检。
+/// @brief       PROOF 工具箱：跨残留共享的往返自检与资源对账。
 ///
-/// CONVENTION §7：跨残留复用只允许发生在工具箱。当前收口的是 `roundTripSafe`
-/// ——改写的前置门：在**未修改**的独立会话上先跑一遍 promote → lower，
-/// 把「本来就往返不了」的方法排除在改写面之外。
+/// CONVENTION §7：跨残留复用只允许发生在工具箱。当前收口两组：
+/// - `roundTripSafe`——改写的前置门：在**未修改**的独立会话上先跑一遍
+///   promote → lower，把「本来就往返不了」的方法排除在改写面之外；
+/// - 资源对账原语（`countResources` / `resourcesShrunk`）——资源级验收门：
+///   资源数不增 + 删除清单逐条不在场。资源**删除**动词在 rewrite_toolbox
+///   （proof 只判不写，§3.2-5），对账在 proof 侧。
 #pragma once
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -81,6 +85,56 @@ inline ClassIntactResult classesIntact(const mjbase::model::ResourceContainer& c
             found = openSession(*entry.bytes) != nullptr;
         });
         if (!found) {
+            result.ok = false;
+            result.failed.push_back(uri);
+        }
+    }
+    return result;
+}
+
+// ============================================================================
+// ==== 资源对账原语（资源级验收门：资源删除面 proof 段共用）==================
+// ============================================================================
+
+/// @brief 容器资源条目数（类与非类资源都算；jar 的资源面对账口径）。
+///
+/// 计数挂起时间片：资源数门必须看到全量条目，不许被超墙截短（countClasses
+/// 同门——资源删除与类改写在同一 pass 内交错时，proof 只许在挂起期盘点）。
+inline ca::usize countResources(const mjbase::model::ResourceContainer& container)
+{
+    ca::usize           n = 0;
+    pass_clock::Suspend suspend;
+    container.visitResources([&](std::string_view, const mjbase::model::IResource&) { ++n; });
+    return n;
+}
+
+/// @brief 资源对账结果：违例台账（"resource-count" / 未清掉的条目 URI）。
+struct ResourceShrunkResult
+{
+    bool                     ok = true;
+    std::vector<std::string> failed;
+};
+
+/// @brief 资源级验收门：资源数**只减不增**，且删除清单逐条不在场。
+///
+/// 资源动词的对账口径（metadata_strip 首用）：资源删除是容器条目的结构性
+/// 变化，类数门看不见它——单独一道门，与类数门并列进 proof。数不增（只减）
+/// 防误加资源；清单逐条核对把 Stats 台账与容器实况钉死（虚报一条删减即
+/// FAILED）。
+inline ResourceShrunkResult resourcesShrunk(const mjbase::model::ResourceContainer& container,
+                                            const std::vector<std::string>& removedUris,
+                                            ca::usize                       resourcesBefore)
+{
+    // 对账是效力门，挂起期间盘点全量条目（countResources 同门）。
+    pass_clock::Suspend     suspend;
+    ResourceShrunkResult    result;
+    const ca::usize         after = countResources(container);
+    if (after > resourcesBefore || after + removedUris.size() != resourcesBefore) {
+        result.ok = false;
+        result.failed.emplace_back("resource-count");
+    }
+    for (const std::string& uri : removedUris) {
+        if (container.hasResource(uri)) {
             result.ok = false;
             result.failed.push_back(uri);
         }

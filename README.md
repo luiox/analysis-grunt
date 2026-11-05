@@ -26,6 +26,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.FieldAccessProxy` | 把 static 字段代理方法（体 = 实参逐槽过手 + 单次字段访问 + 匹配返回）的调用点原地改回真实 get/put 字段；改回后代理变零引用死码交下游 DeadMember/DeadCode | 方法体形状（直线无标签无异常表 ∧ 实参逐槽类型/槽位精确 ∧ 唯一字段访问与描述符互证：描述符恰为按该字段该有的形状）∧ 引用普查有调用点 ∧ 调用点越出 owner 类时 owner `<clinit>` 中性（初始化暴露门，与 constant_call/proxy_inline 单源）；不依赖方法名/标志/家族名 | S2 |
 | `grunt.IndyDecode` | Kasumi 混淆器 indy 调用点静态还原：提取每类 XOR 解密器 key，解密 bootstrap 静态参数（encOwner/encName/encDesc），按 mode/extra 表把 7 形态（static/virtual/字段 4 路/ctor）还原成真实 invoke/getfield/putfield/new；virtual 的接口落点走 invokeinterface，插入式站点以 spill/reload + 原地换指令保锚 | 三级分工：S2 选面（BSM 8 参描述符指纹 ∧ 解密器体形 `charAt;LDC;LDC;IXOR;IXOR;i2c`，兼容单层）→ S3 分派（mode/extra 数值表，`Era::Kasumi` 分支唯一合法落点）→ S1 定案（indy desc 与解密结果互证：static 全等 / virtual receiver 槽 / 字段 4 路形状 / ctor 返回 `Lowner;`）；key 链断 / 参数畸形 / 互证不符 / 接口无旁证整站 fail-closed（`SnakeGame-obf.jar` 语料 627 站点全还原，residual=0） | S1 |
 | `grunt.StringCacheFold` | Kasumi 字符串缓存解密结果回填常量池：读缓存站点（`getstatic String[]; idx; aaload`）与直接解密站点（`getstatic byte[][]; idx; aaload; dup; arraylength; off; invokestatic ([BII)String`）锚点原地换 `ldc <明文>`、跨度其余擦除；明文来自外部 TSV 旁证（KasumiStringDumper 产出，`--tsv` 注入，内容不进仓） | S2 选面（getstatic 描述符钉 `[Ljava/lang/String;`/`[[B` ∧ 后继跨度逐条钉形，前缀口径）→ S3 Era 门（TSV 属换代表面，`Era::Kasumi` 分支唯一合法落点）→ S1 定案（明文表 `(owner,key,idx)` 精确命中）；旁证缺席/不可读整站 fail-closed、表无该条目按树版静默跳过 + `noPlaintext` 记账——S1 无旁证不可定案（明文本身就是要回填的内容，树版空映射即整 pass 跳过，语义同源）（`SnakeGame-obf.jar` 语料 168 站点回填 84+84，residual=0） | S1 |
+| `grunt.MetadataStrip` | Kasumi 元数据残留清理三面：`@dev/kasumi/internal/Metadata` 注解摘除（类/字段/方法三张挂载面，其余注解保留）、水印字段整删（带注解字段 ∨ ConstantValue 为水印串：含 `PROTECTED BY Kasumi` / 含 `Gruntpocalypse` / 前缀 `kasumi_`，树版三判据逐字口径）、反 LLM 注入资源删除（`META-INF/Kasumi/*.md` 前缀 + 内容探针五选一，本仓首个资源面写动词）；方法体不碰（引导/解密器交 indy 还原与下游死码清理） | S2 形状钉面（注解描述符全等 ∧ 资源 URI 前缀+`.md` 形状 ∧ 水印串形状）→ S3 Era 门（三面判据全是 Kasumi 版本实现选择，`Era::Kasumi` 分支唯一合法落点，未判整面关闭一个资源不动）→ S1 互证（资源删除要内容探针坐实注入物，形状命中而探针缺席保留 + `resourceCandidates` 盘点；水印字段要 ConstantValue 内容命中）；注解槽过深度预检（mjbase #158），解不开 fail-closed 不摘 + `annoBlocked` 记账；proof 双门：类数不增 + 资源对账（数只减 + 删除清单逐条不在场）（`SnakeGame-obf.jar` 语料 25 注解 + 10 水印字段 + 4 资源全清，residual=0） | S1 |
 
 `S1` = 语义后果：混淆器为了保持功能必须如此，改了自己就坏。`S2` = 结构性清理：判据成立即安全，但混淆器换代可能换形态。`S3` = 面向未来形态的预留面：当前语料无站点，判据按形态写、按换代样本验收。判据不依赖方法名、签名形状、所在类或注入模板，所以 Grunt 换代不需要改这一行。
 
@@ -62,17 +63,21 @@ grunt.BoogerAnnoStrip
 `ConstValuePromote` 回填 `ConstantValue` 后 `clinit` 变空，也会解锁新的
 `DeadMember` 删除面。判据是 `PredicateFold` 站点归零。
 
-**Kasumi 专面不入主线**：`grunt.IndyDecode` 与 `grunt.StringCacheFold`
-由 `probeEra` 判家（`Era::Kasumi` 才激活），单罐验收（`SnakeGame-obf.jar`），
-与 BoogerV2 主线互不重叠——Kasumi BSM 的 8 参签名 + find* 分派不在
-`IndyFold` 的纯目标子集内，同一 jar 上两者不争站点；`StringCacheFold` 管
-字符串缓存回填（`--tsv` 注入明文旁证表，无旁证 fail-closed），与
-`IndyDecode` 是同一混淆器的两条残留线，可共存于同一样本。
+**Kasumi 专面不入主线**：`grunt.IndyDecode`、`grunt.StringCacheFold` 与
+`grunt.MetadataStrip` 由 `probeEra` 判家（`Era::Kasumi` 才激活），单罐验收
+（`SnakeGame-obf.jar`），与 BoogerV2 主线互不重叠——Kasumi BSM 的 8 参签名
++ find* 分派不在 `IndyFold` 的纯目标子集内，同一 jar 上两者不争站点；
+`StringCacheFold` 管字符串缓存回填（`--tsv` 注入明文旁证表，无旁证
+fail-closed），`MetadataStrip` 管元数据残留三面（注解/水印/资源；资源删除
+是本仓首个非类条目写面），与 `IndyDecode` 是同一混淆器的多条残留线，可共
+存于同一样本（组合链实测互不干扰）。
 
 
 ## 全局不变量
 
-- **类数不增**：任何残留都不得新增类；`proof` 段每次校验。
+- **类数不增**：任何残留都不得新增类；`proof` 段每次校验。资源面同理**只
+  减不增**（资源删除残留另加删除清单逐条对账，见 proof_toolbox 的资源对
+  账原语）。
 - **origin 永不改写**：输入 jar 只读，产物另存。
 - **fail-closed**：判据不全整站点跳过，不做猜测性改写；拒绝原因进 `rejects` 供 trace。
 - **改写粒度 = 类**：一个类内任一方法 `lower` 失败，整类放弃回写。
@@ -120,7 +125,7 @@ done
 xmake f --with_tests=y && xmake build grunt_unittest && xmake run grunt_unittest
 ```
 
-`test/unittest/constant_call_test.cpp` 覆盖三段判据：正例（短形态值、需落池的值）+ 逐条反证（非 static / void / synchronized / 实参非常量 / 目标不纯 / 目标不在容器 / 类初始化非空），改写侧断言「调用消失、字面量出现、实参装载全清」，proof 侧断言类数门。`flags_strip_test.cpp` 覆盖标志判据（清位面、`$` 名保留、旧类版本、枚举跳过、逐位精确），`const_method_test.cpp` 覆盖常量方法判据（基元 `.TYPE` 内联、数值/ null 体、非 `.TYPE` getstatic 拒绝、宿主 `<clinit>` 纯性门），`predicate_fold_test.cpp` 覆盖常量谓词判据（分支裁决、`switch` 键裁决、操作数区中段有标签则放弃、改写后帧链自洽），`number_fold_test.cpp` 覆盖藏形数值判据（XOR 走廊两式、基 32 long、位形包装、radix/键面/被调/中段标签反证、折叠后不可再成站点），`proxy_inline_test.cpp` 覆盖代理方法判据（static/virtual 目标、宽类型槽走、零引用静默、体形/描述符/synchronized/初始化暴露反证、调用点原地改指、改写后再扫站点归零），`indy_decode_test.cpp` 覆盖 Kasumi indy 判据（static 原地换 invokestatic、virtual 插 spill/checkcast 后走 invokeinterface、Era 未判 / key 链断 / 参数畸形 / desc 互证不符 / 接口无旁证五态拒绝且容器字节逐位不动、proof 类数门 + residual 归零）。夹具一律用 jasm 源码现场汇编（`JvmJasmService::assemble`），不落二进制、不依赖语料目录。
+`test/unittest/constant_call_test.cpp` 覆盖三段判据：正例（短形态值、需落池的值）+ 逐条反证（非 static / void / synchronized / 实参非常量 / 目标不纯 / 目标不在容器 / 类初始化非空），改写侧断言「调用消失、字面量出现、实参装载全清」，proof 侧断言类数门。`flags_strip_test.cpp` 覆盖标志判据（清位面、`$` 名保留、旧类版本、枚举跳过、逐位精确），`const_method_test.cpp` 覆盖常量方法判据（基元 `.TYPE` 内联、数值/ null 体、非 `.TYPE` getstatic 拒绝、宿主 `<clinit>` 纯性门），`predicate_fold_test.cpp` 覆盖常量谓词判据（分支裁决、`switch` 键裁决、操作数区中段有标签则放弃、改写后帧链自洽），`number_fold_test.cpp` 覆盖藏形数值判据（XOR 走廊两式、基 32 long、位形包装、radix/键面/被调/中段标签反证、折叠后不可再成站点），`proxy_inline_test.cpp` 覆盖代理方法判据（static/virtual 目标、宽类型槽走、零引用静默、体形/描述符/synchronized/初始化暴露反证、调用点原地改指、改写后再扫站点归零），`indy_decode_test.cpp` 覆盖 Kasumi indy 判据（static 原地换 invokestatic、virtual 插 spill/checkcast 后走 invokeinterface、Era 未判 / key 链断 / 参数畸形 / desc 互证不符 / 接口无旁证五态拒绝且容器字节逐位不动、proof 类数门 + residual 归零），`metadata_strip_test.cpp` 覆盖 Kasumi 元数据三面判据（注解三面摘除且异名注解保留、水印字段删而普通 ConstantValue 字段留、资源命中删而候选/前缀不符逐位留、Era 未判整面关闭字节逐位不动、敌意深嵌注解槽 fail-closed 不摘、proof 类数门 + 资源对账门 + 三面 residual；水印字段经 RawAttr 程序化补挂 ConstantValue——jasm 表达不了该属性）。夹具一律用 jasm 源码现场汇编（`JvmJasmService::assemble`），不落二进制、不依赖语料目录。
 
 语料回归：
 
@@ -147,5 +152,7 @@ xmake build grunt_cli && ./test/corpus-regress.sh
 - [doc/indy-fold.md](doc/indy-fold.md) / [.impl.md](doc/indy-fold.impl.md)：indy 解密调用点。
 - [doc/proxy-inline.md](doc/proxy-inline.md) / [.impl.md](doc/proxy-inline.impl.md)：代理方法内联。
 - [doc/indy-decode.md](doc/indy-decode.md) / [.impl.md](doc/indy-decode.impl.md)：Kasumi indy 静态还原。
+- [doc/string-cache-fold.md](doc/string-cache-fold.md) / [.impl.md](doc/string-cache-fold.impl.md)：Kasumi 字符串缓存回填。
+- [doc/metadata-strip.md](doc/metadata-strip.md) / [.impl.md](doc/metadata-strip.impl.md)：Kasumi 元数据与水印清理。
 
 口径分工：`doc/` 只写**通用技术形态**与实现；具体样本的取证过程（jar、类名、指令偏移、折叠期望值）记在仓外研究笔记，不进本仓。

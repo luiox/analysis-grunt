@@ -216,4 +216,14 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
+/// @brief `grunt.MetadataStrip`：Kasumi 元数据残留清理（@Metadata 注解三面
+/// 摘除 + 水印字段删除 + 反 LLM 资源删除；Era=Kasumi 判定，三面判据全在
+/// scan 的 Era 分支内）。
+class MetadataStripPass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
 }   // namespace grunt

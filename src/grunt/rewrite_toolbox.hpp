@@ -1,10 +1,11 @@
 /// @file        rewrite_toolbox.hpp
 /// @brief       REWRITE 工具箱：跨残留共享的改写原语。
 ///
-/// CONVENTION §7：跨残留复用只允许发生在工具箱。当前收口两组原语：
-/// 「按求值结果造一条常量装载」（constant_call / const_method 改写段共用）
-/// 与「单 promote + mjbase 帧链写回」（predicate_fold / dead_code /
-/// const_value_promote / seed_strip 的改写驱动共用）。
+/// CONVENTION §7：跨残留复用只允许发生在工具箱。当前收口三组原语：
+/// 「按求值结果造一条常量装载」（constant_call / const_method 改写段共用）、
+/// 「单 promote + mjbase 帧链写回」（predicate_fold / dead_code /
+/// const_value_promote / seed_strip 的改写驱动共用）与「资源删除」（资源
+/// 面改写动词，metadata_strip 首用；对账面在 proof_toolbox）。
 #pragma once
 
 #include <cstring>
@@ -25,6 +26,7 @@
 #include "mjbase/hierarchy/summary.hpp"
 #include "mjbase/keys.hpp"
 #include "mjbase/model/resource_container.hpp"
+#include "mjbase/model/resource_model.hpp"
 #include "mjbase/spi/frame_rewire.hpp"
 #include "mjbase/spi/pass_pipeline.hpp"
 #include "mjbase/spi/strict_type_resolver.hpp"
@@ -191,6 +193,30 @@ bool mutateMethodWithFrames(jbc::ir::ClassSession& s, ca::usize methodIndex,
     } catch (const std::exception&) {
         return false;
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 资源删除（资源面改写动词：本仓首个非类条目写原语）
+//
+// 现役画布（container.hpp 的 forEachClass / replaceClass）只走类资源；资源
+// 删除是容器条目的结构性变化，单独成原语收口在这里（写侧），对账在
+// proof_toolbox（读侧）。删除只摘条目、不碰类面；「删哪个」由各残留的
+// scan 产出（Era=Kasumi 门在 scan），本原语不做任何家族判断。
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// @brief 按 uri 从容器摘除一个资源条目（类与非类条目同一口径）。
+/// @return 是否确有此条目被摘除（缺失 = false，调用方按对账违例记账）。
+///
+/// 键视图驻留容器 arena（unordered_map<std::string_view> 按内容相等查找），
+/// 等价字符串视图可直查； erase 只摘 map 条目，URI arena 文本不回收
+/// （arena 只增不移，条目名后续对账引用无悬垂风险）。
+inline bool removeResource(mjbase::model::ResourceContainer& container, std::string_view uri)
+{
+    auto& resources = container.getResources();
+    const auto it = resources.find(uri);
+    if (it == resources.end()) return false;
+    resources.erase(it);
+    return true;
 }
 
 }   // namespace grunt::rewrite_tools

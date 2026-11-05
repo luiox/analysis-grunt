@@ -307,8 +307,8 @@ Era probeEra(const mjbase::model::Container&);     // 每个家族仓固定提�
 | 工具箱 | 内容 | 现状 |
 |---|---|---|
 | `scan_toolbox` | 求值器、CFG 后继图、区间/活跃性、纯度判定、锚点 | `jvm_interp` ✅ `cfg.hpp` 的图部分 ✅ `ClassSet::isPure` ✅ |
-| `rewrite_toolbox` | 区域删除、goto 线程化、不可达清理、跳到下一条清理、溢写对折叠 | `pruneUnreachable` `tidyGotoToNext` `foldStoreLoadPairs` `threadGotos` ✅ 已收口进 `cfg.hpp` |
-| `proof_toolbox` | 校验器、类数检查、悬垂检查、逐类加载、帧再生 | `ClassSet::commit`（帧链）✅ `test/tools/VerifyJar.java` ✅ |
+| `rewrite_toolbox` | 区域删除、goto 线程化、不可达清理、跳到下一条清理、溢写对折叠、**资源删除**（非类条目写动词） | `pruneUnreachable` `tidyGotoToNext` `foldStoreLoadPairs` `threadGotos` ✅ 已收口进 `cfg.hpp`；`removeResource` ✅（analysis-grunt，metadata_strip 首用） |
+| `proof_toolbox` | 校验器、类数检查、悬垂检查、逐类加载、帧再生、**资源对账**（数只减 + 删除清单逐条不在场） | `ClassSet::commit`（帧链）✅ `test/tools/VerifyJar.java` ✅；`countResources`/`resourcesShrunk` ✅（analysis-grunt，与类数门并列） |
 
 ### 7.3 当前落地形态
 

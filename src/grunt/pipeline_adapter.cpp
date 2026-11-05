@@ -25,8 +25,10 @@
 #include "grunt/indy_decode.hpp"
 #include "grunt/indy_fold.hpp"
 #include "grunt/knowledge/kasumi_names.hpp"
+#include "grunt/metadata_strip.hpp"
 #include "grunt/number_fold.hpp"
 #include "grunt/predicate_fold.hpp"
+#include "grunt/proof_toolbox.hpp"
 #include "grunt/proxy_inline.hpp"
 #include "grunt/seed_strip.hpp"
 #include "grunt/string_cache_fold.hpp"
@@ -787,6 +789,64 @@ mjbase::spi::PreservedAnalyses StringCacheFoldPass::run(
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses MetadataStripPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize classesBefore   = countClasses(container);
+    const ca::usize resourcesBefore = proof_tools::countResources(container);
+
+    // Era 探测（adapter 调一次，结果注入 scan）：三面判据全是 Kasumi 版本
+    // 知识，Era 未判整面关闭（fail-closed）。
+    metadata_strip::ScanInput input;
+    input.era = knowledge::probeEra(container);
+
+    const metadata_strip::ScanResult scanned = metadata_strip::scan(container, input);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.MetadataStrip] scan: era=%s classes=%zu annos=%zu fields=%zu"
+                     " resources=%zu (candidates=%zu anno-blocked=%zu skip-classes=%zu)\n",
+                     input.era == knowledge::Era::Kasumi ? "Kasumi" : "Unknown",
+                     scanned.sites.size(), scanned.totalAnnos, scanned.totalFields,
+                     scanned.resources.size(), scanned.resourceCandidates,
+                     scanned.annoBlocked, scanned.classesSkipped);
+        if (std::getenv("GRUNT_METADATA_STRIP_TRACE") != nullptr) {
+            for (const metadata_strip::Site& site : scanned.sites) {
+                std::fprintf(stderr, "[grunt.MetadataStrip]   %s annos=%zu fields=%zu\n",
+                             site.uri.c_str(), site.annos, site.fields);
+            }
+            for (const std::string& res : scanned.resources) {
+                std::fprintf(stderr, "[grunt.MetadataStrip]   resource %s\n", res.c_str());
+            }
+        }
+    }
+    if (scanned.sites.empty() && scanned.resources.empty()) {
+        return mjbase::spi::PreservedAnalyses::all();
+    }
+
+    const metadata_strip::DirtySet dirty = metadata_strip::rewrite(container, scanned);
+    const metadata_strip::ProofResult verdict =
+        metadata_strip::proof(container, dirty, classesBefore, resourcesBefore);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.MetadataStrip] rewrite: classes=%zu annos=%zu fields=%zu"
+                     " resources=%zu failed=%zu anno-blocked=%zu candidates=%zu proof=%s"
+                     " residual(a/f/r)=%zu/%zu/%zu\n",
+                     dirty.classes, dirty.annos, dirty.fields, dirty.removedResources.size(),
+                     dirty.failed, dirty.annoBlocked, dirty.resourceCandidates,
+                     verdict.ok ? "ok" : "FAILED", verdict.residualAnnos,
+                     verdict.residualFields, verdict.residualResources);
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.MetadataStrip] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty() && dirty.removedResources.empty()) {
+        return mjbase::spi::PreservedAnalyses::all();
+    }
     return mjbase::spi::PreservedAnalyses::none();
 }
 

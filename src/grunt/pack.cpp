@@ -170,6 +170,18 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.StringCacheFold"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.MetadataStrip",
+            [] { return makeFailClosed<MetadataStripPass>("grunt.MetadataStrip"); },
+            "Strip Kasumi obfuscator metadata residue: @dev/kasumi/internal/Metadata"
+            " annotations on classes/fields/methods, watermark constant fields"
+            " (PROTECTED BY Kasumi / Gruntpocalypse / kasumi_ prefix), and"
+            " META-INF/Kasumi/*.md anti-LLM injection resources (content probes"
+            " attested). Family detection gates everything (fail-closed); fields"
+            " are deleted wholesale, method bodies are untouched.");
+        r.is_err()) {
+        return Err(std::string("grunt.MetadataStrip"));
+    }
     return Ok();
 }
 
