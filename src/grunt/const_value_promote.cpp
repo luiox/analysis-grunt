@@ -104,8 +104,18 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
 {
     ScanResult result;
 
-    field_census::Census census;
-    field_census::scanFieldAccess(container, census);
+    // 访问面普查不完整（会话打不开的类 / promote 失败的方法）＝引用证据不足
+    // ——「唯一写在本类 clinit」判据会漏计漏普查面上的写，fail-closed 整轮
+    // 放弃（与 dead_member 引用普查同一课，宁误留不误删）。
+    field_census::Census     census;
+    const field_census::Stat stat = field_census::scanFieldAccess(container, census);
+    if (!stat.complete()) {
+        result.censusIncomplete = true;
+        std::fprintf(stderr,
+                     "[grunt.ConstValuePromote] 普查不完整（类 %zu / 方法 %zu 未普查）——整轮放弃\n",
+                     stat.classesSkipped, stat.methodsPromoteFailed);
+        return result;
+    }
 
     forEachClass(container, [&](const ClassEntry& entry) {
         const std::string uri(entry.uri);

@@ -381,6 +381,9 @@ mjbase::spi::PreservedAnalyses ConstValuePromotePass::run(
     if (traceEnabled()) {
         std::fprintf(stderr, "[grunt.ConstValuePromote] scan: fields=%zu skipped=%zu\n",
                      scanned.sites.size(), scanned.classesSkipped);
+        if (scanned.censusIncomplete) {
+            std::fprintf(stderr, "[grunt.ConstValuePromote] census-incomplete：整轮放弃\n");
+        }
     }
     if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
 
@@ -412,6 +415,9 @@ mjbase::spi::PreservedAnalyses SeedStripPass::run(
     if (traceEnabled()) {
         std::fprintf(stderr, "[grunt.SeedStrip] scan: fields=%zu skipped=%zu\n",
                      scanned.sites.size(), scanned.classesSkipped);
+        if (scanned.censusIncomplete) {
+            std::fprintf(stderr, "[grunt.SeedStrip] census-incomplete：整轮放弃\n");
+        }
     }
     if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
 
@@ -455,9 +461,11 @@ mjbase::spi::PreservedAnalyses DeadMemberPass::run(
     if (traceEnabled()) {
         std::fprintf(stderr,
                      "[grunt.DeadMember] rewrite: classes=%zu methods=%zu fields=%zu"
-                     " clinits=%zu compacted=%zu shells=%zu ref-rejected=%zu proof=%s\n",
+                     " clinits=%zu compacted=%zu shells=%zu ref-rejected=%zu"
+                     " census-raw=%zu census-blind=%zu proof=%s\n",
                      dirty.uris.size(), dirty.methods, dirty.fields, dirty.clinits,
                      dirty.compacted, dirty.classes, dirty.rejectedByRef,
+                     dirty.censusRawSources, dirty.censusBlind,
                      proof.ok ? "ok" : "FAILED");
         for (const std::string& f : proof.failed) {
             std::fprintf(stderr, "[grunt.DeadMember] proof failed: %s\n", f.c_str());
@@ -476,7 +484,8 @@ mjbase::spi::PreservedAnalyses BoogerAnnoStripPass::run(
     const booger_anno_strip::ScanResult scanned = booger_anno_strip::scan(container);
     if (traceEnabled()) {
         if (scanned.gateBlocked) {
-            std::fprintf(stderr, "[grunt.BoogerAnnoStrip] gate: Booger 仍有 CP 引用，跳过\n");
+            std::fprintf(stderr,
+                         "[grunt.BoogerAnnoStrip] gate: Booger 仍有 CP 引用或引用普查不完整，跳过\n");
         } else {
             std::fprintf(stderr, "[grunt.BoogerAnnoStrip] scan: classes=%zu\n",
                          scanned.sites.size());

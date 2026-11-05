@@ -59,6 +59,8 @@ struct ScanResult
 {
     std::vector<Site> sites;
     ca::usize         classesSkipped = 0;
+
+    bool censusIncomplete = false;   ///< 访问面普查不完整（fail-closed 整轮放弃）
 };
 
 /// @brief 被改写的类 + 统计。

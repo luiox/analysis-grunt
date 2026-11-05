@@ -51,7 +51,7 @@ struct ScanResult
 {
     std::vector<Site> sites;
     ca::usize         classesSkipped = 0;
-    bool              gateBlocked    = false;   ///< 容器仍有 Booger CP 引用
+    bool              gateBlocked    = false;   ///< 容器仍有 Booger CP 引用，或引用普查不完整
 };
 
 /// @brief 被改写的类 + 统计。

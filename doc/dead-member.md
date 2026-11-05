@@ -19,18 +19,22 @@
 - `<clinit>`：方法体只剩 NOP/RETURN。
 
 引用门（rewrite 复核）：**先全容器 CP 压缩**——压缩闭包保证「池里枚举即
-活引用」；压缩失败的类整类放弃（死条目会污染零引用判定）。普查全部
-Fieldref/Methodref/接口引用得活引用集，候选必须在集合外。
+活引用」。普查按**全容器对外引用全集**口径：压缩成功的类枚举压缩后的池；
+压缩失败 / 会话打不开的类照常入普查（原始字节骨架解析后枚举原池，未压缩
+池含死条目即超集，宁误留不误删），只是不作删除候选；连骨架都解不开的类置
+census-blind，本轮成员删除与空壳回收整体放弃。普查全部 Fieldref/Methodref/
+接口引用得活引用集，候选必须在集合外。
 
 反射是理论逃逸面（按名反射方法拦不住）；台账如实记录每一次删除。
 
 ## 改写
 
-全容器压缩 → 活引用普查 → 逐类删成员（名字+描述+backing 序三重定位复核，
-倒序 erase）→ 落盘 → 再压缩一次带走死描述符。
+全容器压缩 → 活引用普查（挂起时间片跑全量，census-blind 则整轮放弃）→
+逐类删成员（名字+描述+backing 序三重定位复核，倒序 erase）→ 落盘 → 空壳类
+回收 → 再压缩一次带走死描述符。
 
 ## 台账
 
-`methods / fields / clinits / compacted / rejectedByRef` 分项计数。死类删
-除（v3 classStage 的零引用类不动点）挂账：mjbase ResourceContainer 尚无
-removeResource 接口。
+`methods / fields / clinits / compacted / rejectedByRef / censusRawSources /
+censusBlind` 分项计数。死类删除（v3 classStage 的零引用类不动点）挂账：
+mjbase ResourceContainer 尚无 removeResource 接口。

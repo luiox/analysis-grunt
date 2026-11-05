@@ -5,12 +5,14 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <set>
 #include <string>
 #include <unordered_set>
 
 #include "jbc/core/class_file.hpp"
 #include "jbc/core/opcode.hpp"
+#include "jbc/core/reader.hpp"
 #include "jbc/ir/cp_compact.hpp"
 #include "jbc/core/writer.hpp"
 #include "jbc/ir/units.hpp"
@@ -136,17 +138,19 @@ std::set<std::string> annotationStrings(ir::ClassSession& s)
     return out;
 }
 
-/// @brief 压缩后 CP 的活引用快照：全容器枚举 Fieldref/Methodref/接口引用。
+/// @brief 单类 CP 的成员引用快照：枚举 Fieldref/Methodref/接口引用。
+///
+/// 压缩成功的类上池是闭包（枚举即活引用）；压缩失败/未压缩的类上池可能含
+/// 死条目，枚举结果是活引用的超集——两类都按 fail-closed 宁误留口径入集。
 struct CpSnap
 {
     std::set<std::string> methodKeys;   // owner::name::desc
     std::set<std::string> fieldKeys;    // owner::name
 };
 
-CpSnap collectCpSnap(ir::ClassSession& s)
+CpSnap collectCpSnap(const jbc::core::ClassFile& cf)
 {
-    CpSnap                     out;
-    const jbc::core::ClassFile& cf = s.backing();
+    CpSnap out;
     for (ca::u32 i = 1; i < cf.cp.size(); ++i) {
         if (!cf.cp.valid(i)) continue;
         const auto& e = cf.cp.at(i);
@@ -166,6 +170,14 @@ CpSnap collectCpSnap(ir::ClassSession& s)
         }
     }
     return out;
+}
+
+/// @brief 把快照并入全容器活引用集。
+void mergeSnap(const CpSnap& snap, std::set<std::string>& liveMethods,
+               std::set<std::string>& liveFields)
+{
+    liveMethods.insert(snap.methodKeys.begin(), snap.methodKeys.end());
+    liveFields.insert(snap.fieldKeys.begin(), snap.fieldKeys.end());
 }
 
 /// @brief 类的形状候选收集（SCAN 本体）。
@@ -367,24 +379,86 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         }
     }
 
+    // 压缩失败类点账（trace 面）：它们不作删除候选，但引用照入下面的普查。
+    if (dmTrace) {
+        for (const std::string& uri : compactFailed) {
+            std::fprintf(stderr,
+                         "[grunt.DeadMember] compact 未过封闭集：%s（不作删除候选，引用照入普查）\n",
+                         uri.c_str());
+        }
+    }
+
     // (2) 活引用普查（压缩后闭包 = 枚举即活引用）。
+    //
+    // 全容器口径：每个类都必须成为引用方，缺一个类就是漏计（K4 实证：压缩
+    // 失败类被排除在普查外，`w` 对 `t.aa` 的 Methodref 蒸发，`t` 类 93 方法
+    // 全删）。分层收集：
+    // - 会话可开 + 普查不崩：枚举池入集（压缩成功类 = 活引用；未压缩类 =
+    //   超集，同样宁误留）；
+    // - 会话打不开 / 普查崩了：按原始字节骨架解析（readClass 只解头、池、
+    //   成员目录，不碰属性体——封闭集之外的 Raw 属性面也不挡路）再枚举原池；
+    // - 连骨架都解不开：引用证据完全不可得，任何候选都无法被证明死——置
+    //   censusBlind，本轮成员删除整体放弃（零删除，宁整轮不删不冒删错）。
+    // 普查是效力门不是改写面：挂起时间片（proof 类数门同门），不许被超墙
+    // 截短出「晚到的类不在普查里」的漏计。
     std::set<std::string> liveMethods;
     std::set<std::string> liveFields;
-    forEachClass(container, [&](const ClassEntry& entry) {
-        if (compactFailed.count(std::string(entry.uri)) != 0) return;
-        auto session = openSession(*entry.bytes);
-        if (!session) return;
-        // 类级 fail-closed：普查崩了的类不计入引用方（宁留勿删口径）。
-        try {
-            const CpSnap snap = collectCpSnap(*session);
-            liveMethods.insert(snap.methodKeys.begin(), snap.methodKeys.end());
-            liveFields.insert(snap.fieldKeys.begin(), snap.fieldKeys.end());
-        } catch (...) {
-            std::fprintf(stderr, "[grunt.DeadMember] 引用普查类跳过：%s（异常穿透）\n",
-                         std::string(entry.uri).c_str());
-            compactFailed.insert(std::string(entry.uri));
+    {
+        ca::usize censusRawSources = 0;
+        ca::usize censusBlind      = 0;
+        pass_clock::Suspend suspend;
+        forEachClass(container, [&](const ClassEntry& entry) {
+            auto session = openSession(*entry.bytes);
+            if (session) {
+                try {
+                    mergeSnap(collectCpSnap(session->backing()), liveMethods, liveFields);
+                    return;
+                } catch (...) {
+                    std::fprintf(stderr,
+                                 "[grunt.DeadMember] 引用普查走原始字节路径：%s（会话普查异常穿透）\n",
+                                 std::string(entry.uri).c_str());
+                }
+            }
+            ++censusRawSources;
+            auto raw = jbc::core::readClass(jbc::core::ByteView(*entry.bytes),
+                                            jbc::core::ReadOptions{});
+            if (raw.is_err()) {
+                ++censusBlind;
+                std::fprintf(stderr,
+                             "[grunt.DeadMember] 普查盲区：%s（骨架解析失败，引用证据不可得）\n",
+                             std::string(entry.uri).c_str());
+                return;
+            }
+            jbc::core::ReadResult parsed = std::move(raw).unwrap();
+            if (parsed.file == nullptr) {
+                ++censusBlind;
+                std::fprintf(stderr,
+                             "[grunt.DeadMember] 普查盲区：%s（骨架模型缺失，引用证据不可得）\n",
+                             std::string(entry.uri).c_str());
+                return;
+            }
+            mergeSnap(collectCpSnap(*parsed.file), liveMethods, liveFields);
+        });
+        dirty.censusRawSources = censusRawSources;
+        dirty.censusBlind      = censusBlind;
+        if (dmTrace) {
+            std::fprintf(stderr,
+                         "[grunt.DeadMember] 普查：methodKeys=%zu fieldKeys=%zu"
+                         " raw-sources=%zu blind=%zu\n",
+                         liveMethods.size(), liveFields.size(), censusRawSources,
+                         censusBlind);
         }
-    });
+    }
+
+    // census 盲区 fail-closed：有类连引用面都枚举不出，全容器任何候选都可能
+    // 被它引用——本轮删除整体放弃（压缩已做的类级字节变化保留：压缩不删
+    // 成员，引用一致性不受影响）。空壳回收同门停：解不开的类可能按名引用壳。
+    if (dirty.censusBlind != 0) {
+        std::fprintf(stderr,
+                     "[grunt.DeadMember] census-blind %zu 类：本轮成员删除与空壳回收整体放弃（宁整轮不删）\n",
+                     dirty.censusBlind);
+        return dirty;
+    }
 
     // (3) 逐类删成员。候选定位按名字+描述复核（scan 之后池已重排，backing
     // 下标漂移）。
@@ -539,13 +613,35 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             std::vector<bool> shellDead(shellUris.size(), true);
             forEachClass(container, [&](const ClassEntry& entry) {
                 const std::string self(entry.uri);
+                // 类模型：会话优先，打不开走原始字节骨架解析（引用普查同一
+                // 分层——解不开的类不许按「零引用」记账）；两边都失败按
+                // 「引用在册」处理——空壳摘除是删动词，宁误留勿误删。
+                auto                                  session = openSession(*entry.bytes);
+                const jbc::core::ClassFile*           model
+                    = session ? &session->backing() : nullptr;
+                std::unique_ptr<jbc::core::ClassFile> rawModel;
+                if (model == nullptr) {
+                    auto raw = jbc::core::readClass(jbc::core::ByteView(*entry.bytes),
+                                                    jbc::core::ReadOptions{});
+                    if (raw.is_err()) {
+                        for (ca::usize i = 0; i < shellUris.size(); ++i) {
+                            shellDead[i] = false;
+                        }
+                        return;
+                    }
+                    rawModel = std::move(std::move(raw).unwrap().file);
+                    if (rawModel == nullptr) {
+                        for (ca::usize i = 0; i < shellUris.size(); ++i) {
+                            shellDead[i] = false;
+                        }
+                        return;
+                    }
+                    model = rawModel.get();
+                }
+                const jbc::core::ClassFile& cf = *model;
                 for (ca::usize i = 0; i < shellUris.size(); ++i) {
                     if (!shellDead[i] || shellUris[i] == self) continue;
-                    auto session = openSession(*entry.bytes);
-                    if (!session) return;
-                    const jbc::core::ClassFile& cf = session->backing();
-                    const std::string           descNeedle
-                        = "L" + shellNames[i] + ";";
+                    const std::string descNeedle = "L" + shellNames[i] + ";";
                     if (dmTrace) {
                         std::fprintf(stderr, "[grunt.DeadMember] 引用普查 %s → 查 %s\n",
                                      std::string(entry.uri).c_str(), shellNames[i].c_str());

@@ -2,8 +2,11 @@
 /// @brief       家族知识：容器级字段访问面普查（promote 精确口径）。
 ///
 /// 消费方：const_value_promote（唯一写入门）、seed_strip（写全在本类 clinit
-/// 门）、dead_member（零引用门）。普查走 promote 后的指令面，不受死池条目
-/// 干扰；key = owner::name。
+/// 门）。普查走 promote 后的指令面，不受死池条目干扰；key = owner::name。
+///
+/// fail-closed 口径（与 dead_member 引用普查同一课）：普查**不完整**时调用方
+/// 必须放弃改写——会话打不开的类、promote 失败的方法都计进 Stat，键面看不见
+/// 它们的访问，任何「零引用/唯一写」判据都会漏计证据（宁误留不误删）。
 #pragma once
 
 #include <string>
@@ -29,24 +32,46 @@ struct FieldAcc
 /// @brief 逐字段访问清单，key = `owner::name`。
 using Census = std::unordered_map<std::string, std::vector<FieldAcc>>;
 
-/// @brief 容器级普查：全部方法的字段访问指令逐条归类。
-inline void scanFieldAccess(const mjbase::model::ResourceContainer& container, Census& out)
+/// @brief 普查完整性台账：漏计的类 / 方法数（>0 即引用证据不足）。
+struct Stat
+{
+    ca::usize classesSkipped       = 0;   ///< 会话打不开，整类未普查
+    ca::usize methodsPromoteFailed = 0;   ///< promote 失败，方法访问面缺失
+
+    bool complete() const noexcept
+    {
+        return classesSkipped == 0 && methodsPromoteFailed == 0;
+    }
+};
+
+/// @brief 容器级普查：全部方法的字段访问指令逐条归类。@return 完整性台账。
+inline Stat scanFieldAccess(const mjbase::model::ResourceContainer& container, Census& out)
 {
     namespace ir = jbc::ir;
     using jbc::core::Op;
 
+    Stat stat;
     forEachClass(container, [&](const ClassEntry& entry) {
         auto session = openSession(*entry.bytes);
-        if (!session) return;
+        if (!session) {
+            ++stat.classesSkipped;
+            return;
+        }
         ir::ClassSession&    s    = *session;
         const ir::ClassUnit& unit = s.unit();
         for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
             if (!ir::hasCode(s, mi)) continue;
             const bool isClinit = unit.symbols().str(unit.methods[mi].name) == "<clinit>";
             auto promoted = ir::promoteMethod(s, mi);
-            if (promoted.is_err()) continue;
+            if (promoted.is_err()) {
+                ++stat.methodsPromoteFailed;
+                continue;
+            }
             ir::CodeUnit* cu = promoted.unwrap().get();
-            if (cu == nullptr) continue;
+            if (cu == nullptr) {
+                ++stat.methodsPromoteFailed;
+                continue;
+            }
             for (const ir::InsnId id : cu->dom.order()) {
                 const ir::Insn* in = cu->dom.peek(id);
                 if (in == nullptr) continue;
@@ -68,6 +93,7 @@ inline void scanFieldAccess(const mjbase::model::ResourceContainer& container, C
             }
         }
     });
+    return stat;
 }
 
 }   // namespace grunt::field_census

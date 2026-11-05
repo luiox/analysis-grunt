@@ -18,8 +18,8 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.DeadCode` | 清掉不可达指令，并收敛因此失效的异常表项 | CFG 可达性之外的指令；可达性**含异常边**——保护区间内任一可达指令都可能抛进 handler，故 handler 以「区间∩可达集」为根迭代到不动点。全死区间删表项，端点锚在死指令上时向前吸附到存活指令 | S2 |
 | `grunt.ConstValuePromote` | 把 `clinit` 里对该字段的单条常量 `putstatic` 回填成字段 `ConstantValue` 属性（并补 `ACC_FINAL`） | 字段在 `clinit` 里恰有一次常量写 ∧ 全容器无其他读写 ∧ 类型与常量种类吻合 | S1 |
 | `grunt.SeedStrip` | 拆掉 `clinit` 里的 `int[]` 种子建表跨度（首条 NOP 保锚，其余擦除） | `NEWARRAY` + `PUTSTATIC` 头 + `GETSTATIC`/`IASTORE` 组的固定形状 ∧ 跨度内运算只含整长算术与转换（除法族排除，可能抛异常）；中段有标签放弃 | S2 |
-| `grunt.DeadMember` | 删零引用方法、零引用私有/孤儿数组字段、空 `<clinit>`；先压池再算引用闭包 | 引用普查为零（先 `compact` 常量池，否则池常量虚撑引用）；方法面另有纯算术 / `synthetic+bridge` / 私有门三道保守门；容器有未收敛 BSM 时 public `synthetic+bridge` 候选整档宁留（indy 目标无 CP 明文引用，dead_member.impl.md 有取证结论） | S2 |
-| `grunt.BoogerAnnoStrip` | 容器里已无类引用 Booger 解密类后，摘掉残留的 `@Booger` 运行时注解条目 | 全容器无 `Booger` 类引用（解密体已被 `ConstantCall` 折成常量）∧ 注解描述符指向 `@Booger` | S2 |
+| `grunt.DeadMember` | 删零引用方法、零引用私有/孤儿数组字段、空 `<clinit>`；先压池再算引用闭包 | 引用普查为零（先 `compact` 常量池，否则池常量虚撑引用）；普查按全容器对外引用全集口径——压缩失败的类照常入普查（原始字节枚举，超集宁误留），骨架都解不开的类 census-blind 整轮零删除；方法面另有纯算术 / `synthetic+bridge` / 私有门三道保守门；容器有未收敛 BSM 时 public `synthetic+bridge` 候选整档宁留（indy 目标无 CP 明文引用，dead_member.impl.md 有取证结论） | S2 |
+| `grunt.BoogerAnnoStrip` | 容器里已无类引用 Booger 解密类后，摘掉残留的 `@Booger` 运行时注解条目 | 全容器无 `Booger` 类引用（解密体已被 `ConstantCall` 折成常量；引用普查有类打不开时按引用在册关死）∧ 注解描述符指向 `@Booger` | S2 |
 | `grunt.IndyFold` | 把 `invokedynamic` 调用点还原成真实 `invoke`：在 libjsim 里跑 bootstrap 方法，读出 `CallSite` 的 `MethodHandle` 静态目标后改写调用点 | BSM 在常量实参下可模拟执行 ∧ 产出的 `MethodHandle` 解析为 `invokeStatic`/`invokeVirtual` 形态 ∧ 目标可解析；BoogerV2 语料实测 foldable=0（BSM 形态不在纯目标子集内），判据面向换代样本 | S3 |
 | `grunt.NumberFold` | 把藏形数值常量跨度折回单条常量装载：XOR 隐匿 int 走廊（`I2L..LXOR..L2I` / `L2I..IXOR`）、基 32 `Long.parseUnsignedLong` long 跨度、`intBitsToFloat`/`longBitsToDouble` 位形包装 | 跨度逐条吻合 ∧ 操作数全为紧邻纯常量装载（基 32 键严格解析、radix 恒 32）∧ 包装引用三元组与实参类型精确吻合 ∧ 跨度中段无标签（合并点放弃） | S2 |
 | `grunt.ProxyInline` | 把 static 代理方法（体 = 实参逐槽过手 + 单次 static/virtual invoke + 匹配返回）的调用点原地改指回真实目标；内联后代理变零引用死码交下游 DeadMember/DeadCode | 方法体形状（直线无标签无异常表 ∧ 实参逐槽类型/槽位精确 ∧ 转发只认 invokestatic/invokevirtual ∧ static 目标描述符全等 / virtual 目标首参=接收者）∧ 引用普查有调用点 ∧ 调用点越出 owner 类时 owner `<clinit>` 中性（初始化暴露门）；不依赖方法名/标志/家族名 | S2 |
@@ -75,10 +75,13 @@ grunt.IndyDecode,grunt.StringCacheFold,grunt.MetadataStrip
 
 `--jdk`（接口旁证）与 `--tsv`（明文旁证，内容不进仓）见 [Run](#run) 与
 [doc/kasumi-verify.md](doc/kasumi-verify.md)（端到端五项门逐项数字与和树版
-口径的差异点）。**通用主线不入专链**（K4 取证）：`DeadMember` 的引用普查
-漏计 Kasumi 改写类对外引用，专链产物上单跑即把零明文引用的候选整类误删
-（语料 `t` 类 93 → 0 方法，运行期 `NoSuchMethodError`）——普查修复前不入，
-证据见 kasumi-verify.md §3。
+口径的差异点）。**通用主线可叠加在专链产物上**（前置条件已解除）：K4 曾取证
+`DeadMember` 引用普查漏计压缩失败类（cp_compact 封闭集拒绝的 Raw 属性类，
+Kasumi 改写产物 16/25 类）的对外引用，专链产物上误删（语料 `t` 类 93 → 0
+方法，运行期 `NoSuchMethodError`）。普查已按「全容器对外引用全集」口径修复：
+压缩失败的类按原始字节照常入普查（枚举超集宁误留），连骨架都解不开的类
+census-blind 整轮零删除；通用链 × 专链组合与通用链单跑复验通过，修复前后
+数字与 JVM 实调证据见 kasumi-verify.md §3。
 
 
 ## 全局不变量
@@ -88,6 +91,7 @@ grunt.IndyDecode,grunt.StringCacheFold,grunt.MetadataStrip
   账原语）。
 - **origin 永不改写**：输入 jar 只读，产物另存。
 - **fail-closed**：判据不全整站点跳过，不做猜测性改写；拒绝原因进 `rejects` 供 trace。
+- **引用普查全容器口径**：跨类引用普查是删动词的前置证据面，静默跳过的类就是蒸发的引用证据——解不开的类按原始字节照常入普查（超集宁误留），连骨架都解不开则整轮改写放弃（DeadMember census-blind / SeedStrip 与 ConstValuePromote 普查不完整整轮放弃 / BoogerAnnoStrip 引用门按引用在册关死）。
 - **改写粒度 = 类**：一个类内任一方法 `lower` 失败，整类放弃回写。
 - **擦除要给旧位置留落点**：`lower` 的属性重定位按旧 pc 精确命中 `pcmap`，命中不了就整体失败。所以「能原地改写一条指令」就绝不用「插一条 + 删一条」——插入路径会把 `srcPc` 清成 `kNoPc`，锚在被删位置的调试行/栈帧全部失去落点。详见 [doc/constant-call.impl.md](doc/constant-call.impl.md) 的 Rewrite 章。
 - **改前先往返**：`lower` 不是 `promote` 的恒等逆。改写任何方法前，先在未改动的独立会话上跑一遍 `promote → lower`；跑不完的方法整方法跳过，别把它的编码边界算成改写缺陷。

@@ -6,7 +6,8 @@
 > 专链：`grunt.IndyDecode,grunt.StringCacheFold,grunt.MetadataStrip`（MetadataStrip 收尾，
 > 先还原再清理）。jar / TSV / 产物一律不进仓，本文只记数字与来源。
 > 对位：morpher 树版 `mjt-deobf/test/kasumi/verify.md`（origin/main）。
-> 记录批次：K4 收官（代码基线 `6b38297`，unittest 155/155）。
+> 记录批次：K4 收官（代码基线 `6b38297`，unittest 155/155）；§3 普查修复批次
+> 补记（代码基线 `f9b25ce`，unittest 158/158）。
 
 ## 0. 还原命令（两步：dump 字符串 + 专链）
 
@@ -72,26 +73,26 @@ CORPUS=<run-lab> ONLY=SnakeGame-obf \
    保留死 Utf8 残字——依赖上游 cp_compact 扩面（libjbc 挂账方向），注解条目
    判据 residual 已清零，见 [metadata-strip.impl.md](metadata-strip.impl.md)。
 
-## 3. 通用链取证（结论：不入专链）
+## 3. 通用链取证与普查修复（通用链接入前置条件已解除）
 
-组合实测（专链三 pass + 通用主线 14 pass 单轮，产物 412,699 B，sha256
-`cd99e539b771f06454c7d1b8c3a2b9f39a390877ac49aa3cfadd6044bf36a872`）：
+K4 取证（修复前，代码基线 `6b38297`）：组合实测（专链三 pass + 通用主线 14
+pass 单轮，产物 412,699 B，sha256 `cd99e539b771f06454c7d1b8c3a2b9f39a390877ac49aa3cfadd6044bf36a872`）静态门全绿（CLI rc=0；类数 25 → 23，DeadMember 摘 2 空壳类；VerifyJar `classes=23 ok=23 failed=0`；体积 -22%；通用面数字：蹦床 2057 / 代理内联 92+183 / 常量调用 29 / 伪标志 248 / 死方法 767），但功能运行 `NoSuchMethodError: t.aa(int,int,int)`——DeadMember 把 `t` 类 93 个方法全删（93 → 0），调用方 `w` 池里 `t.aa (III)I` Methodref（cp#634）仍在、`w.a` 运行期仍调用。
 
-- **静态门全绿**：CLI rc=0；类数 25 → 23（DeadMember 摘 2 空壳类）；VerifyJar
-  `classes=23 ok=23 failed=0`；体积 -22%（529,743 → 412,699 B）；通用面数字
-  （蹦床 2057 / 代理内联 92+183 / 常量调用 29 / 伪标志 248 / 死方法 767）。
-- **功能运行失败**：`NoSuchMethodError: t.aa(int,int,int)`——DeadMember 把
-  `t` 类 93 个方法全删（93 → 0），而调用方 `w` 池里 `t.aa (III)I` Methodref
-  （cp#634）仍在、`w.a` 运行期仍调用。单跑定位：`grunt.DeadMember` 单独作用
-  于专链产物即复现（t 方法清零）；原始罐上同 pass 只删 57 个方法（原始罐
-  BSM 未收敛，public synthetic+bridge 候选整档宁留，README 已载）。
-- **归因**：引用普查漏计 Kasumi 改写类的对外引用（`w` 的池 / 指令面里对
-  `t.aa` 的明文引用在普查中缺席）——普查面与 mjbase 改写产物的兼容性缺陷，
-  与 §2-1 同属「改写产物 × 下游 pass」组合面，静态门照不到（类数不增 +
-  VerifyJar 懒链接双盲区）。
-- **判定**：增益真实但建立在误删之上，修复前**不入** Kasumi 专链；专链终态
-  保持三 pass（链序 = K3 交接）。修复挂账：DeadMember 引用普查对改写产物
-  的引用收集（或普查改池级保守口径）。
+### 3.1 归因（普查漏计的通道，代码级）
+
+DeadMember rewrite 的活引用普查把**压缩失败的类整体排除在引用方之外**：步骤 (1) 全容器压池时，cp_compact 封闭集拒绝的类（非零长 Raw 属性 → `AttrNotModeled`，本专链产物 16/25 类，§2-5 同源）落 `compactFailed`；步骤 (2) 普查对 `compactFailed` 类直接 return。于是 `w`（Raw 属性类）池里对 `t.aa` 的 Methodref 从全容器活引用集蒸发，`t` 的候选全部零票通过被删。`ref-rejected=0` 与 `compacted=0` 同帧出现是此通道的指纹。这不是 Kasumi 特有缺陷：K4 的通用链单跑（原始罐，generic-only）同样以 `NoSuchMethodError: t.aa` 告终（run-lab `out-kasumi-k4/run.out.err` 存证）——K4 记录的「原始罐同 pass 只删 57」里含 28 个同样漏计证据的误删，只是当时被 BSM 未收敛门部分掩盖（synthetic+bridge 整档宁留）。
+
+### 3.2 修复（代码基线 `f9b25ce` 之上，本批落账）
+
+普查改按**全容器对外引用全集**口径（宁误留不误删）：压缩成功的类枚举压缩后的池（闭包即活引用）；压缩失败 / 会话打不开的类按原始字节骨架解析（`readClass`，不解属性体，Raw 面不挡路）后枚举原池——未压缩池含死条目，枚举结果是活引用超集，正是宁误留口径；连骨架都解析不了的类置 census-blind，本轮成员删除与空壳回收整体放弃（引用证据完全不可得时没有成员能被证明死）。普查挂起时间片跑全量（proof 类数门同门），不许超墙截短出漏计。同病同修两处（同一「普查漏计 → 删动词放行」病形）：`field_census::scanFieldAccess`（消费方 ConstValuePromote 唯一写入门 / SeedStrip 写全在 clinit 门）补完整性台账，不完整整轮放弃；`booger_anno_strip::boogerReferenced`（@Booger 引用门）会话打不开的类按引用在册关死。DeadCode 无跨类普查（纯方法内控制流可达性），不同病。
+
+### 3.3 修复后复验（数字，产物在 run-lab `out-dmfix/`）
+
+- **DM 单跑（专链产物）**：scan 候选 875 不变；删除 767 → 426，`ref-rejected` 0 → 341，空壳 2 不变（a / i 两类照常摘）；`census-raw=0 census-blind=0`。`t` 类 93 → 0（修复前）变为 93 → **54**（`aa` 保留，恰为普查保护集），`w` cp#634 Methodref 原样在册。
+- **JVM 实调拒证**：反射调 `w.a()` 零参双胞胎——修复前 `NoSuchMethodError: 'int dev.kasumi.obfuscator.t.aa(int, int, int)'`，修复后两个都正常返回（null / 0）。
+- **组合链（专链 + 通用 14 pass 单轮）**：DM 段同数字；VerifyJar `classes=23 ok=23 failed=0`；`java -cp` 功能运行跑到超时（rc=124，stderr 干净）——K4 的 NoSuchMethodError 消失，且 §2-1 的 `h.c` VerifyError 在组合产物上未触发（通用链改写恰好绕开该帧面；§2-1 挂账维持不变）。
+- **通用链单跑（原始罐对照）**：DM 候选 76 不变；删除 57 → 29（= 57 − 28，28 个即 §3.1 所指漏计误删，现被引用门拦下）；功能运行跑到超时——通用链单跑在原始罐上的同款 NoSuchMethodError 一并消失。
+- **unittest**：158/158（155 基线 + 拒证 3 态：压缩失败引用方 / pool-only Methodref / census-blind 整轮停删，修复前 0/3、修复后 3/3）；corpus-regress 通用链与专链双跑 ok、失败 0。
 
 ## 4. 幂等与复跑
 

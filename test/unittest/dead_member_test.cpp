@@ -9,6 +9,9 @@
 /// 无 BSM、无注解命中的私有方法照常删——pass 在无混淆面上仍然有效。
 #include "grunt/dead_member.hpp"
 
+#include "jbc/core/attribute.hpp"
+#include "jbc/core/constant_pool.hpp"
+#include "jbc/core/writer.hpp"
 #include "jbc/ir/units.hpp"
 #include "libca/core/tag_cast.hpp"
 #include "mjbase/jasm/jvm_jasm_service.hpp"
@@ -423,6 +426,186 @@ TEST(DeadMemberRuntime, ProofHoldsOnRuntimeReferencedClass)
     EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
 }
 
+
+// ============================================================================
+// ==== 引用普查补全（K4 漏计修复的拒证面）======================================
+// ============================================================================
+//
+// K4 现场（doc/kasumi-verify.md §3）：Kasumi 专链产物 16 类带非零长 Raw 属性
+// （cp_compact 封闭集拒绝，AttrNotModeled），旧普查把这批类整体排除在引用方
+// 之外——调用方 `w` 池里对 `t.aa (III)I` 的 Methodref 从活引用集里蒸发，
+// `t` 类 93 方法全删，运行期 NoSuchMethodError。缩样拒证三态：
+//   A. 改写产物形态：引用方带未建模属性（压缩失败）+ 方法体 invokestatic
+//      —— 目标方法不删；
+//   B. 常量池间接引用形态：引用方方法体零引用、池里躺着 Methodref（压缩
+//      失败类上池不清死，pool-only 条目存活）—— 目标方法不删；
+//   C. census 盲区：某类连骨架解析都失败（引用证据不可得）—— 整轮零删除。
+
+/// @brief 目标类夹具：private static secret（K4 的 `t` 类成员形态）。
+std::string mateSource()
+{
+    return ".super java/lang/Object\n"
+           ".class public super Mate {\n"
+           "  .method private static secret (II)I {\n"
+           "    code: {\n"
+           "      iload 0\n"
+           "      iload 1\n"
+           "      iadd\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+}
+
+/// @brief 给汇编产物挂一条非零长未建模类属性（RawAttr）→ cp_compact 封闭集
+///        拒绝（AttrNotModeled），类落 compactFailed、池不重编号——K4 改写
+///        产物形态（jasm 表达不了任意属性，程序化补挂，metadata_strip 测试
+///        同形）。@return 补挂后的类字节。
+std::vector<ca::u8> attachUnmodeledClassAttr(const std::string& name,
+                                             const std::string& source)
+{
+    const std::vector<ca::u8> bytes = assemble(name, source);
+    auto loaded = jbc::ir::makeSessionFromBytes(jbc::core::ByteView(bytes));
+    if (loaded.is_err()) throw std::runtime_error("夹具重解析失败：" + name);
+    auto                  session = std::move(loaded).unwrap();
+    jbc::core::ClassFile& cf      = session->backing();
+    std::vector<ca::u8>   payload{0xBE, 0xEF, 0x00};   // 非零长：零长 Raw 会被封闭集容忍
+    cf.attrs.push_back(jbc::core::AttrSlot::makeNew(
+        cf.cp.addUtf8("KasumiWatermark"),
+        std::make_unique<jbc::core::RawAttr>(std::move(payload))));
+    auto encoded = jbc::core::writeClass(cf);
+    if (encoded.is_err()) throw std::runtime_error("夹具回写失败：" + name);
+    return std::move(encoded).unwrap();
+}
+
+model::ResourceContainer makeContainerFromBytes(
+    std::initializer_list<std::pair<std::string, std::vector<ca::u8>>> classes)
+{
+    model::ResourceContainer container;
+    for (const auto& [name, bytes] : classes) {
+        const std::string uri = name + ".class";
+        container.addResource(uri,
+                              std::make_unique<model::ClassResource>(uri, bytes));
+    }
+    return container;
+}
+
+bool mateKeepsSecret(const model::ResourceContainer& container)
+{
+    const std::string after = disassemble(classBytes(container, "Mate.class"));
+    return after.find("secret") != std::string::npos;
+}
+
+TEST(DeadMemberCensus, KeepsTargetWhenReferencerFailsCompaction)
+{
+    // 形态 A（K4 主通道）：调用方 Host 方法体 invokestatic Mate.secret，但
+    // Host 带未建模属性 → 压缩失败 → 旧普查把 Host 排除在引用方之外，
+    // Mate.secret 被误删；补全后 Host 的池照常入普查，secret 不删。
+    model::ResourceContainer container = makeContainerFromBytes({
+        {"Mate", assemble("Mate", mateSource())},
+        {"Host",
+         attachUnmodeledClassAttr(
+             "Host",
+             ".super java/lang/Object\n"
+             ".class public super Host {\n"
+             "  .method public static a ()I {\n"
+             "    code: {\n"
+             "      bipush 3\n"
+             "      bipush 4\n"
+             "      invokestatic Mate.secret (II)I\n"
+             "      ireturn\n"
+             "    }\n"
+             "  }\n"
+             "}\n")},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    EXPECT_GE(dirty.rejectedByRef, 1u) << "引用门应拦下 Mate.secret";
+    EXPECT_TRUE(mateKeepsSecret(container)) << "压缩失败调用方的引用必须入普查";
+}
+
+TEST(DeadMemberCensus, KeepsTargetForPoolOnlyMethodref)
+{
+    // 形态 B（普查原语的直接拒证）：Host 方法体零引用，池里只躺着一条
+    // Methodref（压缩失败类池不清死，pool-only 条目存活到普查面）。只要池里
+    // 有指向，成员就不删——宁误留不误删。
+    model::ResourceContainer container = makeContainerFromBytes({
+        {"Mate", assemble("Mate", mateSource())},
+        {"Host",
+         attachUnmodeledClassAttr(
+             "Host",
+             ".super java/lang/Object\n"
+             ".class public super Host {\n"
+             "  .method public static a ()I {\n"
+             "    code: {\n"
+             "      bipush 3\n"
+             "      bipush 4\n"
+             "      invokestatic java/lang/Math.max (II)I\n"
+             "      ireturn\n"
+             "    }\n"
+             "  }\n"
+             "}\n")},
+    });
+
+    // 程序化注入 pool-only Methodref：Mate.secret (II)I。
+    {
+        const model::IResource* raw = container.getResource("Host.class");
+        const auto* cls = ca::core::tag_cast::dyn_cast<const model::ClassResource>(raw);
+        ASSERT_NE(cls, nullptr);
+        auto loaded = jbc::ir::makeSessionFromBytes(jbc::core::ByteView(cls->get()));
+        ASSERT_FALSE(loaded.is_err());
+        auto                  session = std::move(loaded).unwrap();
+        jbc::core::ClassFile& cf      = session->backing();
+        const ca::u32 clsIdx = cf.cp.addClass(cf.cp.addUtf8("Mate"));
+        const ca::u32 natIdx
+            = cf.cp.addNameAndType(cf.cp.addUtf8("secret"), cf.cp.addUtf8("(II)I"));
+        ASSERT_NE(cf.cp.addRef(jbc::core::CpTag::Methodref, clsIdx, natIdx), 0u);
+        auto encoded = jbc::core::writeClass(cf);
+        ASSERT_FALSE(encoded.is_err());
+        container.replaceResource(
+            std::string("Host.class"),
+            std::make_unique<model::ClassResource>(std::string("Host.class"),
+                                                   std::move(encoded).unwrap()));
+    }
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    EXPECT_GE(dirty.rejectedByRef, 1u) << "pool-only Methodref 也应入普查拦删";
+    EXPECT_TRUE(mateKeepsSecret(container)) << "常量池间接引用指向的方法不删";
+}
+
+TEST(DeadMemberCensus, CensusBlindStopsWholeRound)
+{
+    // 形态 C（fail-closed 底座）：一个类连骨架解析都失败——它的引用证据完全
+    // 不可得，任何候选都无法被证明死，本轮成员删除整体放弃（宁整轮不删）。
+    std::vector<ca::u8> blind = assemble(
+        "Blind",
+        ".super java/lang/Object\n"
+        ".class public super Blind {\n"
+        "  .method public static x ()I {\n"
+        "    code: {\n"
+        "      bipush 7\n"
+        "      ireturn\n"
+        "    }\n"
+        "  }\n"
+        "}\n");
+    // 确定性畸形：magic + 版本 + cpCount=0xFFFF 后截断，readClass 必 Err。
+    blind.resize(10);
+    blind[8]  = 0xFF;
+    blind[9]  = 0xFF;
+
+    model::ResourceContainer container = makeContainerFromBytes({
+        {"Mate", assemble("Mate", mateSource())},
+        {"Blind", std::move(blind)},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    EXPECT_EQ(dirty.methods, 0u) << "census 盲区本轮应零删除";
+    EXPECT_GE(dirty.censusBlind, 1u) << "盲区类应入账";
+    EXPECT_TRUE(mateKeepsSecret(container)) << "引用证据不足不删";
+}
 
 }   // namespace
 }   // namespace grunt::dead_member

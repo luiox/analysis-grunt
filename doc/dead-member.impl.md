@@ -25,6 +25,21 @@ nop/const/locals（0x00-0x2d）、store（0x36-0x4e）、栈操作（0x57-0x5f�
 MethodHandle→Methodref 在压缩闭包内存活，自然计入活引用——indy 引导方法
 引用的成员不会被误删。
 
+## 普查漏计修复（Kasumi 批，全容器口径）
+
+普查曾是「压缩成功类才作引用方」：`compactFailed` 类被整体排除，其对外引用
+从活引用集蒸发——Kasumi 专链产物 16/25 类带非零长 Raw 属性压池被封闭集拒
+绝，调用方 `w` 池里 `t.aa (III)I` Methodref 缺席，`t` 类 93 方法全删、运行
+期 NoSuchMethodError（取证全文与修复后数字见
+[kasumi-verify.md](kasumi-verify.md) §3；通用链单跑同病，`ref-rejected` 0 →
+28）。修后普查分层：会话可开 → 枚举池；会话打不开 / 普查异常 → 原始字节骨
+架解析（`readClass`，只解头/池/成员目录，Raw 面不挡路）再枚举；骨架也解不
+开 → census-blind，本轮成员删除与空壳回收整体放弃。压缩失败的类仍不作删除
+候选（字节面封闭集之外，两边宁留），但引用照入普查；普查挂起时间片跑全量
+（proof 类数门同门）。同病同修：`field_census`（ConstValuePromote /
+SeedStrip 的访问面普查）补 `Stat` 完整性台账、不完整整轮放弃；
+`booger_anno_strip` 引用门会话打不开的类按引用在册关死。
+
 ## 伪 bridge 豁免核查（本批取证结论，不改门）
 
 核查诉求：「ACC_BRIDGE 零引用豁免会误保伪 bridge 死代理，是否需要非真桥

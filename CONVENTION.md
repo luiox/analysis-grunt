@@ -339,6 +339,15 @@ scan 工具箱（`buildGraph` `reachSet` `computeAlive`）和 rewrite 工具箱
 REWRITE 段，头注释改成如实描述。`check-convention.ps1` 会对"同一原语出现两份实现"
 直接判 FAIL。
 
+**普查漏计病（analysis-grunt 已修）**：跨类引用普查是删动词的前置证据面，
+「普查里静默跳过的类」等于「引用证据蒸发」——dead_member 曾把压缩失败的类
+（cp_compact 封闭集拒绝）排除在普查外，调用方池里的 Methodref 从活引用集
+消失，零明文引用候选整类误删、运行期 NoSuchMethodError（取证与修复数字见
+analysis-grunt `doc/kasumi-verify.md` §3）。修后口径成纪律：**普查必须全
+容器口径**——解不开的类要么按原始字节照常入普查（超集宁误留），要么置
+blind 让整轮改写放弃；消费普查的删动词（DeadMember、SeedStrip、
+ConstValuePromote、BoogerAnnoStrip 引用门）在普查不完整时 fail-closed。
+
 ---
 
 ## 8. 文档与测试口径（跨仓统一）

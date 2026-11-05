@@ -2,6 +2,7 @@
 /// @brief       残留 `booger_anno_strip` 的三段实现：SCAN / REWRITE / PROOF。
 #include "grunt/booger_anno_strip.hpp"
 
+#include <cstdio>
 #include <set>
 #include <string>
 
@@ -61,14 +62,28 @@ ca::usize stripTable(ir::ClassSession& s, std::vector<jbc::core::AttrSlot>& slot
     return removed;
 }
 
-/// @brief 容器 CP 里是否有他类指向 Booger 的 Class 引用（自引不算）。
-bool boogerReferenced(const mjbase::model::ResourceContainer& container)
+/// @brief Booger 引用门探针结果：是否在册 + 普查完整性（漏计即证据不足）。
+struct RefProbe
 {
-    bool found = false;
+    bool      found          = false;
+    ca::usize classesSkipped = 0;   ///< 会话打不开、没能普查的类数
+};
+
+/// @brief 容器 CP 里是否有他类指向 Booger 的 Class 引用（自引不算）。
+///
+/// 引用门是删动词的前置判据，fail-closed 口径：会话打不开的类按「引用在册」
+/// 记账（它可能正指着 Booger，普查看不见不等于引用不存在）——门整个关死，
+/// 与 dead_member 引用普查的 census-blind 同一门。
+RefProbe boogerReferenced(const mjbase::model::ResourceContainer& container)
+{
+    RefProbe probe;
     forEachClass(container, [&](const ClassEntry& entry) {
-        if (found) return;
+        if (probe.found) return;
         auto session = openSession(*entry.bytes);
-        if (!session) return;
+        if (!session) {
+            ++probe.classesSkipped;
+            return;
+        }
         if (session->backing().thisName() == knowledge::kBoogerClassName) return;
         const jbc::core::ClassFile& cf = session->backing();
         for (ca::u32 i = 1; i < cf.cp.size(); ++i) {
@@ -76,12 +91,12 @@ bool boogerReferenced(const mjbase::model::ResourceContainer& container)
             const auto& e = cf.cp.at(i);
             if (e.tag != jbc::core::CpTag::Class) continue;
             if (cf.utf8(e.a) == knowledge::kBoogerClassName) {
-                found = true;
+                probe.found = true;
                 return;
             }
         }
     });
-    return found;
+    return probe;
 }
 
 /// @brief 一类里的注解条目普查（类/方法/字段三张面）。
@@ -120,8 +135,14 @@ ca::usize countAnnos(ir::ClassSession& s)
 ScanResult scan(const mjbase::model::ResourceContainer& container)
 {
     ScanResult result;
-    if (boogerReferenced(container)) {
+    const RefProbe probe = boogerReferenced(container);
+    if (probe.found || probe.classesSkipped != 0) {
         result.gateBlocked = true;
+        if (!probe.found) {
+            std::fprintf(stderr,
+                         "[grunt.BoogerAnnoStrip] 引用门普查不完整（%zu 类未普查）——按引用在册关死\n",
+                         probe.classesSkipped);
+        }
         return result;
     }
     forEachClass(container, [&](const ClassEntry& entry) {
