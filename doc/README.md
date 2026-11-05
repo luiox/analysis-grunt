@@ -5,6 +5,7 @@
 - `doc/<residue>.md` 只写**混淆器会产出什么结构**——换个输入 jar 仍成立才写。
 - `doc/<residue>.impl.md` 只写**本仓怎么还原**——固定三章：Scan / Rewrite / Proof。
 - 具体样本的取证过程（jar、类名、指令偏移、折叠期望值）记在仓外研究笔记，不进本仓。
+- 唯一例外：`kasumi-verify.md` 是专链端到端**验收记录**（五项门数字 + 口径差异 + 通用链取证），只记数字与来源，语料 jar / TSV / 产物不进仓。
 
 ## 残留
 
@@ -42,6 +43,7 @@
 | [string-cache-fold.impl.md](string-cache-fold.impl.md) | 本仓的 Scan / Rewrite / Proof，含 `--tsv` 注入面、旁证降级与语料账本 |
 | [metadata-strip.md](metadata-strip.md) | Kasumi 元数据残留：`@Metadata` 注解、水印字段、反 LLM 注入资源的形态 |
 | [metadata-strip.impl.md](metadata-strip.impl.md) | 本仓的 Scan / Rewrite / Proof，含资源删除动词、资源对账门与语料账本 |
+| [kasumi-verify.md](kasumi-verify.md) | Kasumi 专链端到端复现记录：五项门逐项数字、与树版口径差异点、通用链取证 |
 
 ## 约定
 

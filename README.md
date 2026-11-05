@@ -25,7 +25,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.ProxyInline` | 把 static 代理方法（体 = 实参逐槽过手 + 单次 static/virtual invoke + 匹配返回）的调用点原地改指回真实目标；内联后代理变零引用死码交下游 DeadMember/DeadCode | 方法体形状（直线无标签无异常表 ∧ 实参逐槽类型/槽位精确 ∧ 转发只认 invokestatic/invokevirtual ∧ static 目标描述符全等 / virtual 目标首参=接收者）∧ 引用普查有调用点 ∧ 调用点越出 owner 类时 owner `<clinit>` 中性（初始化暴露门）；不依赖方法名/标志/家族名 | S2 |
 | `grunt.FieldAccessProxy` | 把 static 字段代理方法（体 = 实参逐槽过手 + 单次字段访问 + 匹配返回）的调用点原地改回真实 get/put 字段；改回后代理变零引用死码交下游 DeadMember/DeadCode | 方法体形状（直线无标签无异常表 ∧ 实参逐槽类型/槽位精确 ∧ 唯一字段访问与描述符互证：描述符恰为按该字段该有的形状）∧ 引用普查有调用点 ∧ 调用点越出 owner 类时 owner `<clinit>` 中性（初始化暴露门，与 constant_call/proxy_inline 单源）；不依赖方法名/标志/家族名 | S2 |
 | `grunt.IndyDecode` | Kasumi 混淆器 indy 调用点静态还原：提取每类 XOR 解密器 key，解密 bootstrap 静态参数（encOwner/encName/encDesc），按 mode/extra 表把 7 形态（static/virtual/字段 4 路/ctor）还原成真实 invoke/getfield/putfield/new；virtual 的接口落点走 invokeinterface，插入式站点以 spill/reload + 原地换指令保锚 | 三级分工：S2 选面（BSM 8 参描述符指纹 ∧ 解密器体形 `charAt;LDC;LDC;IXOR;IXOR;i2c`，兼容单层）→ S3 分派（mode/extra 数值表，`Era::Kasumi` 分支唯一合法落点）→ S1 定案（indy desc 与解密结果互证：static 全等 / virtual receiver 槽 / 字段 4 路形状 / ctor 返回 `Lowner;`）；key 链断 / 参数畸形 / 互证不符 / 接口无旁证整站 fail-closed（`SnakeGame-obf.jar` 语料 627 站点全还原，residual=0） | S1 |
-| `grunt.StringCacheFold` | Kasumi 字符串缓存解密结果回填常量池：读缓存站点（`getstatic String[]; idx; aaload`）与直接解密站点（`getstatic byte[][]; idx; aaload; dup; arraylength; off; invokestatic ([BII)String`）锚点原地换 `ldc <明文>`、跨度其余擦除；明文来自外部 TSV 旁证（KasumiStringDumper 产出，`--tsv` 注入，内容不进仓） | S2 选面（getstatic 描述符钉 `[Ljava/lang/String;`/`[[B` ∧ 后继跨度逐条钉形，前缀口径）→ S3 Era 门（TSV 属换代表面，`Era::Kasumi` 分支唯一合法落点）→ S1 定案（明文表 `(owner,key,idx)` 精确命中）；旁证缺席/不可读整站 fail-closed、表无该条目按树版静默跳过 + `noPlaintext` 记账——S1 无旁证不可定案（明文本身就是要回填的内容，树版空映射即整 pass 跳过，语义同源）（`SnakeGame-obf.jar` 语料 168 站点回填 84+84，residual=0） | S1 |
+| `grunt.StringCacheFold` | Kasumi 字符串缓存解密结果回填常量池：读缓存站点（`getstatic String[]; idx; aaload`）与直接解密站点（`getstatic byte[][]; idx; aaload; dup; arraylength; off; invokestatic ([BII)String`）锚点原地换 `ldc <明文>`、跨度其余擦除；明文来自外部 TSV 旁证（KasumiStringDumper 产出，`--tsv` 注入，内容不进仓） | S2 选面（getstatic 描述符钉 `[Ljava/lang/String;`/`[[B` ∧ 后继跨度逐条钉形，前缀口径）→ S3 Era 门（TSV 属换代表面，`Era::Kasumi` 分支唯一合法落点）→ S1 定案（明文表 `(owner,key,idx)` 精确命中）；旁证缺席/不可读整站 fail-closed、表无该条目按树版静默跳过 + `noPlaintext` 记账——S1 无旁证不可定案（明文本身就是要回填的内容，树版空映射即整 pass 跳过，语义同源）（`SnakeGame-obf.jar` 语料单跑 168 站点回填 84+84；专链上 `IndyDecode` 先行解锁 3 站 → 171=84+87，与树版逐项同；residual=0） | S1 |
 | `grunt.MetadataStrip` | Kasumi 元数据残留清理三面：`@dev/kasumi/internal/Metadata` 注解摘除（类/字段/方法三张挂载面，其余注解保留）、水印字段整删（带注解字段 ∨ ConstantValue 为水印串：含 `PROTECTED BY Kasumi` / 含 `Gruntpocalypse` / 前缀 `kasumi_`，树版三判据逐字口径）、反 LLM 注入资源删除（`META-INF/Kasumi/*.md` 前缀 + 内容探针五选一，本仓首个资源面写动词）；方法体不碰（引导/解密器交 indy 还原与下游死码清理） | S2 形状钉面（注解描述符全等 ∧ 资源 URI 前缀+`.md` 形状 ∧ 水印串形状）→ S3 Era 门（三面判据全是 Kasumi 版本实现选择，`Era::Kasumi` 分支唯一合法落点，未判整面关闭一个资源不动）→ S1 互证（资源删除要内容探针坐实注入物，形状命中而探针缺席保留 + `resourceCandidates` 盘点；水印字段要 ConstantValue 内容命中）；注解槽过深度预检（mjbase #158），解不开 fail-closed 不摘 + `annoBlocked` 记账；proof 双门：类数不增 + 资源对账（数只减 + 删除清单逐条不在场）（`SnakeGame-obf.jar` 语料 25 注解 + 10 水印字段 + 4 资源全清，residual=0） | S1 |
 
 `S1` = 语义后果：混淆器为了保持功能必须如此，改了自己就坏。`S2` = 结构性清理：判据成立即安全，但混淆器换代可能换形态。`S3` = 面向未来形态的预留面：当前语料无站点，判据按形态写、按换代样本验收。判据不依赖方法名、签名形状、所在类或注入模板，所以 Grunt 换代不需要改这一行。
@@ -63,14 +63,22 @@ grunt.BoogerAnnoStrip
 `ConstValuePromote` 回填 `ConstantValue` 后 `clinit` 变空，也会解锁新的
 `DeadMember` 删除面。判据是 `PredicateFold` 站点归零。
 
-**Kasumi 专面不入主线**：`grunt.IndyDecode`、`grunt.StringCacheFold` 与
-`grunt.MetadataStrip` 由 `probeEra` 判家（`Era::Kasumi` 才激活），单罐验收
-（`SnakeGame-obf.jar`），与 BoogerV2 主线互不重叠——Kasumi BSM 的 8 参签名
-+ find* 分派不在 `IndyFold` 的纯目标子集内，同一 jar 上两者不争站点；
-`StringCacheFold` 管字符串缓存回填（`--tsv` 注入明文旁证表，无旁证
-fail-closed），`MetadataStrip` 管元数据残留三面（注解/水印/资源；资源删除
-是本仓首个非类条目写面），与 `IndyDecode` 是同一混淆器的多条残留线，可共
-存于同一样本（组合链实测互不干扰）。
+**Kasumi 专面不入主线，走专链**：`grunt.IndyDecode`、`grunt.StringCacheFold` 与
+`grunt.MetadataStrip` 由 `probeEra` 判家（`Era::Kasumi` 才激活），与 BoogerV2
+主线互不重叠——Kasumi BSM 的 8 参签名 + find* 分派不在 `IndyFold` 的纯目标子
+集内，同一 jar 上两者不争站点。专链三 pass、链序固定（先还原再清理，
+`MetadataStrip` 收尾）：
+
+```
+grunt.IndyDecode,grunt.StringCacheFold,grunt.MetadataStrip
+```
+
+`--jdk`（接口旁证）与 `--tsv`（明文旁证，内容不进仓）见 [Run](#run) 与
+[doc/kasumi-verify.md](doc/kasumi-verify.md)（端到端五项门逐项数字与和树版
+口径的差异点）。**通用主线不入专链**（K4 取证）：`DeadMember` 的引用普查
+漏计 Kasumi 改写类对外引用，专链产物上单跑即把零明文引用的候选整类误删
+（语料 `t` 类 93 → 0 方法，运行期 `NoSuchMethodError`）——普查修复前不入，
+证据见 kasumi-verify.md §3。
 
 
 ## 全局不变量
@@ -104,6 +112,14 @@ xmake build grunt_cli
 
 直接调构建产物，别用 `xmake run grunt_cli --`：xmake 会吞掉/改写一部分参数（引号与逗号尤其容易走样）。
 
+Kasumi 专链用法（专链无 preset 机制，仓内链注册形态就是 `-p` 逗号分隔名，标准命令行即装配）：
+
+```sh
+./build/windows/x64/release/grunt_cli.exe -i in.jar -o out.jar \
+  -p grunt.IndyDecode,grunt.StringCacheFold,grunt.MetadataStrip \
+  --jdk <jdk17 根目录> --tsv <KasumiStringDumper 产的明文表>
+```
+
 `-p` 逗号分隔 pass 名（`grunt.` 前缀）；`-c pack.json` 把配置文本整体交给 pack 解析；`--list` 列出全部可用 pass；`--jdk <JDK 根目录>` 是 `grunt.IndyDecode` 的接口旁证注入面（扫 jmods/lib 收集接口全集，Era=Kasumi 才激活；不传则容器外落点的 virtual 站点 fail-closed）；`--tsv <明文表>` 是 `grunt.StringCacheFold` 的 TSV 旁证注入面（KasumiStringDumper 四列映射，Era=Kasumi 才激活；缺失/不可读旁证降级 fail-closed）。
 
 单轮不收敛，要整链重复跑（输出喂回输入）直到 `PredicateFold` 站点归零：
@@ -133,7 +149,7 @@ xmake f --with_tests=y && xmake build grunt_unittest && xmake run grunt_unittest
 xmake build grunt_cli && ./test/corpus-regress.sh
 ```
 
-对语料目录里的每个 jar 跑完整残留链，检查退出码、输出 jar 结构完整、**类数不增**，并在有 JDK 时对产物做逐类加载校验（`test/tools/VerifyJar.java`）。语料回归的判定方式不是「产物和某个黄金字节一致」，而是「输入与产物各自过一遍校验器，失败集合必须相同」——样本普遍缺外部依赖，绝对失败数为零不是可达目标，**没有新增失败**才是。
+对语料目录里的每个 jar 跑完整残留链，检查退出码、输出 jar 结构完整、**类数不增**，并在有 JDK 时对产物做逐类加载校验（`test/tools/VerifyJar.java`）。语料回归的判定方式不是「产物和某个黄金字节一致」，而是「输入与产物各自过一遍校验器，失败集合必须相同」——样本普遍缺外部依赖，绝对失败数为零不是可达目标，**没有新增失败**才是。Kasumi 专链的语料回归：`ONLY=SnakeGame-obf PASSES='grunt.IndyDecode,grunt.StringCacheFold,grunt.MetadataStrip' EXTRA_ARGS="--jdk <jdk17 根目录> --tsv <TSV 路径>" ./test/corpus-regress.sh`。
 
 ## Doc index
 
@@ -154,5 +170,6 @@ xmake build grunt_cli && ./test/corpus-regress.sh
 - [doc/indy-decode.md](doc/indy-decode.md) / [.impl.md](doc/indy-decode.impl.md)：Kasumi indy 静态还原。
 - [doc/string-cache-fold.md](doc/string-cache-fold.md) / [.impl.md](doc/string-cache-fold.impl.md)：Kasumi 字符串缓存回填。
 - [doc/metadata-strip.md](doc/metadata-strip.md) / [.impl.md](doc/metadata-strip.impl.md)：Kasumi 元数据与水印清理。
+- [doc/kasumi-verify.md](doc/kasumi-verify.md)：Kasumi 专链端到端复现记录（五项门逐项数字、与树版口径差异点、通用链取证）。
 
 口径分工：`doc/` 只写**通用技术形态**与实现；具体样本的取证过程（jar、类名、指令偏移、折叠期望值）记在仓外研究笔记，不进本仓。

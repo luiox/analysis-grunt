@@ -78,6 +78,10 @@ classesIntact`，与全部残留同门）+ **residual**：改写后容器里仍�
 - **fail-closed 实证**（同罐）：不带 `--tsv`（`tsv=absent`）与传不存在路
   径（`tsv=unreadable`）均 `sites=0 rejects=170`（全部落 tsvBlocked 桶），
   不产生任何改写站点。
+- **K4 专链口径**（`IndyDecode` 先行，见 [kasumi-verify.md](kasumi-verify.md)）：
+  上游还原把 3 个 indy 化站点露出裸形状——`total-shape=174 sites=171
+  no-plain=3`，rewrite `cache-read=84 direct-decrypt=87`，合计 171 与树版
+  84+87 逐项同；组合链优于单跑隔离口径（168）。
 
 ## 已知边界
 
