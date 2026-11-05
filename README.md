@@ -6,6 +6,8 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 
 代码组织遵循 [CONVENTION.md](CONVENTION.md)：以「一种残留（residue）」为单位，每种残留 = 家族知识 + 三段恒定动作（scan / rewrite / proof）。
 
+混淆行为侧：Grunt 两代（v2 / v3）每个 obf 行为的形态描述、jasm 样例与 residue 映射见 [doc/obf-behaviors/](doc/obf-behaviors/README.md)；与 morpher 仓 `mjt-deobf/doc_ai/obf-forms/` 的分工——那边是跨家族形态库（artifact 侧形态判据与还原链序），本仓 `doc/obf-behaviors/` 是本工具行为账（逐 transformer 行为 + 配置面 + residue 现状 + 闭环缺口清单）。
+
 ## 残留一览
 
 | 残留 | 作用 | 判据 | 等级 |
@@ -158,6 +160,9 @@ xmake build grunt_cli && ./test/corpus-regress.sh
 ## Doc index
 
 - [doc/README.md](doc/README.md)：索引与口径分工。
+- [doc/obf-behaviors/README.md](doc/obf-behaviors/README.md)：grunt 行为账总表（行为 × residue 状态）与闭环缺口清单（P1/P2/P3）。
+- [doc/obf-behaviors/grunt-v2-behaviors.md](doc/obf-behaviors/grunt-v2-behaviors.md)：v2（Gruntpocalypse 2.x）35 个 transformer 逐行为描述 + 16 个已验证 jasm 样例。
+- [doc/obf-behaviors/grunt-v3-behaviors.md](doc/obf-behaviors/grunt-v3-behaviors.md)：v3（Grunteon）39 个 transformer + GlslObfuscator 插件 + NativePipeline 阶段逐行为描述 + 11 个已验证 jasm 样例。
 - [doc/constant-call.md](doc/constant-call.md) / [.impl.md](doc/constant-call.impl.md)：常量调用。
 - [doc/flags-strip.md](doc/flags-strip.md) / [.impl.md](doc/flags-strip.impl.md)：伪 `synthetic`/`bridge` 标志。
 - [doc/const-method.md](doc/const-method.md) / [.impl.md](doc/const-method.impl.md)：常量方法。

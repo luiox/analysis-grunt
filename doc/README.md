@@ -45,6 +45,16 @@
 | [metadata-strip.impl.md](metadata-strip.impl.md) | 本仓的 Scan / Rewrite / Proof，含资源删除动词、资源对账门与语料账本 |
 | [kasumi-verify.md](kasumi-verify.md) | Kasumi 专链端到端复现记录：五项门逐项数字、与树版口径差异点、通用链取证 |
 
+## obf 行为账
+
+Grunt 家族逐混淆行为的描述文档（形态 + 配置面 + jasm 样例 + residue 现状）在 [obf-behaviors/](obf-behaviors/)：
+
+- [obf-behaviors/README.md](obf-behaviors/README.md)——行为 × residue 状态总表与闭环缺口清单（P1/P2/P3）。
+- [obf-behaviors/grunt-v2-behaviors.md](obf-behaviors/grunt-v2-behaviors.md)——v2（Gruntpocalypse 2.x）35 个 transformer 行为账。
+- [obf-behaviors/grunt-v3-behaviors.md](obf-behaviors/grunt-v3-behaviors.md)——v3（Grunteon）39 个 transformer + GlslObfuscator 插件 + NativePipeline 阶段行为账。
+
+与 morpher 仓 `mjt-deobf/doc_ai/obf-forms/` 的分工：那边是跨家族形态库（artifact 侧形态判据与还原链序），本目录行为账是本工具的逐行为现状与缺口清单，同面判据以那边为准。
+
 ## 约定
 
 代码组织约定见仓根 [CONVENTION.md](../CONVENTION.md)。
