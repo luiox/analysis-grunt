@@ -1,6 +1,7 @@
 /// @file        grunt_names.hpp
 /// @brief       Grunt 家族知识：StringEncrypt / StringArrayedEncrypt 字符串池
-///              形态常量（v2/v3 共用面）。
+///              形态常量（v2/v3 共用面）+ ReferenceObfuscate / InvokeDynamic
+///              的 indy 形态常量（v2/v3 共用面）。
 ///
 /// CONVENTION §2：家族知识唯一落点。Grunt v2（grunt2 分支 36c0eef 的
 /// `StringEncryptTransformer.kt`）与 v3（grunt3 分支 e41e852 的
@@ -11,7 +12,14 @@
 /// 状态随 `i & 0xFF` 旋转），差别只在产物配置：v2 默认 `Arrayed=false`
 /// （密文走 `ldc` 串 + `toCharArray`），v3 默认 `Carray=true`（密文走
 /// `NEWARRAY T_CHAR` + 逐码元 `CASTORE`）——密文形态是配置选择不是版本键，
-/// v2/v3 判别（缺口 #15）不挂本表，era.hpp 不消费本文件。
+/// v2/v3 判别（缺口 #15）不挂本表，era.hpp 不消费本文件的池段。
+///
+/// indy 段（v2 `InvokeDynamicTransformer.kt` / v3 `ReferenceObfuscate.kt`）：
+/// 两代的 bootstrap 描述符、`encrypt`（逐码元 `code ^ xor` 自逆 XOR）、
+/// heavy 的 `@Metadata` 注解（mv/d1/d2 成员 + `data1 % 59557 == magic2`
+/// 互证）逐字同源，也落本表；`@Metadata` 注解类默认名两代不同（v2
+/// `net/spartanb312/grunt/GruntMetadata`、v3 `net/spartanb312/grunteon/
+/// internal/Metadata`，均可配置），名字不进判据，era 指纹见 era.hpp。
 #pragma once
 
 #include <string_view>
@@ -57,5 +65,70 @@ inline constexpr ca::i32 kGruntRotateMask = 255;
 /// @brief per-string seed 生成上界（`Random.nextLong(100000L)`）——记录性
 ///        常量（语料普查对数用），不作判据。
 inline constexpr ca::i64 kGruntSeedBound = 100000;
+
+// ---- indy 形态（v2 InvokeDynamicTransformer.kt / v3 ReferenceObfuscate.kt
+//      的 createBootstrap / createHeavyBootstrap / encrypt / metadata 生成面，
+//      两代逐字同源）----------------------------------------------------------
+
+/// @brief simple bootstrap 描述符（7 参：Lookup, String, MethodType,
+///        String, String, String, Integer；静态参数 4 个）。两代 BSM access
+///        均 `PUBLIC+STATIC+SYNTHETIC+BRIDGE`（名字不钉）。
+inline constexpr std::string_view kGruntSimpleBsmDesc =
+    "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;"
+    "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;)"
+    "Ljava/lang/invoke/CallSite;";
+
+/// @brief heavy bootstrap 描述符（7 参：Lookup, String, MethodType,
+///        String, Integer, Integer, Integer；静态参数 4 个）。两代 BSM access
+///        均 `PRIVATE+STATIC+SYNTHETIC+BRIDGE`。
+inline constexpr std::string_view kGruntHeavyBsmDesc =
+    "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;"
+    "Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Integer;Ljava/lang/Integer;)"
+    "Ljava/lang/invoke/CallSite;";
+
+/// @brief simple 解密器描述符（`createDecryptMethod`，逐码元 `^ key`）。
+inline constexpr std::string_view kGruntSimpleDecryptorDesc =
+    "(Ljava/lang/String;)Ljava/lang/String;";
+
+/// @brief heavy 解密器描述符（`createHeavyDecryptMethod`，逐码元 `^ key`）。
+inline constexpr std::string_view kGruntHeavyDecryptorDesc =
+    "(Ljava/lang/String;I)Ljava/lang/String;";
+
+/// @brief heavy 元数据自证模数：`data1 = 59557 * q + magic2`（两代 metadata
+///        生成面逐字 `59557`；BSM 体 `LDC 59557; IREM` 消费同一常量）。
+inline constexpr ca::i32 kGruntMetadataModulus = 59557;
+
+/// @brief heavy BSM 的 mv 版本门（体 `BIPUSH 100; IF_ICMPGE`，生成面注解
+///        `mv = 100`）。
+inline constexpr ca::i32 kGruntMetadataMv = 100;
+
+/// @brief v3 默认 `@Metadata` 注解类内部名（`config.metadataClass` 默认值，
+///        可配置——只作 era 指纹与文档锚点，不作还原判据）。
+inline constexpr std::string_view kGrunt3MetadataAnnoInternalName =
+    "net/spartanb312/grunteon/internal/Metadata";
+
+/// @brief v3 默认 `@Metadata` 注解描述符（era 指纹半边）。
+inline constexpr std::string_view kGrunt3MetadataAnnoDesc =
+    "Lnet/spartanb312/grunteon/internal/Metadata;";
+
+/// @brief v3 混淆器生成类命名空间前缀（`grunteon` 字样 v2 不产；era 指纹
+///        另一半边）。
+inline constexpr std::string_view kGrunt3NamespacePrefix = "net/spartanb312/grunteon/";
+
+/// @brief heavy `d2` 载荷分隔符（生成面 `name + "<>" + desc`，BSM 体
+///        `LDC "<>"; split` 消费同一串）。
+inline constexpr std::string_view kGruntMetadataPairSep = "<>";
+
+/// @brief v3 RuntimeMaterial 联动的解密器材料通道形状锚点：`materialKey()`
+///        体内 `GETSTATIC keyField(J); DUP2; INT(32); LUSHR; LXOR; L2I;
+///        GETSTATIC poisonField(I); IXOR; IRETURN`（源锚
+///        `createMaterialKeyMethod`，grunt3 ReferenceObfuscate.kt L1187-1213
+///        ——本常量即其中 `INT(32); LUSHR` 的位移），`createDecryptMethod` 的
+///        `materialKeyName != null` 分支解密器体内 `LDC key; INVOKESTATIC
+///        <self> ()I; IXOR; IXOR`——有效 key 依赖运行期材料字段
+///        （canonicalKey/poison，boar 实证其初值由解密后的字符串池经
+///        parseLong 转出），纯静态不可解。判据在 indy_restore（fail-closed，
+///        只按窗口形状自证，不消费本位移值；锚点留给缺口 #15 联动面）。
+inline constexpr ca::u32 kGruntMaterialKeySlotShift = 32;
 
 }   // namespace grunt::knowledge

@@ -24,6 +24,7 @@
 #include "grunt/flags_strip.hpp"
 #include "grunt/indy_decode.hpp"
 #include "grunt/indy_fold.hpp"
+#include "grunt/indy_restore.hpp"
 #include "grunt/knowledge/kasumi_names.hpp"
 #include "grunt/metadata_strip.hpp"
 #include "grunt/number_fold.hpp"
@@ -851,6 +852,72 @@ mjbase::spi::PreservedAnalyses StringPoolFoldPass::run(
                      verdict.residual);
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.StringPoolFold] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses IndyRestorePass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+
+    // Era 探测（adapter 调一次，结果注入 scan）+ JDK 接口旁证（Era 非
+    // Unknown 才激活文件系统扫描——simple 面自证不挂 Era，但旁证只在家族
+    // 判定后注入；残留本体不做遍历）。
+    indy_restore::ScanInput input;
+    input.era = knowledge::probeEra(container);
+    if (input.era != knowledge::Era::Unknown && !gKasumiJdkPath.empty()) {
+        input.jdkInterfaces = scanJdkInterfaces(gKasumiJdkPath);
+    }
+
+    const indy_restore::ScanResult scanned = indy_restore::scan(container, input);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.IndyRestore] scan: era=%s jdk-ifaces=%zu total=%zu sites=%zu"
+                     " rejects=%zu (key=%zu malformed=%zu decode=%zu desc=%zu magic=%zu"
+                     " metadata=%zu material=%zu iface=%zu) skip-classes=%zu\n",
+                     input.era == knowledge::Era::Kasumi     ? "Kasumi"
+                     : input.era == knowledge::Era::Grunt2   ? "Grunt2"
+                     : input.era == knowledge::Era::Grunt3   ? "Grunt3"
+                                                             : "Unknown",
+                     input.jdkInterfaces.size(), scanned.totalIndy, scanned.sites.size(),
+                     scanned.rejects.size(), scanned.keyMissing, scanned.malformedArguments,
+                     scanned.decodeFailed, scanned.descMismatch, scanned.magicMismatch,
+                     scanned.metadataMissing, scanned.materialLane,
+                     scanned.interfaceUnattested, scanned.classesSkipped);
+        if (std::getenv("GRUNT_INDY_RESTORE_TRACE") != nullptr) {
+            for (const indy_restore::Site& site : scanned.sites) {
+                std::fprintf(stderr,
+                             "[grunt.IndyRestore]   %s#%zu pc=%u form=%d → %s.%s%s%s\n",
+                             site.uri.c_str(), site.methodIndex, site.indySrcPc,
+                             static_cast<int>(site.form), site.targetOwner.c_str(),
+                             site.targetName.c_str(),
+                             site.ownerIsInterface ? " (iface)" : "",
+                             site.targetDesc.c_str());
+            }
+            for (const indy_restore::Reject& rej : scanned.rejects) {
+                std::fprintf(stderr, "[grunt.IndyRestore]   reject %s#%zu pc=%u: %s\n",
+                             rej.uri.c_str(), rej.methodIndex, rej.indySrcPc, rej.why.c_str());
+            }
+        }
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const indy_restore::DirtySet dirty = indy_restore::rewrite(container, scanned);
+    const indy_restore::ProofResult verdict = indy_restore::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.IndyRestore] rewrite: classes=%zu sites=%zu failed=%zu"
+                     " roundtrip-skip=%zu (static=%zu virtual=%zu) proof=%s residual=%zu\n",
+                     dirty.classes, dirty.sites, dirty.failed, dirty.skippedByRoundTrip,
+                     dirty.rewrittenStatic, dirty.rewrittenVirtual,
+                     verdict.ok ? "ok" : "FAILED", verdict.residual);
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.IndyRestore] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

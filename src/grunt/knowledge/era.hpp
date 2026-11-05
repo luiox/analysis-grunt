@@ -3,7 +3,8 @@
 ///
 /// CONVENTION §6.3：版本分支只允许出现在 scan 的细找里，且必须是 S3 级判据。
 /// 本文件是**唯一**允许出现版本相关字面量的地方（字面量本体在
-/// kasumi_names.hpp / booger_names.hpp，本文件只做探测裁决）。
+/// kasumi_names.hpp / booger_names.hpp / grunt_names.hpp 的 indy 段，本文件
+/// 只做探测裁决）。
 #pragma once
 
 #include <string_view>
@@ -19,6 +20,7 @@
 
 #include "grunt/container.hpp"
 #include "grunt/knowledge/booger_names.hpp"
+#include "grunt/knowledge/grunt_names.hpp"
 #include "grunt/knowledge/kasumi_names.hpp"
 
 namespace grunt::knowledge {
@@ -26,49 +28,70 @@ namespace grunt::knowledge {
 /// @brief 家族版本。
 enum class Era : ca::u8 {
     Unknown = 0,  ///< 判据不足：fail-closed，不做猜测性改写
-    Grunt2,       ///< Gruntpocalypse 2.x
-    Grunt3,       ///< Grunteon
+    Grunt2,       ///< Gruntpocalypse 2.x（判据仍缺，如实挂账——见 probeEra 注）
+    Grunt3,       ///< Grunteon（@Metadata 注解 + Grunt BSM desc 双指纹）
     Kasumi,       ///< Kasumi Obfuscator（indy 全量改写 + @Metadata + 反 LLM 资源）
 };
 
 /// @brief 版本探测（每家族仓固定提供这一个函数）。命中即判：三个 Kasumi
-///        指纹任一命中即 `Era::Kasumi`（混淆 jar 由单一混淆器版本产出，不做
-///        加权投票）；全部落空返回 `Unknown`。
+///        指纹任一命中即 `Era::Kasumi`，Grunt3 双指纹同时命中即
+///        `Era::Grunt3`（混淆 jar 由单一混淆器版本产出，不做加权投票）；
+///        全部落空返回 `Unknown`。
 ///
-/// - **命名空间**：容器内有 `dev/kasumi/obfuscator` 前缀的类（混淆器运行时
-///   类必然在场——Main-Class 即在其中，25 类样本全貌见 notes §1）；
-/// - **8 参 BSM 指纹**：任一 BootstrapMethods 条目的 MethodHandle 方法描述符
-///   等于 `kKasumiBootstrapDesc`（Kasumi 的 indy 形态唯一签名）；
-/// - **@Metadata 注解**：类/字段/方法任一挂载点带
+/// - **Kasumi 命名空间**：容器内有 `dev/kasumi/obfuscator` 前缀的类（混淆器
+///   运行时类必然在场——Main-Class 即在其中，25 类样本全貌见 notes §1）；
+/// - **Kasumi 8 参 BSM 指纹**：任一 BootstrapMethods 条目的 MethodHandle
+///   方法描述符等于 `kKasumiBootstrapDesc`（Kasumi 的 indy 形态唯一签名）；
+/// - **Kasumi @Metadata 注解**：类/字段/方法任一挂载点带
 ///   `@Ldev/kasumi/internal/Metadata;`（每类一个，Kasumi 特有）。
+/// - **Grunt3 @Metadata 指纹**：类级可见注解类型等于
+///   `kGrunt3MetadataAnnoDesc`（`Lnet/spartanb312/grunteon/internal/Metadata;`，
+///   v3 默认 metadataClass——`grunteon` 字样 v2 不产，v2 默认是
+///   `net/spartanb312/grunt/GruntMetadata`）；
+/// - **Grunt3 命名空间指纹**：容器内有 `net/spartanb312/grunteon/` 前缀的
+///   类（v3 现场生成的注解类与 NativeLoader 都落在此命名空间）；
+/// - **Grunt BSM desc 指纹**：任一 BootstrapMethods 条目的 MethodHandle
+///   方法描述符等于 `kGruntSimpleBsmDesc` 或 `kGruntHeavyBsmDesc`
+///   （v2/v3 两代逐字同源，只证明「Grunt 家族 indy 机器在场」）。
 ///
-/// Grunt2/Grunt3 当前**没有可靠判据**，理由如下：
+/// `Era::Grunt3` = Grunt 家族指纹（BSM desc）**且**（@Metadata 注解或
+/// grunteon 命名空间）——双半边钉版本，单一半边不判。
 ///
-/// - 类/成员名的 `U+200E` 尾缀在两代里都存在（Grunt2 的
-///   `ClassRenameTransformer::suffix` 与 Grunt3 的 `FieldRenamer::suffix`
-///   同源），不能当版本判据；
-/// - 调用点模板、数字混淆形状在两代之间没有观测到稳定差异。
+/// **Grunt2 判据仍缺，如实挂账**：`U+200E` 尾缀两代同源、调用点模板无稳定
+/// 差异、indy BSM desc 两代逐字同源——当前没有任何「只在 v2 产物出现」的
+/// 稳定指纹（v2 默认 `GruntMetadata` 注解名可配置、且 heavy 关闭时注解类
+/// 不生成，不能当判据）。v2 专面出现需求时再补（缺口 #15 的 v2 半边）。
 ///
 /// `constant_call` 不消费 Era：它的判据是语义事实（纯函数 + 常量实参 +
-/// 求值成功），与混淆器版本无关。等 Grunt2/Grunt3 真正版本敏感的残留出现时，
-/// 再把探测规则补在这里，而不是散进各残留。
+/// 求值成功），与混淆器版本无关。`string_pool_fold` 不消费 Era（v2/v3 形态
+/// 是配置不是版本键）。`indy_restore` 消费口径：simple 面按 BSM 参数结构
+/// 自证（key 静态在场 + 解密产物与 indy desc 互证，不挂 Era 门——理由见
+/// doc/indy-restore.md）；heavy 面只在本函数判出 `Era::Grunt3` 时激活
+/// （`@Metadata` 数组的解释依赖 v3 语义：mv 门 + `data1 % 59557 == magic2`
+/// 自证模数是两代同源，但注解指纹半边只有 v3 在场，故按保守口径只放 v3）。
 inline Era probeEra(const mjbase::model::ResourceContainer& container)
 {
-    bool namespaceHit = false;
-    bool bsmHit       = false;
-    bool annoHit      = false;
+    bool namespaceHit  = false;
+    bool bsmHit        = false;
+    bool annoHit       = false;
+    bool grunt3Anno    = false;
+    bool grunt3Bsm     = false;
+    bool grunt3Space   = false;
 
     forEachClass(container, [&](const ClassEntry& entry) {
-        if (namespaceHit && bsmHit && annoHit) return;
+        if (namespaceHit && bsmHit && annoHit && grunt3Anno && grunt3Bsm && grunt3Space) {
+            return;
+        }
         auto session = openSession(*entry.bytes);
         if (!session) return;
 
         const jbc::ir::ClassUnit& unit = session->unit();
         const std::string_view    self = unit.symbols().str(unit.thisClass);
         if (!namespaceHit && self.rfind(kKasumiNamespace, 0) == 0) namespaceHit = true;
+        if (!grunt3Space && self.rfind(kGrunt3NamespacePrefix, 0) == 0) grunt3Space = true;
 
         // ---- 8 参 BSM 指纹：BootstrapMethods 条目 → MethodHandle → desc ----
-        if (!bsmHit) {
+        if (!bsmHit || !grunt3Bsm) {
             jbc::core::ClassFile&     cf    = session->backing();
             jbc::core::AttrSlot*      slot  = cf.findClassAttr("BootstrapMethods");
             const auto checkEntry = [&](const jbc::core::BootstrapMethodsAttr::Entry& bsm) {
@@ -83,7 +106,11 @@ inline Era probeEra(const mjbase::model::ResourceContainer& container)
                 if (!cf.cp.valid(ref.b)) return;
                 const jbc::core::ConstantPool::Entry& nat = cf.cp.at(ref.b);
                 if (nat.tag != jbc::core::CpTag::NameAndType || !cf.cp.valid(nat.b)) return;
-                bsmHit = cf.utf8(nat.b) == kKasumiBootstrapDesc;
+                const std::string_view desc = cf.utf8(nat.b);
+                if (desc == kKasumiBootstrapDesc) bsmHit = true;
+                if (desc == kGruntSimpleBsmDesc || desc == kGruntHeavyBsmDesc) {
+                    grunt3Bsm = true;
+                }
             };
             if (slot != nullptr && mjbase::util::attrSafeToDecode(cf, *slot)) {
                 auto decoded = cf.decodeAttr(*slot);
@@ -94,7 +121,7 @@ inline Era probeEra(const mjbase::model::ResourceContainer& container)
                     if (attr != nullptr) {
                         for (const jbc::core::BootstrapMethodsAttr::Entry& bsm : attr->entries) {
                             checkEntry(bsm);
-                            if (bsmHit) break;
+                            if (bsmHit && grunt3Bsm) break;
                         }
                     }
                 }
@@ -102,7 +129,8 @@ inline Era probeEra(const mjbase::model::ResourceContainer& container)
         }
 
         // ---- @Metadata 注解：类/字段/方法三张挂载面（对齐 booger 普查口径）----
-        if (!annoHit) {
+        // Kasumi 判三类挂载面；Grunt3 只判类级可见注解（v3 生成面只挂类级）。
+        if (!annoHit || !grunt3Anno) {
             jbc::core::ClassFile& cf = session->backing();
             const auto hasMetadata = [&](std::vector<jbc::core::AttrSlot>& slots) {
                 for (jbc::core::AttrSlot& as : slots) {
@@ -116,32 +144,29 @@ inline Era probeEra(const mjbase::model::ResourceContainer& container)
                     }
                     const auto* aa = static_cast<const jbc::core::AnnotationsAttr*>(body);
                     for (const auto& anno : aa->annos) {
-                        if (cf.utf8(anno.typeCp) == kKasumiMetadataAnnoDesc) return true;
+                        if (cf.utf8(anno.typeCp) == kKasumiMetadataAnnoDesc) annoHit = true;
+                        if (cf.utf8(anno.typeCp) == kGrunt3MetadataAnnoDesc) grunt3Anno = true;
                     }
                 }
-                return false;
             };
-            annoHit = hasMetadata(cf.attrs);
-            if (!annoHit) {
+            hasMetadata(cf.attrs);
+            if (!annoHit || !grunt3Anno) {
                 for (jbc::core::MemberInfo& m : cf.methods) {
-                    if (hasMetadata(m.attrs)) {
-                        annoHit = true;
-                        break;
-                    }
+                    hasMetadata(m.attrs);
+                    if (annoHit && grunt3Anno) break;
                 }
             }
-            if (!annoHit) {
+            if (!annoHit || !grunt3Anno) {
                 for (jbc::core::MemberInfo& f : cf.fields) {
-                    if (hasMetadata(f.attrs)) {
-                        annoHit = true;
-                        break;
-                    }
+                    hasMetadata(f.attrs);
+                    if (annoHit && grunt3Anno) break;
                 }
             }
         }
     });
 
     if (namespaceHit || bsmHit || annoHit) return Era::Kasumi;
+    if (grunt3Bsm && (grunt3Anno || grunt3Space)) return Era::Grunt3;
     return Era::Unknown;
 }
 

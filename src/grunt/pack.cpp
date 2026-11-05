@@ -196,6 +196,21 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.StringPoolFold"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.IndyRestore",
+            [] { return makeFailClosed<IndyRestorePass>("grunt.IndyRestore"); },
+            "Statically restore Grunt v2 InvokeDynamic / v3 ReferenceObfuscate"
+            " invokedynamic call sites: resolve the per-class decryptor key via"
+            " the three-route chain (same-name decryptor, BSM body-follow,"
+            " name-family derivation for native BSM shells), decrypt the simple"
+            " args (encOwner/encName/encDesc) arithmetically or scan the owner"
+            " @Metadata arrays for the heavy magic pair, and swap the site in"
+            " place to the real invokestatic/virtual/interface per isVirtual."
+            " Feed a JDK root via --jdk so virtual sites on JDK interfaces"
+            " dispatch to invokeinterface.");
+        r.is_err()) {
+        return Err(std::string("grunt.IndyRestore"));
+    }
     return Ok();
 }
 

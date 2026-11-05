@@ -49,7 +49,7 @@ v2 是 ASM `ClassNode` 体系上的 transformer 管线：`grunt-main` 装载 jar
 | 24 | FieldRename / FieldRenameKr | 字段改名（Kr 变体同上） | 清理面 | 无处理（改名面） |
 | 25 | ClassRename | 类改名（含 zip 条目名破坏） | 清理面 | 无处理（改名面） |
 | 26 | MixinFieldRename / MixinClassRename | Mixin 感知改名 | 清理面 | 无处理（改名面） |
-| 27 | InvokeDynamic | 调用点 indy 化（simple/heavy 双 BSM） | S1 | 预留（IndyFold S3 面，BoogerV2 语料 foldable=0） |
+| 27 | InvokeDynamic | 调用点 indy 化（simple/heavy 双 BSM） | S1 | 部分 | IndyRestore（simple 直接解密回填，缺口 #2 闭环；heavy 待 Era::Grunt2 判据按保守口径关闭，material 类 fail-closed）+ IndyFold（S3 兜底） |
 | 28 | ShuffleMembers | 打乱成员/注解/异常表顺序 | 清理面 | 清理面 |
 | 29 | Crasher | Signature 属性填 massive 串砸反编译器 | S2 | 无处理 |
 | 30 | Watermark | 水印字段/方法/注解/接口 | S2 | 无处理 |
@@ -548,11 +548,11 @@ v2 是 ASM `ClassNode` 体系上的 transformer 管线：`grunt-main` 装载 jar
 
 ### 3.2 InvokeDynamic（order 1000）：调用点 indy 化
 
-**做什么**。把 static/virtual 方法调用换成 `invokedynamic`（INVOKESPECIAL 排除；interface 走 invokeinterface 语义不换）。simple 形：BSM desc `(Lookup,String,MethodType,String,String,String,Integer)` 七参，静态参数 `[encOwner, encName, encDesc, isVirtual]`（三段串各自经单参解密器加密，解密器体内 `LDC key; IXOR`）；virtual 的 desc 首参补 `LObject;`。heavy 形：BSM desc 八参，静态参数 `[encOwner, magic1, magic2, isVirtual]`，真 name/desc 编进 owner 类的 `@GruntMetadata` 注解（`mv`/`d1`/`d2`，`data1 % 59557 == magic2` 互证，`d2` 是 `name<>desc` 的 XOR 密文）——仿 Kotlin Metadata 形状。BSM 体 = 解密三段 + `Class.forName` + `MethodType.fromMethodDescriptorString` + `findStatic`/`findVirtual` + `ConstantCallSite` + `asType`，带 try/catch 与帧。`Reobfuscate` 开关让生成的 BSM/decrypt 方法再过一遍 Controlflow 与 LocalVariableRename（`EnhancedFlowReobf` 控制算术表达式参与）。`BSMNativeAnnotation` 可把 BSM 标 native 候选。
+**做什么**。把 static/virtual 方法调用换成 `invokedynamic`（INVOKESPECIAL 排除；interface 走 invokeinterface 语义不换）。simple 形：BSM desc `(Lookup,String,MethodType,String,String,String,Integer)` 七参，静态参数 `[encOwner, encName, encDesc, isVirtual]`（三段串各自经单参解密器加密，解密器体内 `LDC key; IXOR`）；virtual 的 desc 首参补 `LObject;`。heavy 形：BSM desc 七参（`(Lookup,String,MethodType,String,Integer,Integer,Integer)`，`[encOwner, magic1, magic2, isVirtual]`——本文档早期「八参」记载有误，grunt2@36c0eef 生成面实为 7 参，simple/heavy 两形同为 7 参仅静态参数段不同），真 name/desc 编进 owner 类的 `@GruntMetadata` 注解（`mv`/`d1`/`d2`，`data1 % 59557 == magic2` 互证，`d2` 是 `name<>desc` 的 XOR 密文）——仿 Kotlin Metadata 形状。BSM 体 = 解密三段 + `Class.forName` + `MethodType.fromMethodDescriptorString` + `findStatic`/`findVirtual` + `ConstantCallSite` + `asType`，带 try/catch 与帧。`Reobfuscate` 开关让生成的 BSM/decrypt 方法再过一遍 Controlflow 与 LocalVariableRename（`EnhancedFlowReobf` 控制算术表达式参与）。`BSMNativeAnnotation` 可把 BSM 标 native 候选。
 
 **判据分级**：S1（BSM 参数结构与元数据互证是语义后果——混淆器要保链接就必须让解密产物与调用点吻合）；还原判据按 BSM 参数结构直接解密（key 静态在场）。
 
-**本仓现状**：预留。`grunt.IndyFold`（S3，libjsim 模拟 BSM 求真目标）按通用模拟面预留，BoogerV2 语料实测 foldable=0（BSM 形态不在纯目标求值子集内——真目标在解密器 key 链里，需要按参数结构直接解密的专面）；Kasumi 的 `IndyDecode` 是 8 参 + 解密器体形钉面的另一指纹，与本行为互斥。按 BSM 结构直接解密的还原面未建（缺口清单 P1，morpher obf-forms §3.4 已给改写口径）。
+**本仓现状**：`grunt.IndyRestore` 承载（缺口 #2 闭环，见 doc/indy-restore.md）。simple 形按 `encrypt` 自逆 XOR 纯算术直解 + 三路键链（同名解密器 / BSM 体跟随 / 名字族推导）回填真实 invoke，判据全部结构自证、不挂 Era（v2/v3 simple 逐字同源）；heavy 形 `@GruntMetadata` 互证回填挂 `Era::Grunt3` 门——v2 现场因 Grunt2 判据仍缺（缺口 #15 v2 半边挂账）按保守口径关闭，simple 面不受影响。RuntimeMaterial 联动的材料通道静态不可解，fail-closed 挂 `materialLane` 桶（缺口 #15 联动面）。`grunt.IndyFold`（S3，libjsim 模拟 BSM 求真目标）保留为兜底（BoogerV2 语料实测 foldable=0——真目标在解密器 key 链里，须按参数结构直接解密）；Kasumi 的 `IndyDecode` 是 8 参 + 解密器体形钉面的另一指纹，与本行为互斥。
 
 **样例**（simple 形站点 + BSM 骨架 + 解密器；heavy 的元数据注解面见 morpher §3.4）：
 
@@ -953,7 +953,8 @@ v2 是 ASM `ClassNode` 体系上的 transformer 管线：`grunt-main` 装载 jar
         ConstPoolEncrypt→NumberFold+ConstValuePromote（调用点回填缺口）、
         Controlflow→TrampolineSqueeze/PredicateFold/NumberFold/DeadCode/SeedStrip
         （junk 调用残留、陷进环、ArithmeticExpr 缺口）
-预留  ：InvokeDynamic→IndyFold（S3，语料 foldable=0）
+部分  ：InvokeDynamic→IndyRestore（simple 直接解密回填，缺口 #2 闭环；
+        heavy 待 Era::Grunt2 判据）+ IndyFold（S3 兜底，语料 foldable=0）
 无处理：MethodExtractor、ConstBuilder、StringEncrypt、ArithmeticEncrypt、
         StringEqualsRedirect、Crasher、Watermark、垃圾类三面、改名族、HWID
 清理面：SourceDebugRemove、KotlinOptimize、EnumOptimize、DeadCodeRemove、

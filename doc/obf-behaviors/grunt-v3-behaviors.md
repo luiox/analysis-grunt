@@ -55,7 +55,7 @@ v3 是 Kotlin 重写的管线：`Grunteon` 持 `transformers: List<Pair<Transfor
 | 30 | Native | NativePreProcessor | indy/condy/MH 调用点桥接同类 helper | 伴随面 | 伴随面（native 前置） |
 | 31 | AntiDebug | RuntimeMaterial | 分布式材料扰动（shareA/shareB/canonicalKey/poison） | S2 | 无处理 |
 | 32 | AntiDebug | AntiLLM | 四渠道 LLM 诱饵噪声 | S2 | 无处理 |
-| 33 | Other | ReferenceObfuscate | 调用点 indy 化 simple/heavy + `@Metadata` 注解 | S1 | 预留（IndyFold S3 面） |
+| 33 | Other | ReferenceObfuscate | 调用点 indy 化 simple/heavy + `@Metadata` 注解 | S1 | 部分 | IndyRestore（缺口 #2 闭环：simple 直接解密回填 + heavy `@Metadata` 互证回填，`Era::Grunt3` 门；RuntimeMaterial 联动的材料通道静态不可解 fail-closed → 缺口 #15 联动面）+ IndyFold（S3 兜底） |
 | 34 | Other | FakeSyntheticBridge | 伪 `ACC_SYNTHETIC`/`ACC_BRIDGE` 撒标志 | S2 | 已处理（FlagsStrip） |
 | 35 | Other | DecompilerCrasher | Signature 属性填 massive 串 | S2 | 无处理 |
 | 36 | Other | ReflectionSupport | 改名后重映射反射串 | 伴随面 | 伴随面 |
@@ -411,7 +411,7 @@ v3 的方法/字段代理与 v2 MethodScramble/FieldScramble 同构（`Chance` �
 
 **判据分级**：S1——BSM 参数结构与 `@Metadata` 互证（`data1 % 59557 == magic2`）是语义后果：混淆器要保链接就必须让解密产物与调用点吻合；还原判据按 BSM 参数结构 + 注解值直接解密（key/magic 全部静态在场）。
 
-**本仓现状**：预留。`grunt.IndyFold`（S3，libjsim 模拟 BSM 求真目标）按通用模拟面预留，BoogerV2 语料实测 foldable=0；按 BSM 结构直接解密 + `@Metadata` 注解解密的还原面未建（缺口清单 P1，morpher obf-forms §3.4 已给改写口径）。Kasumi 的 `IndyDecode`（8 参 BSM 指纹）与本行为互斥。
+**本仓现状**：`grunt.IndyRestore` 承载（缺口 #2 闭环，见 doc/indy-restore.md）。simple 形三段串按 `encrypt` 自逆 XOR 纯算术直解 + 三路键链（同名解密器 / BSM 体跟随 / 名字族推导，第三路覆盖 NativePipeline 把 BSM 摘成 native 空壳的死现场）回填真实 invoke；heavy 形 generalKey 取 BSM 体窗口 + owner 类 `@Metadata`（mv≥100 门）d1/d2 数组 `data1 % 59557 == magic2` 自证回填，挂 `Era::Grunt3` 门（era.hpp Grunt3 双指纹：Grunt BSM desc ∧ 类级 `@Metadata` 注解或 `grunteon` 命名空间，缺口 #15 v3 半边随之闭环）。RuntimeMaterial 联动的材料通道（`decryptKey ^ materialKey()`，materialKey 运行期值静态不可解）fail-closed 挂 `materialLane` 桶，随缺口 #15 联动面与模拟执行原语再扩。boar 语料（Grunteon 全链）实证：78154 指纹站点还原 30924（static 29847 + virtual 1077，failed=0），residual=47230（materialLane 42228 + keyMissing 5002）；组合链接通 `grunt.StringPoolFold` 0 → 19244 折叠。`grunt.IndyFold`（S3）保留为兜底；Kasumi 的 `IndyDecode`（8 参 BSM 指纹）与本行为互斥。
 
 **样例**（simple/heavy 站点 + 双 BSM 骨架 + `@Metadata` 注解）：
 
