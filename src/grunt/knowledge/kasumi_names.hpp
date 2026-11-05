@@ -9,7 +9,9 @@
 ///
 /// 常量逐字取自 morpher 树版（origin/main @ 077b0ac64）
 /// `mjt-deobf/src/mjt/deobf/passes/misc/kasumi/{kasumi_indy_resolve_pass,
-/// kasumi_metadata_cleanup_pass}.{hpp,cpp}` 与 `doc_ai/notes/kasumi_reverse_notes.md`，
+/// kasumi_metadata_cleanup_pass,kasumi_string_decrypt_pass}.{hpp,cpp}`、
+/// `tools/kasumi_string_dumper/KasumiStringDumper.java` 与
+/// `doc_ai/notes/kasumi_reverse_notes.md`，
 /// SnakeGame-obf.jar（582,974 B，语料账本见 doc/indy-decode.impl.md）实证。
 #pragma once
 
@@ -36,6 +38,30 @@ inline constexpr std::string_view kKasumiDecryptorDesc =
 
 /// @brief bootstrap 静态参数个数：[mode, encOwner, encName, encDesc, extra]。
 inline constexpr ca::usize kKasumiBsmArgCount = 5;
+
+// ---- 字符串缓存解密面（kasumi_string_decrypt_pass.cpp 逐字取树版）---------
+
+/// @brief String[] 缓存字段描述符（形态 1：读缓存站点的 getstatic 钉面）。
+///
+/// Kasumi 把 Blowfish 解密后的明文缓存到 `String[]` 静态字段，调用点取
+/// `getstatic owner.f:[Ljava/lang/String;; ldc idx; aaload`。
+inline constexpr std::string_view kKasumiCacheFieldDesc = "[Ljava/lang/String;";
+
+/// @brief byte[][] 密文字段描述符（形态 2：直接解密站点的 getstatic 钉面）。
+///
+/// 密文以 `byte[][]` 静态字段在场，调用点
+/// `getstatic owner.f:[[*B; ldc idx; aaload; dup; arraylength; ldc off;
+/// invokestatic owner.a([BII)String`。
+inline constexpr std::string_view kKasumiCryptFieldDesc = "[[B";
+
+/// @brief 直接解密方法描述符（形态 2 的 invokestatic 钉面；方法名样本相关，
+///        不钉名）。语义：`a(bytes, length, offset) → String`。
+inline constexpr std::string_view kKasumiByteDecryptDesc =
+    "([BII)Ljava/lang/String;";
+
+/// @brief TSV 旁证里 byte[][] 字段的 key 前缀（KasumiStringDumper 用
+///        `"byte:" + 字段名` 与 String[] 缓存字段区分）。
+inline constexpr std::string_view kKasumiByteKeyPrefix = "byte:";
 
 // ---- mode × extra 7 形态表（S3 级判据的数据；越界组合一律拒绝）------------
 

@@ -158,6 +158,18 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.IndyDecode"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.StringCacheFold",
+            [] { return makeFailClosed<StringCacheFoldPass>("grunt.StringCacheFold"); },
+            "Fold Kasumi string-cache sites into constant loads: cache reads"
+            " (getstatic String[]; idx; aaload) and direct-decrypt calls"
+            " (getstatic byte[][]; idx; aaload; dup; arraylength; off;"
+            " invokestatic ([BII)String) are replaced by the plaintext"
+            " constant from an external TSV dump. Feed the dump via --tsv;"
+            " family detection gates the evidence (fail-closed without it).");
+        r.is_err()) {
+        return Err(std::string("grunt.StringCacheFold"));
+    }
     return Ok();
 }
 

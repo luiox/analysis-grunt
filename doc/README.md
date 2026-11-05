@@ -38,6 +38,8 @@
 | [proxy-inline.impl.md](proxy-inline.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
 | [indy-decode.md](indy-decode.md) | Kasumi indy 静态还原：全量 indy 化调用点、XOR key 链、7 形态表的形态 |
 | [indy-decode.impl.md](indy-decode.impl.md) | 本仓的 Scan / Rewrite / Proof，含注入面、插入式锚保留与语料账本 |
+| [string-cache-fold.md](string-cache-fold.md) | Kasumi 字符串缓存：读缓存/直接解密两形态调用点、TSV 旁证路线的形态 |
+| [string-cache-fold.impl.md](string-cache-fold.impl.md) | 本仓的 Scan / Rewrite / Proof，含 `--tsv` 注入面、旁证降级与语料账本 |
 
 ## 约定
 

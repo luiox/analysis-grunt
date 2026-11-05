@@ -23,6 +23,15 @@ extern const char* gActivePass;
 /// 不做任何遍历；空串 = 不注入，interface 路判 fail-closed。
 extern std::string gKasumiJdkPath;
 
+/// @brief `grunt.StringCacheFold` 的 TSV 旁证注入面：CLI 在管线启动前填
+/// KasumiStringDumper 产出的明文表路径（`--tsv`）。文件读取只发生在这里
+/// （adapter 层）；空串 = 不注入，旁证路判 fail-closed（Absent）。
+extern std::string gKasumiTsvPath;
+
+/// @brief 读 TSV 文本文件。@return 是否可读（内容进 out，UTF-8 直通——解析
+///        在 string_cache_fold::parseTsv 纯函数面）。
+bool readTextFile(const std::string& path, std::string& out);
+
 /// @brief 扫描 JDK（jmods/ 优先，lib/ 兜底）收集接口内部名（ACC_INTERFACE）。
 /// 读不了的归档跳过；结果可能为空（调用方按无旁证口径处理）。
 std::unordered_set<std::string> scanJdkInterfaces(const std::string& jdkPath);
@@ -192,6 +201,15 @@ public:
 /// @brief `grunt.IndyDecode`：Kasumi indy 静态还原（key 提取 + bsmArgs 解密 +
 /// 7 形态改写；Era=Kasumi 判定 + JDK 接口旁证注入见 gKasumiJdkPath）。
 class IndyDecodePass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
+/// @brief `grunt.StringCacheFold`：Kasumi 字符串缓存解密结果回填常量池
+/// （两形态改写；Era=Kasumi 判定 + TSV 明文旁证注入见 gKasumiTsvPath）。
+class StringCacheFoldPass final : public mjbase::spi::GlobalPass
 {
 public:
     mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,

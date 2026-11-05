@@ -74,6 +74,9 @@ constexpr const char* kUsage =
     "  -c  pack 配置 JSON 文件（可选，文本整体交给 pack 解析）\n"
     "  --jdk  JDK 根目录（可选）：grunt.IndyDecode 的接口旁证注入面——扫描\n"
     "         jmods/lib 收集接口集，Era=Kasumi 才激活；空 = 接口路 fail-closed\n"
+    "  --tsv  明文表路径（可选）：grunt.StringCacheFold 的 TSV 旁证注入面——\n"
+    "         KasumiStringDumper 产出的 owner/key/index/plaintext 四列明文映射，\n"
+    "         Era=Kasumi 才激活；缺失/不可读 = 旁证降级 fail-closed\n"
     "  --list  列出本 pack 注册的全部 pass 后退出\n"
     "  --sim 类uri#方法名   对真方法跑一次模拟执行后退出（调试用，只读）\n"
     "  --args v1,v2,...     --sim 的实参：十进制 / s:文本 / x:十六进制 / b:装箱整数 / u:（Unknown）\n"
@@ -132,6 +135,7 @@ int main(int argc, char** argv)
     std::string passList;
     std::string configPath;
     std::string jdkPath;
+    std::string tsvPath;
     std::string simTarget;
     std::string simArgs;
     bool        simExec = false;
@@ -152,6 +156,8 @@ int main(int argc, char** argv)
             simDump = true;
         } else if (arg == "--jdk" && i + 1 < args.size()) {
             jdkPath = args[++i];
+        } else if (arg == "--tsv" && i + 1 < args.size()) {
+            tsvPath = args[++i];
         } else if (arg == "-i" && i + 1 < args.size()) {
             input = args[++i];
         } else if (arg == "-o" && i + 1 < args.size()) {
@@ -172,6 +178,10 @@ int main(int argc, char** argv)
     // IndyDecode 的接口旁证注入：文件系统扫描收敛在管线启动前（adapter 在
     // Era=Kasumi 时才消费）。
     grunt::gKasumiJdkPath = jdkPath;
+
+    // StringCacheFold 的 TSV 明文旁证注入：文件读取收敛在管线启动前（adapter
+    // 在 Era=Kasumi 时才消费；缺失/不可读按旁证降级 fail-closed 记账）。
+    grunt::gKasumiTsvPath = tsvPath;
 
     // 探针是独立通路：不进 pack、不进管线，只读容器跑一次模拟执行。
     if (!simTarget.empty()) {

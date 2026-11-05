@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -27,6 +29,7 @@
 #include "grunt/predicate_fold.hpp"
 #include "grunt/proxy_inline.hpp"
 #include "grunt/seed_strip.hpp"
+#include "grunt/string_cache_fold.hpp"
 #include "grunt/trampoline_squeeze.hpp"
 
 #include "mjbase/jar/jar_reader.hpp"
@@ -35,6 +38,7 @@ namespace grunt {
 
 const char* gActivePass = nullptr;
 std::string gKasumiJdkPath;
+std::string gKasumiTsvPath;
 
 namespace {
 
@@ -153,6 +157,16 @@ std::unordered_set<std::string> scanJdkInterfaces(const std::string& jdkPath)
         }
     }
     return interfaces;
+}
+
+bool readTextFile(const std::string& path, std::string& out)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) return false;
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    out = ss.str();
+    return true;
 }
 
 mjbase::spi::PreservedAnalyses ConstantCallPass::run(
@@ -696,6 +710,80 @@ mjbase::spi::PreservedAnalyses IndyDecodePass::run(
                      dirty.rewrittenNew, verdict.ok ? "ok" : "FAILED", verdict.residual);
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.IndyDecode] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses StringCacheFoldPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+
+    // Era 探测（adapter 调一次，结果注入 scan）+ TSV 明文旁证（Era=Kasumi 才
+    // 激活文件读取；残留本体零文件系统副作用，解析走 parseTsv 纯函数面）。
+    string_cache_fold::ScanInput input;
+    input.era = knowledge::probeEra(container);
+    if (input.era == knowledge::Era::Kasumi && !gKasumiTsvPath.empty()) {
+        std::string content;
+        if (readTextFile(gKasumiTsvPath, content)) {
+            (void)string_cache_fold::parseTsv(content, input.plaintexts);
+            input.tsvState = string_cache_fold::TsvState::Loaded;
+        } else {
+            input.tsvState = string_cache_fold::TsvState::Unreadable;
+        }
+    }
+
+    const string_cache_fold::ScanResult scanned =
+        string_cache_fold::scan(container, input);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.StringCacheFold] scan: era=%s tsv=%s total-shape=%zu sites=%zu"
+                     " rejects=%zu (era=%zu tsv=%zu no-plain=%zu) skip-classes=%zu\n",
+                     input.era == knowledge::Era::Kasumi ? "Kasumi" : "Unknown",
+                     input.tsvState == string_cache_fold::TsvState::Loaded ? "loaded"
+                     : input.tsvState == string_cache_fold::TsvState::Unreadable
+                         ? "unreadable"
+                         : "absent",
+                     scanned.totalShapeHits, scanned.sites.size(), scanned.rejects.size(),
+                     scanned.eraBlocked, scanned.tsvBlocked, scanned.noPlaintext,
+                     scanned.classesSkipped);
+        if (std::getenv("GRUNT_STRING_CACHE_FOLD_TRACE") != nullptr) {
+            for (const string_cache_fold::Site& site : scanned.sites) {
+                std::fprintf(stderr,
+                             "[grunt.StringCacheFold]   %s#%zu pc=%u form=%d %s.%s[%d]"
+                             " → \"%s\"\n",
+                             site.uri.c_str(), site.methodIndex, site.anchorSrcPc,
+                             static_cast<int>(site.form), site.owner.c_str(),
+                             site.fieldKey.c_str(), site.index,
+                             site.plaintext.c_str());
+            }
+            for (const string_cache_fold::Reject& rej : scanned.rejects) {
+                std::fprintf(stderr, "[grunt.StringCacheFold]   reject %s#%zu pc=%u: %s\n",
+                             rej.uri.c_str(), rej.methodIndex, rej.anchorSrcPc,
+                             rej.why.c_str());
+            }
+        }
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const string_cache_fold::DirtySet dirty =
+        string_cache_fold::rewrite(container, scanned);
+    const string_cache_fold::ProofResult verdict =
+        string_cache_fold::proof(container, dirty, before, input);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.StringCacheFold] rewrite: classes=%zu sites=%zu failed=%zu"
+                     " roundtrip-skip=%zu (cache-read=%zu direct-decrypt=%zu) proof=%s"
+                     " residual=%zu\n",
+                     dirty.classes, dirty.sites, dirty.failed, dirty.skippedByRoundTrip,
+                     dirty.rewrittenCacheReads, dirty.rewrittenDirectDecrypt,
+                     verdict.ok ? "ok" : "FAILED", verdict.residual);
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.StringCacheFold] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
