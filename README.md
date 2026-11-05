@@ -29,15 +29,16 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.IndyDecode` | Kasumi 混淆器 indy 调用点静态还原：提取每类 XOR 解密器 key，解密 bootstrap 静态参数（encOwner/encName/encDesc），按 mode/extra 表把 7 形态（static/virtual/字段 4 路/ctor）还原成真实 invoke/getfield/putfield/new；virtual 的接口落点走 invokeinterface，插入式站点以 spill/reload + 原地换指令保锚 | 三级分工：S2 选面（BSM 8 参描述符指纹 ∧ 解密器体形 `charAt;LDC;LDC;IXOR;IXOR;i2c`，兼容单层）→ S3 分派（mode/extra 数值表，`Era::Kasumi` 分支唯一合法落点）→ S1 定案（indy desc 与解密结果互证：static 全等 / virtual receiver 槽 / 字段 4 路形状 / ctor 返回 `Lowner;`）；key 链断 / 参数畸形 / 互证不符 / 接口无旁证整站 fail-closed（`SnakeGame-obf.jar` 语料 627 站点全还原，residual=0） | S1 |
 | `grunt.StringCacheFold` | Kasumi 字符串缓存解密结果回填常量池：读缓存站点（`getstatic String[]; idx; aaload`）与直接解密站点（`getstatic byte[][]; idx; aaload; dup; arraylength; off; invokestatic ([BII)String`）锚点原地换 `ldc <明文>`、跨度其余擦除；明文来自外部 TSV 旁证（KasumiStringDumper 产出，`--tsv` 注入，内容不进仓） | S2 选面（getstatic 描述符钉 `[Ljava/lang/String;`/`[[B` ∧ 后继跨度逐条钉形，前缀口径）→ S3 Era 门（TSV 属换代表面，`Era::Kasumi` 分支唯一合法落点）→ S1 定案（明文表 `(owner,key,idx)` 精确命中）；旁证缺席/不可读整站 fail-closed、表无该条目按树版静默跳过 + `noPlaintext` 记账——S1 无旁证不可定案（明文本身就是要回填的内容，树版空映射即整 pass 跳过，语义同源）（`SnakeGame-obf.jar` 语料单跑 168 站点回填 84+84；专链上 `IndyDecode` 先行解锁 3 站 → 171=84+87，与树版逐项同；residual=0） | S1 |
 | `grunt.MetadataStrip` | Kasumi 元数据残留清理三面：`@dev/kasumi/internal/Metadata` 注解摘除（类/字段/方法三张挂载面，其余注解保留）、水印字段整删（带注解字段 ∨ ConstantValue 为水印串：含 `PROTECTED BY Kasumi` / 含 `Gruntpocalypse` / 前缀 `kasumi_`，树版三判据逐字口径）、反 LLM 注入资源删除（`META-INF/Kasumi/*.md` 前缀 + 内容探针五选一，本仓首个资源面写动词）；方法体不碰（引导/解密器交 indy 还原与下游死码清理） | S2 形状钉面（注解描述符全等 ∧ 资源 URI 前缀+`.md` 形状 ∧ 水印串形状）→ S3 Era 门（三面判据全是 Kasumi 版本实现选择，`Era::Kasumi` 分支唯一合法落点，未判整面关闭一个资源不动）→ S1 互证（资源删除要内容探针坐实注入物，形状命中而探针缺席保留 + `resourceCandidates` 盘点；水印字段要 ConstantValue 内容命中）；注解槽过深度预检（mjbase #158），解不开 fail-closed 不摘 + `annoBlocked` 记账；proof 双门：类数不增 + 资源对账（数只减 + 删除清单逐条不在场）（`SnakeGame-obf.jar` 语料 25 注解 + 10 水印字段 + 4 资源全清，residual=0） | S1 |
+| `grunt.StringPoolFold` | Grunt v2 `StringEncrypt` / v3 `StringArrayedEncrypt` 字符串池读点折回：`(getstatic String[] 池; 紧邻常量下标; aaload)` 三元组原地换 `ldc <明文>`（srcPc 保留、跨度其余擦除）；明文由池链静态复算——clinit 分配前导四连 → arrayInit 块序列（v2 literal `ldc+toCharArray` / v3 arrayed `NEWARRAY T_CHAR+CASTORE`，按常量 KIND 判形）→ `([CJI)String` 解密器（classKey 烧体、seed/key 全装载期常量，自逆 XOR 流静态重放），无外部旁证；直线静态蹦床（indy 还原后产物形）跟一跳，indy 藏面 fail-closed；池字段/arrayInit/解密器不在此删（仍被前导引用，压池属后续批次） | S2 选面（三元组形状 + 池字段描述符）→ S1 定案（池链三件套逐字钉形 + 52 条解密器核窗口唯一命中 + 槽位互证 + 逐下标解密）；任一环缺席/歧义/被混淆打碎整类 fail-closed（boar 语料 724 池类全部因 arrayInit 调用被 Grunteon indy 藏面拒绝——S1 证据链不完整不猜，正确行为；residual=0） | S1 |
 
 `S1` = 语义后果：混淆器为了保持功能必须如此，改了自己就坏。`S2` = 结构性清理：判据成立即安全，但混淆器换代可能换形态。`S3` = 面向未来形态的预留面：当前语料无站点，判据按形态写、按换代样本验收。判据不依赖方法名、签名形状、所在类或注入模板，所以 Grunt 换代不需要改这一行。
 
 ## 链序
 
-主线（14 pass，BoogerV2 语料整链验收；FieldAccessProxy 为后续批次接入）：
+主线（15 pass，BoogerV2 语料整链验收；FieldAccessProxy 为后续批次接入）：
 
 ```
-grunt.TrampolineSqueeze,grunt.NumberFold,grunt.IndyFold,grunt.ConstMethod,
+grunt.TrampolineSqueeze,grunt.NumberFold,grunt.StringPoolFold,grunt.IndyFold,grunt.ConstMethod,
 grunt.ProxyInline,grunt.FieldAccessProxy,grunt.ConstantCall,grunt.PredicateFold,grunt.SeedStrip,
 grunt.ConstValuePromote,grunt.DeadCode,grunt.DeadMember,grunt.FlagsStrip,
 grunt.BoogerAnnoStrip
@@ -53,6 +54,13 @@ grunt.BoogerAnnoStrip
   装载——藏形跨度夹在实参区里，下游整站失明。
 - **`ConstantCall` 排在折叠/清死之前**：它把调用点变成常量字面量，下游的
   `PredicateFold` / `ConstValuePromote` / 死码删除才有东西可折可清。
+
+`StringPoolFold` 与 `NumberFold` 同组（值还原面），排在实参收集面之前：
+折出的 `ldc <明文>` 可继续喂 `ConstantCall` / `PredicateFold` 的常量实参
+收集；判据自证（池链三件套 + 解密器窗口），无前置依赖，三元组内 NOP
+跳过兼容 squeeze 遗留。indy 藏面（Grunteon 全链产物）要在其上游把 indy
+还原后才能接通（见 [doc/string-pool-fold.impl.md](doc/string-pool-fold.impl.md)
+语料账本）。
 
 形状纪律（`PredicateFold` 写回契约的前提，见 doc/predicate-fold.impl.md）：
 改写不得引入无条件跳转、不得新增合并点——HotSpot 线性走查要求无条件跳转

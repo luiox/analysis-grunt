@@ -85,7 +85,7 @@ v3 共 11 个样例文件（v3-01 ~ v3-10，其中 native 面两个类拆 v3-09/
 
 **判据分级**：S1——与 v2 StringEncrypt 同级：池读三元组（`GETSTATIC` String[] + 常量下标 + `AALOAD`）编译期可建映射，读取点换 `ldc` 明文是语义恒等；carray 形态下密文在 `arrayInit` 的 `CASTORE` 序列里，仍全为装载期常量。
 
-**本仓现状**：无处理（还原缺口 #1 的 v3 面，缺口清单 P1）。morpher obf-forms §3.1 的池读三元组判据两代共用。
+**本仓现状**：已处理——`grunt.StringPoolFold` 的 arrayed 面（缺口 #1 闭环）：按常量 KIND 判形（`carray` 是配置不是版本键），`NEWARRAY T_CHAR` 直存码元解密折回（见 doc/string-pool-fold.md）。indy 藏面依赖上游 indy 还原（缺口 #2）接通。morpher obf-forms §3.1 的池读三元组判据两代共用。
 
 **样例**（carray 形态；本样例走 `validation=off` 通道，误报记录见 v2 文档 §0.3）：
 

@@ -75,7 +75,7 @@ v2 是 ASM `ClassNode` 体系上的 transformer 管线：`grunt-main` 装载 jar
 
 **判据分级**：S1——`owner.field[index] → 明文` 映射编译期可建（seed/key/classKey 全是装载期常量、解密器纯函数、store 序列固定），读取点换 `ldc` 明文是语义恒等；换代表现在加密算法内部（判据不读算法细节，只读池结构 + 调用点三元组）。
 
-**本仓现状**：无处理（还原缺口 #1，缺口清单 P1）。池读三元组形状判据在 morpher obf-forms §3.1 已定案。
+**本仓现状**：已处理——`grunt.StringPoolFold`（缺口 #1 闭环）：池读三元组折回 `ldc` 明文，池链三件套结构自证 + 自逆 XOR 流静态复算（见 doc/string-pool-fold.md）。Grunteon 全链产物把 arrayInit 调用藏进 indy 蹦床，该形态依赖上游 indy 还原（缺口 #2）接通。池读三元组形状判据在 morpher obf-forms §3.1 已定案。
 
 **样例**（v2 literal 密文形态，`toCharArray` 进解密器，desc `([CJI)Ljava/lang/String;`）：
 

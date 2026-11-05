@@ -32,6 +32,7 @@
 #include "grunt/proxy_inline.hpp"
 #include "grunt/seed_strip.hpp"
 #include "grunt/string_cache_fold.hpp"
+#include "grunt/string_pool_fold.hpp"
 #include "grunt/trampoline_squeeze.hpp"
 
 #include "mjbase/jar/jar_reader.hpp"
@@ -795,6 +796,61 @@ mjbase::spi::PreservedAnalyses StringCacheFoldPass::run(
                      verdict.ok ? "ok" : "FAILED", verdict.residual);
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.StringCacheFold] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses StringPoolFoldPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+
+    // 无旁证注入面：判据全为容器自证事实（池链结构 + 解密器窗口），Era 不
+    // 消费——v2/v3 共用全部形态常量，形态内无版本敏感判据（缺口 #15 不在此）。
+    const string_pool_fold::ScanInput input;
+    const string_pool_fold::ScanResult scanned = string_pool_fold::scan(container, input);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.StringPoolFold] scan: pool-classes=%zu triple-hits=%zu"
+                     " sites=%zu rejects=%zu (arrayinit=%zu decryptor=%zu idx-miss=%zu)"
+                     " skip-classes=%zu\n",
+                     scanned.poolClasses, scanned.tripleHits, scanned.sites.size(),
+                     scanned.rejects.size(), scanned.arrayInitBlocked,
+                     scanned.decryptorBlocked, scanned.idxMissing, scanned.classesSkipped);
+        if (std::getenv("GRUNT_STRING_POOL_FOLD_TRACE") != nullptr) {
+            for (const string_pool_fold::Site& site : scanned.sites) {
+                std::fprintf(stderr,
+                             "[grunt.StringPoolFold]   %s#%zu pc=%u form=%d %s.%s[%d]"
+                             " → \"%s\"\n",
+                             site.uri.c_str(), site.methodIndex, site.anchorSrcPc,
+                             static_cast<int>(site.form), site.owner.c_str(),
+                             site.fieldName.c_str(), site.index, site.plaintext.c_str());
+            }
+            for (const string_pool_fold::Reject& rej : scanned.rejects) {
+                std::fprintf(stderr, "[grunt.StringPoolFold]   reject %s#%zu pc=%u: %s\n",
+                             rej.uri.c_str(), rej.methodIndex, rej.anchorSrcPc,
+                             rej.why.c_str());
+            }
+        }
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const string_pool_fold::DirtySet dirty = string_pool_fold::rewrite(container, scanned);
+    const string_pool_fold::ProofResult verdict =
+        string_pool_fold::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.StringPoolFold] rewrite: classes=%zu sites=%zu failed=%zu"
+                     " roundtrip-skip=%zu (literal=%zu arrayed=%zu) proof=%s residual=%zu\n",
+                     dirty.classes, dirty.sites, dirty.failed, dirty.skippedByRoundTrip,
+                     dirty.foldedLiteral, dirty.foldedArrayed, verdict.ok ? "ok" : "FAILED",
+                     verdict.residual);
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.StringPoolFold] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

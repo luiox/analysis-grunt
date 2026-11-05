@@ -43,6 +43,8 @@
 | [string-cache-fold.impl.md](string-cache-fold.impl.md) | 本仓的 Scan / Rewrite / Proof，含 `--tsv` 注入面、旁证降级与语料账本 |
 | [metadata-strip.md](metadata-strip.md) | Kasumi 元数据残留：`@Metadata` 注解、水印字段、反 LLM 注入资源的形态 |
 | [metadata-strip.impl.md](metadata-strip.impl.md) | 本仓的 Scan / Rewrite / Proof，含资源删除动词、资源对账门与语料账本 |
+| [string-pool-fold.md](string-pool-fold.md) | Grunt v2/v3 字符串池：池读三元组、池链三件套、自逆 XOR 流静态复算的形态 |
+| [string-pool-fold.impl.md](string-pool-fold.impl.md) | 本仓的 Scan / Rewrite / Proof，含算法源锚点、蹦床跟随与语料账本 |
 | [kasumi-verify.md](kasumi-verify.md) | Kasumi 专链端到端复现记录：五项门逐项数字、与树版口径差异点、通用链取证 |
 
 ## obf 行为账

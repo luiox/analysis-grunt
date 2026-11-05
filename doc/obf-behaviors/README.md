@@ -24,7 +24,7 @@
 | ConstPoolEncrypt | S1 | 部分 | NumberFold + ConstValuePromote 折伴生类（缺调用点回填 → 缺口 #5） |
 | Controlflow | S1/S2 | 部分 | TrampolineSqueeze / PredicateFold / NumberFold / DeadCode / SeedStrip（缺 junk 调用残留、陷进环 → 缺口 #10/#14） |
 | InvokeDynamic | S1 | 预留 | IndyFold（S3，语料 foldable=0；直接解密还原 → 缺口 #2） |
-| StringEncrypt | S1 | 无处理 | 缺口 #1 |
+| StringEncrypt | S1 | 已处理 | StringPoolFold（literal 形折叠；供给链被 indy 藏面时依赖上游还原，见 doc/string-pool-fold.impl.md 语料账本） |
 | ConstBuilder | S1 | 无处理 | 缺口 #6 |
 | ArithmeticEncrypt | S2 | 无处理 | 缺口 #7 |
 | MethodExtractor | S2 | 无处理 | 缺口 #9 |
@@ -49,7 +49,7 @@
 | FakeSyntheticBridge | S2 | 已处理 | FlagsStrip |
 | ControlflowJump | S1/S2 | 部分 | TrampolineSqueeze / PredicateFold / NumberFold / DeadCode（缺 processor 调用门与异常桥 → 缺口 #10） |
 | ReferenceObfuscate | S1 | 预留 | IndyFold（S3；直接解密 + `@Metadata` 还原 → 缺口 #2） |
-| StringArrayedEncrypt | S1 | 无处理 | 缺口 #1 |
+| StringArrayedEncrypt | S1 | 已处理 | StringPoolFold（arrayed 形折叠；供给链被 indy 藏面时依赖上游还原，见 doc/string-pool-fold.impl.md 语料账本） |
 | InvokeDispatcher | S2 | 无处理 | 缺口 #3 |
 | ControlflowFlattening（含 SSA exp） | S1/S2 | 无处理 | 缺口 #4 |
 | ArithmeticSubstitute（Hidden） | S2 | 无处理 | 缺口 #7 |
@@ -74,7 +74,7 @@
 
 **P1——还原主链**（直接决定 grunt 闭环对真实产物的可用性，都是语料高频面）：
 
-1. **string-encrypt 还原面**：v2 `StringEncrypt` 与 v3 `StringArrayedEncrypt` 的池读三元组（`GETSTATIC String[]` + 常量下标 + `AALOAD`）折回 `ldc` 明文；seed/key/classKey 全静态在场，解密器按结构直接解（不走 ConstantCall）。v2/v3 同一 residue 承载。
+1. ~~string-encrypt 还原面~~（已闭环）：`grunt.StringPoolFold` 承载（v2/v3 同一 residue），池链三件套结构自证 + 自逆 XOR 流静态复算。boar 语料实证：Grunteon 全链产物把 clinit 的 arrayInit 调用藏进 indy 蹦床，折叠面在 indy 还原（缺口 #2）打通后才能接通。
 2. **indy 直接解密还原**：v2 `InvokeDynamic` simple/heavy 与 v3 `ReferenceObfuscate` simple/heavy——按 BSM 参数结构直接解密三段串（v2 heavy 另需读 `@GruntMetadata`/v3 `@Metadata` 注解 `mv/d1/d2`，`data1 % 59557 == magic2` 互证），调用点回填真实 invoke；`IndyFold`（S3 模拟面）保留为兜底。
 3. **InvokeDispatcher 调用点反查**：按调用点 key 常量在分发器键表定位 case、取转发目标回填真实 invoke、删分发器（default 回跳方法头是识别锚点）。
 4. **CFF 反摊平**：v3 `ControlflowFlattening`/SSA 的 dispatcher 岛识别 + 单岛反摊平（state → 块序重建）+ **alias-face 剪枝**（同一真实块的多键别名只留活键）；key processor 藏形由 NumberFold 先解锁。

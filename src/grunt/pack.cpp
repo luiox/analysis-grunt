@@ -182,6 +182,20 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.MetadataStrip"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.StringPoolFold",
+            [] { return makeFailClosed<StringPoolFoldPass>("grunt.StringPoolFold"); },
+            "Fold Grunt v2 StringEncrypt / v3 StringArrayedEncrypt string-pool"
+            " read sites (getstatic String[] pool; const index; aaload) back into"
+            " the decrypted ldc plaintext. The per-class pool chain (clinit"
+            " allocation prelude, arrayInit store blocks, ([CJI)String decryptor"
+            " with the class key burned in) is verified by structure before any"
+            " rewrite; the supply chain itself stays intact (still referenced by"
+            " the clinit prelude) for a dedicated pool-drain pass. No external"
+            " evidence needed.");
+        r.is_err()) {
+        return Err(std::string("grunt.StringPoolFold"));
+    }
     return Ok();
 }
 
