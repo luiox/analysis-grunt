@@ -20,6 +20,7 @@
 #include "grunt/container.hpp"
 #include "grunt/dead_code.hpp"
 #include "grunt/dead_member.hpp"
+#include "grunt/dispatcher_restore.hpp"
 #include "grunt/field_access_proxy.hpp"
 #include "grunt/flags_strip.hpp"
 #include "grunt/indy_decode.hpp"
@@ -979,6 +980,64 @@ mjbase::spi::PreservedAnalyses MetadataStripPass::run(
     if (dirty.uris.empty() && dirty.removedResources.empty()) {
         return mjbase::spi::PreservedAnalyses::all();
     }
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses DispatcherRestorePass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+
+    // 无旁证注入面：判据全为容器自证事实（键表结构 + 调用点形状），Era 不
+    // 消费——v3-only 形态（grunt2 无此 transformer），形态锚自证家族。
+    const dispatcher_restore::ScanInput input;
+    const dispatcher_restore::ScanResult scanned =
+        dispatcher_restore::scan(container, input);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.DispatcherRestore] scan: dispatchers=%zu dispatcher-rejected=%zu"
+                     " sites=%zu rejects=%zu (key-not-const=%zu key-not-in-table=%zu"
+                     " pad-mismatch=%zu dispatcher-blocked=%zu) skip-classes=%zu\n",
+                     scanned.dispatchers, scanned.dispatcherRejected, scanned.sites.size(),
+                     scanned.rejects.size(), scanned.keyNotConst, scanned.keyNotInTable,
+                     scanned.padMismatch, scanned.dispatcherBlocked, scanned.classesSkipped);
+        if (std::getenv("GRUNT_DISPATCHER_RESTORE_TRACE") != nullptr) {
+            for (const dispatcher_restore::Site& site : scanned.sites) {
+                std::fprintf(stderr,
+                     "[grunt.DispatcherRestore]   %s#%zu pc=%u key=%d pads=%u"
+                     " → %s %s.%s%s\n",
+                     site.uri.c_str(), site.methodIndex, site.callSrcPc, site.key,
+                     site.padCount, site.target.isVirtual ? "virtual" : "static",
+                             site.target.owner.c_str(), site.target.name.c_str(),
+                             site.target.desc.c_str());
+            }
+            for (const dispatcher_restore::Reject& rej : scanned.rejects) {
+                std::fprintf(stderr, "[grunt.DispatcherRestore]   reject %s#%zu pc=%u: %s\n",
+                             rej.uri.c_str(), rej.methodIndex, rej.anchorSrcPc,
+                             rej.why.c_str());
+            }
+        }
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const dispatcher_restore::DirtySet dirty =
+        dispatcher_restore::rewrite(container, scanned);
+    const dispatcher_restore::ProofResult verdict =
+        dispatcher_restore::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.DispatcherRestore] rewrite: classes=%zu sites=%zu failed=%zu"
+                     " roundtrip-skip=%zu (static=%zu virtual=%zu) proof=%s residual=%zu\n",
+                     dirty.classes, dirty.sites, dirty.failed, dirty.skippedByRoundTrip,
+                     dirty.rewrittenStatic, dirty.rewrittenVirtual,
+                     verdict.ok ? "ok" : "FAILED", verdict.residual);
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.DispatcherRestore] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
     return mjbase::spi::PreservedAnalyses::none();
 }
 

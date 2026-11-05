@@ -38,7 +38,7 @@ v3 是 Kotlin 重写的管线：`Grunteon` 持 `transformers: List<Pair<Transfor
 | 13 | Controlflow | ControlflowFlatteningSSA（Hidden） | SSA IR 摊平（exp 实验面） | S1/S2 | 无处理 |
 | 14 | Controlflow | FlowIRRoundTrip（Hidden） | 方法体经 Flow IR 往返 | 伴随面 | 伴随面（infra） |
 | 15 | Controlflow | SSARoundTrip（Hidden） | 方法体经 SSA IR 往返 | 伴随面 | 伴随面（infra） |
-| 16 | Redirect | InvokeDispatcher | 同返回类型调用点合并进 tableswitch 分发器 | S2 | 无处理 |
+| 16 | Redirect | InvokeDispatcher | 同返回类型调用点合并进 tableswitch 分发器 | S2 | 已处理（DispatcherRestore，缺口 #3） |
 | 17 | Redirect | InvokeProxy | 方法调用换 static 转发代理 | S2 | 已处理（ProxyInline） |
 | 18 | Redirect | FieldAccessProxy | 字段访问换 getter/setter 代理 | S2 | 已处理（FieldAccessProxy） |
 | 19 | Renaming | ClassRenamer | 类改名 | 清理面 | 无处理（改名面） |
@@ -352,7 +352,7 @@ v2 `ArithmeticEncrypt` 的 v3 同构（`encrypt/ArithmeticSubstitute.kt`，标 `
 
 **判据分级**：S2——分发器表 + 连续键 + default 回跳头 + case 转发关系全是结构事实，可静态重建 key → case → 真目标映射。
 
-**本仓现状**：无处理。还原缺口（缺口清单 P1）：调用点反查——按调用点 key 常量在分发器键表定位 case、取转发目标直接回填真实 invoke 并删分发器；morpher obf-forms §3.3 已给形态判据。
+**本仓现状**：`grunt.DispatcherRestore` 承载（缺口 #3 闭环，见 doc/dispatcher-restore.md）。头锚（ILOAD key 槽 + TABLESWITCH default 回跳方法头 + 无异常表）钉分发器、逐 case 直线转发体（载实参 + 唯一 invoke + ret 型 return）重建键 → 目标表、调用点 key 常量反查回填真实 invoke——调用指令原地换（srcPc 保留）、末段补位/key `eraseBatch` 擦除（null 跑 ∈ [addNulls, N] 互证，原实参尾部 null 字面量保留）；分发器本体与键表不删，交 DeadCode/DeadMember 回收。纯常量键表直查，不需要 jsim；v2 无此 transformer，无 Era 门。正例罐（Grunteon 仅 InvokeDispatcher 自产）1181 站点回填 1081，residual=49 为宿主方法 Strict 帧重算既有冲突（无编辑探针复现）fail-closed；boar 全链罐不覆盖（config 顺序 InvokeDispatcher 先于 CFF/ReferenceObfuscate，5827 desc 形候选全数头锚缺席），组合链 `IndyRestore,DispatcherRestore` corpus-regress 绿 + JVM verify 零新增。
 
 **样例**：
 
@@ -727,14 +727,15 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（`TrashClassProvider
 ```text
 已处理：DeclaredFieldsExtract→ConstValuePromote、NumberBasicEncrypt→NumberFold（全覆盖）、
         InvokeProxy→ProxyInline、FieldAccessProxy→FieldAccessProxy、
-        FakeSyntheticBridge→FlagsStrip
+        FakeSyntheticBridge→FlagsStrip、StringArrayedEncrypt→StringPoolFold、
+        InvokeDispatcher→DispatcherRestore（缺口 #3）
 部分  ：ControlflowJump→TrampolineSqueeze/PredicateFold/NumberFold/DeadCode
         （processor 调用门、异常桥缺口）
-预留  ：ReferenceObfuscate→IndyFold（S3，语料 foldable=0）
-无处理：StringArrayedEncrypt、InvokeDispatcher、ControlflowFlattening（含 SSA）、
-        ArithmeticSubstitute、StringEqualsOptimize、ParameterObfuscate、
-        TrashClassGenerator、RuntimeMaterial、AntiLLM、Watermark、DecompilerCrasher、
-        垃圾类、改名族
+        ReferenceObfuscate→IndyRestore（缺口 #2，materialLane/keyMissing fail-closed）
+        + IndyFold（S3 兜底）
+无处理：ControlflowFlattening（含 SSA）、ArithmeticSubstitute、StringEqualsOptimize、
+        ParameterObfuscate、TrashClassGenerator、RuntimeMaterial、AntiLLM、Watermark、
+        DecompilerCrasher、垃圾类、改名族
 伴随面：FlowIRRoundTrip、SSARoundTrip、NativePreProcessor、ReflectionSupport、MappingApplier
 检测-only：NativeCandidate、NativePipeline（不可静态还原）
 清理面：MethodInliner、ClassShrink、KotlinClassShrink、DeadCodeRemove、EnumOptimize、

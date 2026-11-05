@@ -245,4 +245,14 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
+/// @brief `grunt.DispatcherRestore`：Grunt v3 InvokeDispatcher 调用点反查
+/// 回填真实 invoke（键表结构自证判据，无外部旁证注入面；v3-only，Era 不
+/// 消费——分发器本体与键表不删，交死码/死成员/压池回收）。
+class DispatcherRestorePass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
 }   // namespace grunt

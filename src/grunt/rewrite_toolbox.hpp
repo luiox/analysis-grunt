@@ -8,6 +8,8 @@
 /// 面改写动词，metadata_strip 首用；对账面在 proof_toolbox）。
 #pragma once
 
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <string_view>
@@ -175,7 +177,14 @@ bool mutateMethodWithFrames(jbc::ir::ClassSession& s, ca::usize methodIndex,
         // resolver 必注入：SMT 摘除后由 rewire 再生，不会落无帧类。
         (void)mjbase::spi::frame_rewire::prepareNestedAttrsForLayout(s, *cu);
         auto lowered = jbc::ir::lowerMethod(s, methodIndex);
-        if (lowered.is_err()) return false;
+        if (lowered.is_err()) {
+            // GRUNT_FRAME_TRACE=1：打印 lower 失败原因（帧链失败定位面）。
+            if (std::getenv("GRUNT_FRAME_TRACE") != nullptr) {
+                std::fprintf(stderr, "[grunt.Frame] lower err: %s\n",
+                             jbc::ir::to_string(lowered.unwrap_err()));
+            }
+            return false;
+        }
 
         const jbc::ir::ClassUnit& unit   = s.unit();
         const jbc::ir::MethodUnit& mu    = unit.methods[methodIndex];
@@ -190,7 +199,12 @@ bool mutateMethodWithFrames(jbc::ir::ClassSession& s, ca::usize methodIndex,
             mjbase::spi::MethodTarget{key, mu.id, name, desc, mu.access, s}, *cu};
         mjbase::spi::frame_rewire::rewireFramesAfterLower(s, scope, resolver);
         return true;
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        // GRUNT_FRAME_TRACE=1：打印 Strict 帧重算异常（帧链失败定位面；
+        // 恒 false 语义不变——诊断只在 env 门下多打一行 stderr）。
+        if (std::getenv("GRUNT_FRAME_TRACE") != nullptr) {
+            std::fprintf(stderr, "[grunt.Frame] rewire exc: %s\n", e.what());
+        }
         return false;
     }
 }

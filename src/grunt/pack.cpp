@@ -211,6 +211,22 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.IndyRestore"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.DispatcherRestore",
+            [] { return makeFailClosed<DispatcherRestorePass>("grunt.DispatcherRestore"); },
+            "Statically restore Grunt v3 InvokeDispatcher call sites: recognize"
+            " per-class tableswitch dispatcher methods by their head anchor"
+            " (ILOAD key slot followed by a tableswitch whose default branches"
+            " back to the method entry), rebuild the contiguous key-to-target"
+            " table from each case's forwarding invoke, then swap each call"
+            " site (padding nulls plus a constant access key followed by"
+            " invokestatic of the dispatcher) in place back to the real"
+            " invokestatic/virtual target. The dispatcher method and its table"
+            " stay intact and become dead code for downstream DeadCode/"
+            "DeadMember.");
+        r.is_err()) {
+        return Err(std::string("grunt.DispatcherRestore"));
+    }
     return Ok();
 }
 

@@ -131,4 +131,27 @@ inline constexpr std::string_view kGruntMetadataPairSep = "<>";
 ///        只按窗口形状自证，不消费本位移值；锚点留给缺口 #15 联动面）。
 inline constexpr ca::u32 kGruntMaterialKeySlotShift = 32;
 
+// ---- InvokeDispatcher 分发器形态（v3 专属；grunt3 InvokeDispatcher.kt
+//      生成面。grunt2 分支 redirect/ 下无此 transformer——v3-only，见
+//      doc/dispatcher-restore.md）--------------------------------------------
+
+/// @brief 分发器逐槽参数类型（生成面 `repeat(maxLoadOp) { desc +=
+///        "Ljava/lang/Object;" }` 逐字面）。
+inline constexpr std::string_view kGruntDispatcherParamType = "Ljava/lang/Object;";
+
+/// @brief 分发器 key 参数类型（desc 尾参 `...I)$returnDesc` 逐字面）。
+inline constexpr std::string_view kGruntDispatcherKeyType = "I";
+
+/// @brief 分发器生成名前缀（`dispatcher_<10 随机字符>`；记录性常量——改名
+///        后不存活，不作判据）。
+inline constexpr std::string_view kGruntDispatcherNamePrefix = "dispatcher_";
+
+/// @brief 分发器单组转发目标上限（`MaxHandles` 默认值；记录性常量——可配置，
+///        不作判据）。
+inline constexpr ca::i32 kGruntDispatcherMaxHandles = 10;
+
+/// @brief 分发器同返回类型分组的最小调用点数（生成面 `group.filter { 
+///        it.value.size > 1 }`——键表 case 数 ≥ 2 是生成面事实，作形状门）。
+inline constexpr ca::i32 kGruntDispatcherMinCases = 2;
+
 }   // namespace grunt::knowledge
