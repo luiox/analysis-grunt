@@ -24,6 +24,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.NumberFold` | 把藏形数值常量跨度折回单条常量装载：XOR 隐匿 int 走廊（`I2L..LXOR..L2I` / `L2I..IXOR`）、基 32 `Long.parseUnsignedLong` long 跨度、`intBitsToFloat`/`longBitsToDouble` 位形包装 | 跨度逐条吻合 ∧ 操作数全为紧邻纯常量装载（基 32 键严格解析、radix 恒 32）∧ 包装引用三元组与实参类型精确吻合 ∧ 跨度中段无标签（合并点放弃） | S2 |
 | `grunt.ProxyInline` | 把 static 代理方法（体 = 实参逐槽过手 + 单次 static/virtual invoke + 匹配返回）的调用点原地改指回真实目标；内联后代理变零引用死码交下游 DeadMember/DeadCode | 方法体形状（直线无标签无异常表 ∧ 实参逐槽类型/槽位精确 ∧ 转发只认 invokestatic/invokevirtual ∧ static 目标描述符全等 / virtual 目标首参=接收者）∧ 引用普查有调用点 ∧ 调用点越出 owner 类时 owner `<clinit>` 中性（初始化暴露门）；不依赖方法名/标志/家族名 | S2 |
 | `grunt.FieldAccessProxy` | 把 static 字段代理方法（体 = 实参逐槽过手 + 单次字段访问 + 匹配返回）的调用点原地改回真实 get/put 字段；改回后代理变零引用死码交下游 DeadMember/DeadCode | 方法体形状（直线无标签无异常表 ∧ 实参逐槽类型/槽位精确 ∧ 唯一字段访问与描述符互证：描述符恰为按该字段该有的形状）∧ 引用普查有调用点 ∧ 调用点越出 owner 类时 owner `<clinit>` 中性（初始化暴露门，与 constant_call/proxy_inline 单源）；不依赖方法名/标志/家族名 | S2 |
+| `grunt.IndyDecode` | Kasumi 混淆器 indy 调用点静态还原：提取每类 XOR 解密器 key，解密 bootstrap 静态参数（encOwner/encName/encDesc），按 mode/extra 表把 7 形态（static/virtual/字段 4 路/ctor）还原成真实 invoke/getfield/putfield/new；virtual 的接口落点走 invokeinterface，插入式站点以 spill/reload + 原地换指令保锚 | 三级分工：S2 选面（BSM 8 参描述符指纹 ∧ 解密器体形 `charAt;LDC;LDC;IXOR;IXOR;i2c`，兼容单层）→ S3 分派（mode/extra 数值表，`Era::Kasumi` 分支唯一合法落点）→ S1 定案（indy desc 与解密结果互证：static 全等 / virtual receiver 槽 / 字段 4 路形状 / ctor 返回 `Lowner;`）；key 链断 / 参数畸形 / 互证不符 / 接口无旁证整站 fail-closed（`SnakeGame-obf.jar` 语料 627 站点全还原，residual=0） | S1 |
 
 `S1` = 语义后果：混淆器为了保持功能必须如此，改了自己就坏。`S2` = 结构性清理：判据成立即安全，但混淆器换代可能换形态。`S3` = 面向未来形态的预留面：当前语料无站点，判据按形态写、按换代样本验收。判据不依赖方法名、签名形状、所在类或注入模板，所以 Grunt 换代不需要改这一行。
 
@@ -60,6 +61,11 @@ grunt.BoogerAnnoStrip
 `ConstValuePromote` 回填 `ConstantValue` 后 `clinit` 变空，也会解锁新的
 `DeadMember` 删除面。判据是 `PredicateFold` 站点归零。
 
+**Kasumi 专面不入主线**：`grunt.IndyDecode` 由 `probeEra` 判家
+（`Era::Kasumi` 才激活），单罐验收（`SnakeGame-obf.jar`），与 BoogerV2
+主线互不重叠——Kasumi BSM 的 8 参签名 + find* 分派不在 `IndyFold` 的纯
+目标子集内，同一 jar 上两者不争站点。
+
 
 ## 全局不变量
 
@@ -90,7 +96,7 @@ xmake build grunt_cli
 
 直接调构建产物，别用 `xmake run grunt_cli --`：xmake 会吞掉/改写一部分参数（引号与逗号尤其容易走样）。
 
-`-p` 逗号分隔 pass 名（`grunt.` 前缀）；`-c pack.json` 把配置文本整体交给 pack 解析；`--list` 列出全部可用 pass。
+`-p` 逗号分隔 pass 名（`grunt.` 前缀）；`-c pack.json` 把配置文本整体交给 pack 解析；`--list` 列出全部可用 pass；`--jdk <JDK 根目录>` 是 `grunt.IndyDecode` 的接口旁证注入面（扫 jmods/lib 收集接口全集，Era=Kasumi 才激活；不传则容器外落点的 virtual 站点 fail-closed）。
 
 单轮不收敛，要整链重复跑（输出喂回输入）直到 `PredicateFold` 站点归零：
 
@@ -111,7 +117,7 @@ done
 xmake f --with_tests=y && xmake build grunt_unittest && xmake run grunt_unittest
 ```
 
-`test/unittest/constant_call_test.cpp` 覆盖三段判据：正例（短形态值、需落池的值）+ 逐条反证（非 static / void / synchronized / 实参非常量 / 目标不纯 / 目标不在容器 / 类初始化非空），改写侧断言「调用消失、字面量出现、实参装载全清」，proof 侧断言类数门。`flags_strip_test.cpp` 覆盖标志判据（清位面、`$` 名保留、旧类版本、枚举跳过、逐位精确），`const_method_test.cpp` 覆盖常量方法判据（基元 `.TYPE` 内联、数值/ null 体、非 `.TYPE` getstatic 拒绝、宿主 `<clinit>` 纯性门），`predicate_fold_test.cpp` 覆盖常量谓词判据（分支裁决、`switch` 键裁决、操作数区中段有标签则放弃、改写后帧链自洽），`number_fold_test.cpp` 覆盖藏形数值判据（XOR 走廊两式、基 32 long、位形包装、radix/键面/被调/中段标签反证、折叠后不可再成站点），`proxy_inline_test.cpp` 覆盖代理方法判据（static/virtual 目标、宽类型槽走、零引用静默、体形/描述符/synchronized/初始化暴露反证、调用点原地改指、改写后再扫站点归零）。夹具一律用 jasm 源码现场汇编（`JvmJasmService::assemble`），不落二进制、不依赖语料目录。
+`test/unittest/constant_call_test.cpp` 覆盖三段判据：正例（短形态值、需落池的值）+ 逐条反证（非 static / void / synchronized / 实参非常量 / 目标不纯 / 目标不在容器 / 类初始化非空），改写侧断言「调用消失、字面量出现、实参装载全清」，proof 侧断言类数门。`flags_strip_test.cpp` 覆盖标志判据（清位面、`$` 名保留、旧类版本、枚举跳过、逐位精确），`const_method_test.cpp` 覆盖常量方法判据（基元 `.TYPE` 内联、数值/ null 体、非 `.TYPE` getstatic 拒绝、宿主 `<clinit>` 纯性门），`predicate_fold_test.cpp` 覆盖常量谓词判据（分支裁决、`switch` 键裁决、操作数区中段有标签则放弃、改写后帧链自洽），`number_fold_test.cpp` 覆盖藏形数值判据（XOR 走廊两式、基 32 long、位形包装、radix/键面/被调/中段标签反证、折叠后不可再成站点），`proxy_inline_test.cpp` 覆盖代理方法判据（static/virtual 目标、宽类型槽走、零引用静默、体形/描述符/synchronized/初始化暴露反证、调用点原地改指、改写后再扫站点归零），`indy_decode_test.cpp` 覆盖 Kasumi indy 判据（static 原地换 invokestatic、virtual 插 spill/checkcast 后走 invokeinterface、Era 未判 / key 链断 / 参数畸形 / desc 互证不符 / 接口无旁证五态拒绝且容器字节逐位不动、proof 类数门 + residual 归零）。夹具一律用 jasm 源码现场汇编（`JvmJasmService::assemble`），不落二进制、不依赖语料目录。
 
 语料回归：
 
@@ -137,5 +143,6 @@ xmake build grunt_cli && ./test/corpus-regress.sh
 - [doc/number-fold.md](doc/number-fold.md) / [.impl.md](doc/number-fold.impl.md)：藏形数值常量跨度。
 - [doc/indy-fold.md](doc/indy-fold.md) / [.impl.md](doc/indy-fold.impl.md)：indy 解密调用点。
 - [doc/proxy-inline.md](doc/proxy-inline.md) / [.impl.md](doc/proxy-inline.impl.md)：代理方法内联。
+- [doc/indy-decode.md](doc/indy-decode.md) / [.impl.md](doc/indy-decode.impl.md)：Kasumi indy 静态还原。
 
 口径分工：`doc/` 只写**通用技术形态**与实现；具体样本的取证过程（jar、类名、指令偏移、折叠期望值）记在仓外研究笔记，不进本仓。

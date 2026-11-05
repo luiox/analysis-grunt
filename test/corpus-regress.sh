@@ -9,6 +9,8 @@
 #      JAR_TIMEOUT=120 单罐上限秒数（0 = 不限时）；超时记 FAIL run 继续下一罐
 #      ONLY=<glob> 只跑名字匹配的罐（bash case 语义：? * [] 都是通配符，全名匹配 basename；
 #                  字面 [ 要转义成 \[，或设 ONLY_LITERAL=1 按字面匹配免转义）；空 = 全跑
+#      EXTRA_ARGS="--jdk <path>" 追加给 CLI 的额外参数（空格分隔，如 IndyDecode
+#                  的接口旁证注入面）；路径含空格不支持
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -53,7 +55,8 @@ for jar in "$CORPUS"/*.jar; do
     dst="$OUT/$name.out.jar"
 
     # 单罐上限：循环互卡 / 死循环罐用 timeout 兜底，超时记 FAIL run 继续。
-    if ! timeout "${JAR_TIMEOUT:-0}" "$CLI" -i "$jar" -o "$dst" -p "$PASSES" 2>"$OUT/$name.err"; then
+    # shellcheck disable=SC2086 —— EXTRA_ARGS 有意按空白拆分。
+    if ! timeout "${JAR_TIMEOUT:-0}" "$CLI" -i "$jar" -o "$dst" -p "$PASSES" ${EXTRA_ARGS:-} 2>"$OUT/$name.err"; then
         # 噪声分离：文件在场但 CLI 报 NotFound 是 Windows ANSI argv 对非 ASCII
         # 罐名的编码错配（导入口拿错路径），不是本链的 run 失败——记 SKIP 不计账。
         if grep -q "NotFound" "$OUT/$name.err" 2>/dev/null && [ -e "$jar" ]; then

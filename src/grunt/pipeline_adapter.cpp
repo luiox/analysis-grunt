@@ -4,7 +4,12 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <unordered_set>
+#include <vector>
 
 #include "grunt/booger_anno_strip.hpp"
 #include "grunt/const_value_promote.hpp"
@@ -15,16 +20,21 @@
 #include "grunt/dead_member.hpp"
 #include "grunt/field_access_proxy.hpp"
 #include "grunt/flags_strip.hpp"
+#include "grunt/indy_decode.hpp"
 #include "grunt/indy_fold.hpp"
+#include "grunt/knowledge/kasumi_names.hpp"
 #include "grunt/number_fold.hpp"
 #include "grunt/predicate_fold.hpp"
 #include "grunt/proxy_inline.hpp"
 #include "grunt/seed_strip.hpp"
 #include "grunt/trampoline_squeeze.hpp"
 
+#include "mjbase/jar/jar_reader.hpp"
+
 namespace grunt {
 
 const char* gActivePass = nullptr;
+std::string gKasumiJdkPath;
 
 namespace {
 
@@ -34,7 +44,116 @@ bool traceEnabled()
     return enabled;
 }
 
+constexpr ca::u16 kAccInterface = 0x0200;   ///< class access_flags 的 ACC_INTERFACE
+
+/// @brief 跳过常量池取 access_flags：类文件结构 magic(4)+minor(2)+major(2) 后
+/// 是 cp_count(u2)+cp[]+access_flags(u2)，逐条按 tag 步进；未知 tag 放弃该类。
+bool classAccessSkipCp(const std::vector<ca::u8>& data, ca::u16& access)
+{
+    if (data.size() < 10) return false;
+    const ca::u8*   p       = data.data();
+    ca::usize       off     = 8;   // magic + minor + major
+    const ca::usize cpCount = (static_cast<ca::usize>(p[off]) << 8) | p[off + 1];
+    off += 2;
+    for (ca::usize i = 1; i < cpCount && off < data.size(); ++i) {
+        const ca::u8 tag = p[off++];
+        switch (tag) {
+        case 1:   // Utf8
+            if (off + 2 > data.size()) return false;
+            off += 2 + ((static_cast<ca::usize>(p[off]) << 8) | p[off + 1]);
+            break;
+        case 3:   // Integer
+        case 4:   // Float
+            off += 4;
+            break;
+        case 5:   // Long（占 2 槽）
+        case 6:   // Double
+            off += 8;
+            ++i;
+            break;
+        case 7:   // Class
+        case 8:   // String
+        case 16:  // MethodType
+        case 19:  // Module
+        case 20:  // Package
+            off += 2;
+            break;
+        case 9:    // Fieldref
+        case 10:   // Methodref
+        case 11:   // InterfaceMethodref
+        case 12:   // NameAndType
+        case 17:   // Dynamic
+        case 18:   // InvokeDynamic
+            off += 4;
+            break;
+        case 15:  // MethodHandle
+            off += 3;
+            break;
+        default: return false;   // 未知 tag，放弃此 class
+        }
+    }
+    if (off + 2 > data.size()) return false;
+    access = static_cast<ca::u16>((static_cast<ca::u16>(p[off]) << 8) | p[off + 1]);
+    return true;
+}
+
 }   // namespace
+
+std::unordered_set<std::string> scanJdkInterfaces(const std::string& jdkPath)
+{
+    std::unordered_set<std::string> interfaces;
+    if (jdkPath.empty()) return interfaces;
+
+    namespace fs = std::filesystem;
+    const fs::path homeDir(jdkPath);
+    // JDK 9+ 用 jmods/，JDK 8 用 lib/（rt.jar 之类）。
+    std::vector<fs::path> archives;
+    const fs::path        jmods = homeDir / "jmods";
+    const fs::path        lib   = homeDir / "lib";
+    const auto collect = [&](const fs::path& dir) {
+        std::error_code ec;
+        if (!fs::exists(dir, ec)) return;
+        for (fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+             it != end && !ec; it.increment(ec)) {
+            if (!it->is_regular_file(ec)) continue;
+            const std::string ext = it->path().extension().string();
+            if (ext == ".jmod" || ext == ".jar" || ext == ".zip") archives.push_back(it->path());
+        }
+    };
+    collect(jmods);
+    if (archives.empty()) collect(lib);
+    if (archives.empty()) return interfaces;
+
+    for (const fs::path& archive : archives) {
+        try {
+            mjbase::jar::JvmJarReader reader(
+                ca::str::Utf8StringRef::from_cstr(archive.string().c_str()));
+            (void)reader.read([&](const ca::str::Utf8String& name,
+                                  const std::vector<ca::u8>& data) {
+                std::string internal = name.to_std_string();
+                // jmod 条目名带 "classes/" 前缀，去掉得到标准内部名。
+                constexpr std::string_view kClasses = "classes/";
+                if (internal.size() >= kClasses.size()
+                    && internal.compare(0, kClasses.size(), kClasses) == 0) {
+                    internal.erase(0, kClasses.size());
+                }
+                if (internal.size() <= 6
+                    || internal.compare(internal.size() - 6, 6, ".class") != 0) {
+                    return;
+                }
+                if (internal.find("module-info") != std::string::npos) return;
+                ca::u16 access = 0;
+                if (!classAccessSkipCp(data, access)) return;
+                if ((access & kAccInterface) != 0) {
+                    interfaces.insert(internal.substr(0, internal.size() - 6));
+                }
+            });
+        } catch (const std::exception&) {
+            // 跳过无法读取的归档。
+        }
+    }
+    return interfaces;
+}
 
 mjbase::spi::PreservedAnalyses ConstantCallPass::run(
     mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
@@ -511,6 +630,72 @@ mjbase::spi::PreservedAnalyses FieldAccessProxyPass::run(
         }
         for (const std::string& f : proof.failed) {
             std::fprintf(stderr, "[grunt.FieldAccessProxy] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses IndyDecodePass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+
+    // Era 探测（adapter 调一次，结果注入 scan）+ JDK 接口旁证（Era=Kasumi 才
+    // 激活文件系统扫描；残留本体不做遍历）。
+    indy_decode::ScanInput input;
+    input.era = knowledge::probeEra(container);
+    if (input.era == knowledge::Era::Kasumi && !gKasumiJdkPath.empty()) {
+        input.jdkInterfaces = scanJdkInterfaces(gKasumiJdkPath);
+    }
+
+    const indy_decode::ScanResult scanned = indy_decode::scan(container, input);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.IndyDecode] scan: era=%s jdk-ifaces=%zu total=%zu sites=%zu"
+                     " rejects=%zu (era=%zu key=%zu malformed=%zu decode=%zu desc=%zu"
+                     " iface=%zu) skip-classes=%zu\n",
+                     input.era == knowledge::Era::Kasumi     ? "Kasumi"
+                     : input.era == knowledge::Era::Grunt2   ? "Grunt2"
+                     : input.era == knowledge::Era::Grunt3   ? "Grunt3"
+                                                             : "Unknown",
+                     input.jdkInterfaces.size(), scanned.totalIndy, scanned.sites.size(),
+                     scanned.rejects.size(), scanned.eraBlocked, scanned.keyMissing,
+                     scanned.malformedArguments, scanned.decodeFailed, scanned.descMismatch,
+                     scanned.interfaceUnattested, scanned.classesSkipped);
+        if (std::getenv("GRUNT_INDY_DECODE_TRACE") != nullptr) {
+            for (const indy_decode::Site& site : scanned.sites) {
+                std::fprintf(stderr,
+                             "[grunt.IndyDecode]   %s#%zu pc=%u form=%d → %s.%s%s%s\n",
+                             site.uri.c_str(), site.methodIndex, site.indySrcPc,
+                             static_cast<int>(site.form), site.targetOwner.c_str(),
+                             site.targetName.c_str(),
+                             site.ownerIsInterface ? " (iface)" : "",
+                             site.targetDesc.c_str());
+            }
+            for (const indy_decode::Reject& rej : scanned.rejects) {
+                std::fprintf(stderr, "[grunt.IndyDecode]   reject %s#%zu pc=%u: %s\n",
+                             rej.uri.c_str(), rej.methodIndex, rej.indySrcPc, rej.why.c_str());
+            }
+        }
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const indy_decode::DirtySet dirty = indy_decode::rewrite(container, scanned);
+    const indy_decode::ProofResult verdict = indy_decode::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.IndyDecode] rewrite: classes=%zu sites=%zu failed=%zu"
+                     " roundtrip-skip=%zu (static=%zu virtual=%zu getfield=%zu putfield=%zu"
+                     " getstatic=%zu putstatic=%zu new=%zu) proof=%s residual=%zu\n",
+                     dirty.classes, dirty.sites, dirty.failed, dirty.skippedByRoundTrip,
+                     dirty.rewrittenStatic, dirty.rewrittenVirtual, dirty.rewrittenGetField,
+                     dirty.rewrittenPutField, dirty.rewrittenGetStatic, dirty.rewrittenPutStatic,
+                     dirty.rewrittenNew, verdict.ok ? "ok" : "FAILED", verdict.residual);
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.IndyDecode] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

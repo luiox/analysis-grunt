@@ -1,17 +1,46 @@
 /// @file        scan_toolbox.hpp
 /// @brief       SCAN 工具箱：跨残留共享的扫描判定。
 ///
-/// CONVENTION §7：跨残留复用只允许发生在工具箱。当前收口的是
+/// CONVENTION §7：跨残留复用只允许发生在工具箱。当前收口两件：
 /// `classInitNeutral`——owner 类 `<clinit>` 的「中性」判定，被
-/// constant_call（求值前的类初始化门）与 proxy_inline（owner 中性门）共用。
+/// constant_call（求值前的类初始化门）与 proxy_inline（owner 中性门）共用；
+/// `bsmEntries`——类级 BootstrapMethods 条目表读取，被 indy_fold /
+/// indy_decode 共用。
 #pragma once
 
-#include "libca/core/datatype.hpp"
+#include <vector>
 
+#include "libca/core/datatype.hpp"
+#include "libca/core/tag_cast.hpp"
+
+#include "jbc/core/attribute.hpp"
+#include "jbc/core/class_file.hpp"
 #include "jbc/core/opcode.hpp"
 #include "jbc/ir/units.hpp"
 
+#include "mjbase/util/annotation_depth.hpp"
+
 namespace grunt::scan_tools {
+
+/// @brief 取类级 BootstrapMethods 的条目表（没有属性就是空表）。
+///
+/// 解码前先过注解族深度预检（mjbase #158）：BootstrapMethods 本身不在注解族，
+/// 守卫对它恒放行；挂同一道门是让一切 decodeAttr 直调位保持单一形状——将来
+/// 若有注解族解码落进来，守卫已在位。
+inline const std::vector<jbc::core::BootstrapMethodsAttr::Entry>* bsmEntries(
+    jbc::ir::ClassSession& s)
+{
+    jbc::core::ClassFile& cf = s.backing();
+    jbc::core::AttrSlot*  slot = cf.findClassAttr("BootstrapMethods");
+    if (slot == nullptr) return nullptr;
+    if (!mjbase::util::attrSafeToDecode(cf, *slot)) return nullptr;
+    auto decoded = cf.decodeAttr(*slot);
+    if (decoded.is_err()) return nullptr;
+    // 不用 dynamic_cast：本仓关 RTTI（/GR-），走 libca 的 tag_cast 约定
+    // （AttrBody::kind() 是它的类型标签）。
+    auto* attr = ca::core::tag_cast::dyn_cast<jbc::core::BootstrapMethodsAttr>(decoded.unwrap());
+    return attr == nullptr ? nullptr : &attr->entries;
+}
 
 /// @brief 判 owner 类 `<clinit>` 是否「中性」（缺失，或只剩 NOP/RETURN 且无
 ///        异常表）。

@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <exception>
 #include <memory>
+#include <string>
+#include <unordered_set>
 
 #include "grunt/pass_clock.hpp"
 #include "mjbase/spi/pass_pipeline.hpp"
@@ -15,6 +17,15 @@ namespace grunt {
 
 /// @brief 当前正在执行的 pass 名（崩溃过滤器点名用；管线外为空）。
 extern const char* gActivePass;
+
+/// @brief `grunt.IndyDecode` 的 JDK 接口旁证注入面：CLI 在管线启动前填 JDK
+/// 根目录（`--jdk`）。文件系统副作用只发生在这里（adapter 层）——残留本体
+/// 不做任何遍历；空串 = 不注入，interface 路判 fail-closed。
+extern std::string gKasumiJdkPath;
+
+/// @brief 扫描 JDK（jmods/ 优先，lib/ 兜底）收集接口内部名（ACC_INTERFACE）。
+/// 读不了的归档跳过；结果可能为空（调用方按无旁证口径处理）。
+std::unordered_set<std::string> scanJdkInterfaces(const std::string& jdkPath);
 
 /// @brief fail-closed 装饰器：pass 体抛出的异常（含 /EHa 下的 SEH 硬崩）不再
 /// 穿透管线——stderr 点名后按「本 pass 产出丢弃」收场，罐不拖垮整轮语料。
@@ -172,6 +183,15 @@ public:
 
 /// @brief `grunt.FieldAccessProxy`：字段代理调用点改回真实字段访问（死码交下游）。
 class FieldAccessProxyPass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
+/// @brief `grunt.IndyDecode`：Kasumi indy 静态还原（key 提取 + bsmArgs 解密 +
+/// 7 形态改写；Era=Kasumi 判定 + JDK 接口旁证注入见 gKasumiJdkPath）。
+class IndyDecodePass final : public mjbase::spi::GlobalPass
 {
 public:
     mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,

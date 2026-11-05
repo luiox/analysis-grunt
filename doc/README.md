@@ -36,6 +36,8 @@
 | [indy-fold.impl.md](indy-fold.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
 | [proxy-inline.md](proxy-inline.md) | 代理方法：恒等转发体的形态与初始化时序约束 |
 | [proxy-inline.impl.md](proxy-inline.impl.md) | 本仓的 Scan / Rewrite / Proof 与已知边界 |
+| [indy-decode.md](indy-decode.md) | Kasumi indy 静态还原：全量 indy 化调用点、XOR key 链、7 形态表的形态 |
+| [indy-decode.impl.md](indy-decode.impl.md) | 本仓的 Scan / Rewrite / Proof，含注入面、插入式锚保留与语料账本 |
 
 ## 约定
 

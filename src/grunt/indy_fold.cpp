@@ -24,6 +24,7 @@
 #include "grunt/jsim_bridge.hpp"
 #include "grunt/jsim_executor.hpp"
 #include "grunt/proof_toolbox.hpp"
+#include "grunt/scan_toolbox.hpp"
 
 #include "jbc/core/attribute.hpp"
 #include "jbc/core/class_file.hpp"
@@ -59,23 +60,12 @@ bool kindOfReferenceKind(ca::u32 referenceKind, jsim::indy::Target::Kind& out)
     }
 }
 
-/// 取类级 BootstrapMethods 的条目表（没有属性就是空表）。
+/// 取类级 BootstrapMethods 的条目表：收口进 scan_toolbox（indy_fold /
+/// indy_decode 共用），此处只做引用别名。
 const std::vector<jbc::core::BootstrapMethodsAttr::Entry>* bsmEntries(
     jbc::ir::ClassSession& s)
 {
-    jbc::core::ClassFile& cf = s.backing();
-    jbc::core::AttrSlot* slot = cf.findClassAttr("BootstrapMethods");
-    if (slot == nullptr) return nullptr;
-    // 解码前先过注解族深度预检（mjbase #158）：BootstrapMethods 本身不在
-    // 注解族，守卫对它恒放行；挂同一道门是让本文件一切 decodeAttr 直调位
-    // 保持单一形状——将来若有注解族解码落进来，守卫已在位。
-    if (!mjbase::util::attrSafeToDecode(cf, *slot)) return nullptr;
-    auto decoded = cf.decodeAttr(*slot);
-    if (decoded.is_err()) return nullptr;
-    // 不用 dynamic_cast：本仓关 RTTI（/GR-），走 libca 的 tag_cast 约定
-    // （AttrBody::getType() 是它的类型标签）。
-    auto* attr = ca::core::tag_cast::dyn_cast<jbc::core::BootstrapMethodsAttr>(decoded.unwrap());
-    return attr == nullptr ? nullptr : &attr->entries;
+    return scan_tools::bsmEntries(s);
 }
 
 /// CP 里的静态参数 → 折叠侧的 BsmValue。收不全就标 Unsupported。

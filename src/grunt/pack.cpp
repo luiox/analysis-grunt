@@ -145,6 +145,19 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.ProxyInline"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.IndyDecode",
+            [] { return makeFailClosed<IndyDecodePass>("grunt.IndyDecode"); },
+            "Statically restore Kasumi obfuscator invokedynamic call sites:"
+            " extract the per-class XOR decryptor key, decrypt the bootstrap"
+            " static args (encOwner/encName/encDesc), and rewrite the site by"
+            " the mode/extra table into invokestatic/invokevirtual/"
+            "invokeinterface/getfield/putfield/getstatic/putstatic/new."
+            " Feed a JDK root via --jdk so virtual sites on JDK interfaces"
+            " dispatch to invokeinterface.");
+        r.is_err()) {
+        return Err(std::string("grunt.IndyDecode"));
+    }
     return Ok();
 }
 
