@@ -265,4 +265,15 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
+/// @brief `grunt.MaterialKeyRestore`：RuntimeMaterial 材料通道 key 静态折回
+/// （材料初值链结构自证判据，无外部旁证注入面；还原口径 = 清洁运行环境
+/// 语义，反调试扰动路径不在范围——只把解密器窗口的 materialKey() 调用
+/// 原地换 LDC，indy_restore 第二轮按既有 Plain 通道折回站点）。
+class MaterialKeyRestorePass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
 }   // namespace grunt

@@ -154,6 +154,19 @@ inline constexpr ca::i32 kGruntDispatcherMaxHandles = 10;
 ///        it.value.size > 1 }`——键表 case 数 ≥ 2 是生成面事实，作形状门）。
 inline constexpr ca::i32 kGruntDispatcherMinCases = 2;
 
+// ---- RuntimeMaterial 材料初值供给链（v3 专属；boar-main.jar 逐字节实证，
+//      源锚 grunt3@e41e852 RuntimeMaterial.kt / ReferenceObfuscate.kt）------
+
+/// @brief 材料初值跨度的 parse 面：clinit 里 `parseUnsignedLong(明文, radix)`
+///        的 `INVOKESTATIC` 目标（boar 语料实证 `java/lang/Long.parseUnsignedLong`
+///        `(Ljava/lang/String;I)J`——直连或单跳蹦床两种承载；蹦床体恰为
+///        `aload_0; iload_1; invokestatic <parse>; lreturn`）。radix 恒 32
+///        （家族 number-reobf 的基 32 long 通道，与 NumberFold 同源口径）。
+inline constexpr std::string_view kGruntMaterialParseOwner = "java/lang/Long";
+inline constexpr std::string_view kGruntMaterialParseName  = "parseUnsignedLong";
+inline constexpr std::string_view kGruntMaterialParseDesc  = "(Ljava/lang/String;I)J";
+inline constexpr ca::i32 kGruntMaterialParseRadix          = 32;
+
 // ---- CFF dispatcher 岛形态（v3 专属；grunt3 FlowControlFlowFlattener.kt
 //      生成面 + boar-main.jar 实证。源锚 e41e852）--------------------------
 

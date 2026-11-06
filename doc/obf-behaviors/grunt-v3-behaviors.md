@@ -53,9 +53,9 @@ v3 是 Kotlin 重写的管线：`Grunteon` 持 `transformers: List<Pair<Transfor
 | 28 | Miscellaneous | TrashClassGenerator | provider 化垃圾类生成 | S2 | 无处理 |
 | 29 | Native | NativeCandidate | 按规则给方法挂 native 候选注解 | 检测-only | 无处理 |
 | 30 | Native | NativePreProcessor | indy/condy/MH 调用点桥接同类 helper | 伴随面 | 伴随面（native 前置） |
-| 31 | AntiDebug | RuntimeMaterial | 分布式材料扰动（shareA/shareB/canonicalKey/poison） | S2 | 无处理 |
+| 31 | AntiDebug | RuntimeMaterial | 分布式材料扰动（shareA/shareB/canonicalKey/poison） | S2 | 部分（MaterialKeyRestore：材料通道 key 静态折回，缺口 #15 联动面闭环——indy_restore `materialLane` 桶随之消化；反调试扰动路径/材料字段不摘，还原口径 = 清洁运行环境语义；native materialKey 余量挂账） |
 | 32 | AntiDebug | AntiLLM | 四渠道 LLM 诱饵噪声 | S2 | 无处理 |
-| 33 | Other | ReferenceObfuscate | 调用点 indy 化 simple/heavy + `@Metadata` 注解 | S1 | 部分 | IndyRestore（缺口 #2 闭环：simple 直接解密回填 + heavy `@Metadata` 互证回填，`Era::Grunt3` 门；RuntimeMaterial 联动的材料通道静态不可解 fail-closed → 缺口 #15 联动面）+ IndyFold（S3 兜底） |
+| 33 | Other | ReferenceObfuscate | 调用点 indy 化 simple/heavy + `@Metadata` 注解 | S1 | 部分 | IndyRestore（缺口 #2 闭环：simple 直接解密回填 + heavy `@Metadata` 互证回填，`Era::Grunt3` 门；RuntimeMaterial 联动的材料通道曾静态不可解 fail-closed，现由 MaterialKeyRestore 折回 key 后第二轮本 pass 消化）+ IndyFold（S3 兜底） |
 | 34 | Other | FakeSyntheticBridge | 伪 `ACC_SYNTHETIC`/`ACC_BRIDGE` 撒标志 | S2 | 已处理（FlagsStrip） |
 | 35 | Other | DecompilerCrasher | Signature 属性填 massive 串 | S2 | 无处理 |
 | 36 | Other | ReflectionSupport | 改名后重映射反射串 | 伴随面 | 伴随面 |
@@ -416,7 +416,7 @@ v3 的方法/字段代理与 v2 MethodScramble/FieldScramble 同构（`Chance` �
 
 **判据分级**：S1——BSM 参数结构与 `@Metadata` 互证（`data1 % 59557 == magic2`）是语义后果：混淆器要保链接就必须让解密产物与调用点吻合；还原判据按 BSM 参数结构 + 注解值直接解密（key/magic 全部静态在场）。
 
-**本仓现状**：`grunt.IndyRestore` 承载（缺口 #2 闭环，见 doc/indy-restore.md）。simple 形三段串按 `encrypt` 自逆 XOR 纯算术直解 + 三路键链（同名解密器 / BSM 体跟随 / 名字族推导，第三路覆盖 NativePipeline 把 BSM 摘成 native 空壳的死现场）回填真实 invoke；heavy 形 generalKey 取 BSM 体窗口 + owner 类 `@Metadata`（mv≥100 门）d1/d2 数组 `data1 % 59557 == magic2` 自证回填，挂 `Era::Grunt3` 门（era.hpp Grunt3 双指纹：Grunt BSM desc ∧ 类级 `@Metadata` 注解或 `grunteon` 命名空间，缺口 #15 v3 半边随之闭环）。RuntimeMaterial 联动的材料通道（`decryptKey ^ materialKey()`，materialKey 运行期值静态不可解）fail-closed 挂 `materialLane` 桶，随缺口 #15 联动面与模拟执行原语再扩。boar 语料（Grunteon 全链）实证：78154 指纹站点还原 30924（static 29847 + virtual 1077，failed=0），residual=47230（materialLane 42228 + keyMissing 5002）；组合链接通 `grunt.StringPoolFold` 0 → 19244 折叠。`grunt.IndyFold`（S3）保留为兜底；Kasumi 的 `IndyDecode`（8 参 BSM 指纹）与本行为互斥。
+**本仓现状**：`grunt.IndyRestore` 承载（缺口 #2 闭环，见 doc/indy-restore.md）。simple 形三段串按 `encrypt` 自逆 XOR 纯算术直解 + 三路键链（同名解密器 / BSM 体跟随 / 名字族推导，第三路覆盖 NativePipeline 把 BSM 摘成 native 空壳的死现场）回填真实 invoke；heavy 形 generalKey 取 BSM 体窗口 + owner 类 `@Metadata`（mv≥100 门）d1/d2 数组 `data1 % 59557 == magic2` 自证回填，挂 `Era::Grunt3` 门（era.hpp Grunt3 双指纹：Grunt BSM desc ∧ 类级 `@Metadata` 注解或 `grunteon` 命名空间，缺口 #15 v3 半边随之闭环）。RuntimeMaterial 联动的材料通道（`decryptKey ^ materialKey()`，materialKey 运行期值静态不可解）fail-closed 挂 `materialLane` 桶——**缺口 #15 联动面已闭环**：`grunt.MaterialKeyRestore` 把窗口折成 `LDC <materialKey>`（清洁口径 key 静态求值）后，第二轮本 pass 按既有 Plain 通道消化（boar 专链 materialLane 42228 → 5060，余 5060 = native materialKey 类）。boar 语料（Grunteon 全链）实证：78154 指纹站点还原 30924（static 29847 + virtual 1077，failed=0），residual=47230（materialLane 42228 + keyMissing 5002）；组合链接通 `grunt.StringPoolFold` 0 → 19244 折叠。`grunt.IndyFold`（S3）保留为兜底；Kasumi 的 `IndyDecode`（8 参 BSM 指纹）与本行为互斥。
 
 **样例**（simple/heavy 站点 + 双 BSM 骨架 + `@Metadata` 注解）：
 
@@ -651,7 +651,7 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（`TrashClassProvider
 
 ### 6.1 RuntimeMaterial：分布式材料扰动
 
-**做什么**。给类注入运行时完整性材料：per-class 四个静态字段（源注释口径：`shareA`/`shareB`(long) + `canonicalKey`(long) + `poison`(int)），`<clinit>` 注入类级扰动（`Clinit=true`）、`<init>` 注入实例路径扰动（`Constructors=true`，`ConstructorLimit=8`）。clean 扰动让 `shareA += delta; shareB -= delta`（原始和在等价类内滑动，canonical 不变）；可疑扰动（`DetectSources`/`DetectTokens` 检测调试器/篡改）置 sticky poison 并扰动 canonicalKey；canonical 操作符为 `CANONICAL_SHARE_SUM_STICKY_POISON`（canonicalKey = shareA + shareB 与 poison 的组合）。`DraftMaterialMetadata=true` 给 ReferenceObfuscate 输出材料草稿（canonicalKey + poison 作 heavy BSM 的 KDF 输入——两 transformer 联动）。判据 S2（材料字段组 + clinit/init 扰动形状），本仓无处理（缺口清单 P3，检测/摘除面）。
+**做什么**。给类注入运行时完整性材料：per-class 四个静态字段（源注释口径：`shareA`/`shareB`(long) + `canonicalKey`(long) + `poison`(int)），`<clinit>` 注入类级扰动（`Clinit=true`）、`<init>` 注入实例路径扰动（`Constructors=true`，`ConstructorLimit=8`）。clean 扰动让 `shareA += delta; shareB -= delta`（原始和在等价类内滑动，canonical 不变）；可疑扰动（`DetectSources`/`DetectTokens` 检测调试器/篡改）置 sticky poison 并扰动 canonicalKey；canonical 操作符为 `CANONICAL_SHARE_SUM_STICKY_POISON`（canonicalKey = shareA + shareB 与 poison 的组合）。`DraftMaterialMetadata=true` 给 ReferenceObfuscate 输出材料草稿（canonicalKey + poison 作 heavy BSM 的 KDF 输入——两 transformer 联动）。判据 S2（材料字段组 + clinit/init 扰动形状）。**本仓现状**：`grunt.MaterialKeyRestore` 承载（缺口 #15 联动面闭环，见 doc/material-key-restore.md）——材料通道解密器窗口的 `INVOKESTATIC materialKey()I` 按「清洁运行环境语义」静态折回 `LDC`（key = `fold(keyField 初值) ^ poison 初值`，初值链在上游供给链 `IndyRestore`+`StringPoolFold` 跑完后全静态、固定 JVM 语义 C++ 直解），indy_restore 第二轮按既有 Plain 通道消化 materialLane 桶；判据 S2 结构（窗口形 + materialKey() 体 9 条逐字 + 写者普查 + 守卫指纹）→ S1 互证（路由 indy 站点按候选 key 解密 + desc 互证），fail-closed 逐桶记账（初值链断/多写/外写/守卫缺席/native materialKey）；反调试扰动路径与材料字段本体不摘（缺口清单 P3 检测/摘除面仍在）。boar 语料：656 材料类折回 586（70 native materialKey 余量），组合链 materialLane 42228 → 5060。
 
 **样例**（字段以 int 简化示意；真实字段形为 long shareA/shareB + canonicalKey + int poison）：
 
@@ -739,8 +739,10 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（`TrashClassProvider
         （processor 调用门、异常桥缺口）
         ReferenceObfuscate→IndyRestore（缺口 #2，materialLane/keyMissing fail-closed）
         + IndyFold（S3 兜底）
+        RuntimeMaterial→MaterialKeyRestore（缺口 #15 联动面闭环；扰动摘除面挂 P3，
+        native materialKey 余量）
 无处理：ControlflowFlatteningSSA（缺口 #4 余量）、ArithmeticSubstitute、StringEqualsOptimize、
-        ParameterObfuscate、TrashClassGenerator、RuntimeMaterial、AntiLLM、Watermark、
+        ParameterObfuscate、TrashClassGenerator、AntiLLM、Watermark、
         DecompilerCrasher、垃圾类、改名族
 伴随面：FlowIRRoundTrip、SSARoundTrip、NativePreProcessor、ReflectionSupport、MappingApplier
 检测-only：NativeCandidate、NativePipeline（不可静态还原）

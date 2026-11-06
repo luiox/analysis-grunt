@@ -250,6 +250,28 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.CffUnflatten"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.MaterialKeyRestore",
+            [] { return makeFailClosed<MaterialKeyRestorePass>("grunt.MaterialKeyRestore"); },
+            "Statically fold the Grunt v3 RuntimeMaterial key back into the"
+            " material decryptor window: evaluate the per-class material field"
+            " init chain in clinit (parseUnsignedLong base-32 span or raw"
+            " ldc2_w constant, poison constant corridor via a bounded int/long"
+            " stack machine), verify the 9-insn materialKey() body and the"
+            " perturbation writer census (suspicious-path windows must sit"
+            " behind the anti-debug guard fingerprint), self-check the candidate"
+            " key by decrypting every BSM-indy site routed to the decryptor,"
+            " then swap the in-window INVOKESTATIC materialKey() call for an"
+            " LDC of the folded key in place. The window becomes the plain"
+            " folded-key shape IndyRestore already folds, so a second"
+            " grunt.IndyRestore round closes the materialLane bucket;"
+            " indy_restore itself stays byte-identical. Clean-run semantics"
+            " only: anti-debug sabotage paths are out of deobf scope, and any"
+            " unresolvable init chain, extra writer or guarded-shape miss keeps"
+            " the whole class untouched.");
+        r.is_err()) {
+        return Err(std::string("grunt.MaterialKeyRestore"));
+    }
     return Ok();
 }
 

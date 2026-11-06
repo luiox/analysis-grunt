@@ -28,6 +28,7 @@
 #include "grunt/indy_fold.hpp"
 #include "grunt/indy_restore.hpp"
 #include "grunt/knowledge/kasumi_names.hpp"
+#include "grunt/material_key_restore.hpp"
 #include "grunt/metadata_strip.hpp"
 #include "grunt/number_fold.hpp"
 #include "grunt/predicate_fold.hpp"
@@ -1094,6 +1095,64 @@ mjbase::spi::PreservedAnalyses CffUnflattenPass::run(
                      verdict.ok ? "ok" : "FAILED", verdict.residual);
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.CffUnflatten] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses MaterialKeyRestorePass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+
+    // 无旁证注入面：判据全为容器自证事实（材料初值链 + materialKey 体形 +
+    // 写者普查 + S1 路由互证），Era 不消费（同 string_pool_fold 口径——形态
+    // 内无版本敏感判据；家族锚只钉 simple BSM desc）。还原口径 = 清洁运行
+    // 环境语义（doc/material-key-restore.md §边界）。
+    const material_key_restore::ScanInput input;
+    const material_key_restore::ScanResult scanned =
+        material_key_restore::scan(container, input);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.MaterialKeyRestore] scan: material-classes=%zu sites=%zu"
+                     " rejects=%zu (key-body=%zu init-blocked=%zu init-conflict=%zu"
+                     " writer-shape=%zu writer-unguarded=%zu key-refuted=%zu"
+                     " decryptor-ambiguous=%zu) skip-classes=%zu\n",
+                     scanned.materialClasses, scanned.sites.size(), scanned.rejects.size(),
+                     scanned.keyBodyMismatch, scanned.initBlocked, scanned.initConflict,
+                     scanned.writerShape, scanned.writerUnguarded, scanned.keyRefuted,
+                     scanned.decryptorAmbiguous, scanned.classesSkipped);
+        if (std::getenv("GRUNT_MATERIAL_KEY_RESTORE_TRACE") != nullptr) {
+            for (const material_key_restore::Site& site : scanned.sites) {
+                std::fprintf(stderr,
+                             "[grunt.MaterialKeyRestore]   %s#%zu pc=%u raw=%d"
+                             " material-key=%d verified=%zu\n",
+                             site.uri.c_str(), site.decryptorMethodIndex, site.invokeSrcPc,
+                             site.decryptorRawKey, site.materialKey, site.sitesVerified);
+            }
+            for (const material_key_restore::Reject& rej : scanned.rejects) {
+                std::fprintf(stderr, "[grunt.MaterialKeyRestore]   reject %s#%zu: %s\n",
+                             rej.uri.c_str(), rej.methodIndex, rej.why.c_str());
+            }
+        }
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const material_key_restore::DirtySet dirty =
+        material_key_restore::rewrite(container, scanned);
+    const material_key_restore::ProofResult verdict =
+        material_key_restore::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.MaterialKeyRestore] rewrite: classes=%zu sites=%zu failed=%zu"
+                     " roundtrip-skip=%zu proof=%s residual=%zu\n",
+                     dirty.classes, dirty.sites, dirty.failed, dirty.skippedByRoundTrip,
+                     verdict.ok ? "ok" : "FAILED", verdict.residual);
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.MaterialKeyRestore] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

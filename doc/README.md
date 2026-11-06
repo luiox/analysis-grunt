@@ -49,6 +49,8 @@
 | [dispatcher-restore.impl.md](dispatcher-restore.impl.md) | 本仓的 Scan / Rewrite / Proof，含算法源锚点、promote 纪律与语料账本 |
 | [cff-unflatten.md](cff-unflatten.md) | Grunt v3 ControlflowFlattening：state 槽摊平岛、常量供给桥、alias-face 剪枝反演的形态 |
 | [cff-unflatten.impl.md](cff-unflatten.impl.md) | 本仓的 Scan / Rewrite / Proof，含七相判据、执行序与语料账本 |
+| [material-key-restore.md](material-key-restore.md) | Grunt v3 RuntimeMaterial：材料通道解密器窗口、materialKey() 逐字 9 条、初值链（基 32 parse 面 + poison 走廊）的形态 |
+| [material-key-restore.impl.md](material-key-restore.impl.md) | 本仓的 Scan / Rewrite / Proof，含清洁口径 key 求值、S1 互证与语料账本 |
 | [kasumi-verify.md](kasumi-verify.md) | Kasumi 专链端到端复现记录：五项门逐项数字、与树版口径差异点、通用链取证 |
 
 ## obf 行为账
