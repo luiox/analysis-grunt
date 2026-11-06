@@ -102,14 +102,16 @@ residual=41 与 `failed=41` 同源（processor 相邻面遗留，见语料账本
 - **DispatcherRestore 联动（boar）**：组合链
   `grunt.CffUnflatten,grunt.DispatcherRestore`（--list 实证链序）上
   DispatcherRestore 仍 `dispatchers=0`（5827 desc 形候选全数形状拒）。
-  归因量化（双 trace join）：5827 候选中**0 个**命中已解岛、**5784 个**
-  根本没有 CFF 岛、仅 43 个有岛（23 processor 门 / 18 形状 / 2 岛外引
-  用）——boar 的分发器头锚缺席由 **post-Redirect junk 前缀**所致
-  （头锚实拍 `[iload_0; ldc_w; i2l; ldc_w; …]` 数值垃圾前缀；config 序
-  InvokeDispatcher idx10 → ControlflowFlattening 17/ControlflowJump 18），
-  非 CFF 摊平所致；TrampolineSqueeze 单跑（4729 处 squeeze）不改变该
-  拒绝分布。**该解锁面属 junk 前缀/processor 族（缺口 #4 余量），不在
-  CffUnflatten 语义面内。**
+  归因量化（双 trace join + 独立 jar 全量头形扫描二轮实证）：5827 候选
+  中**0 个**命中已解岛、**5784 个**根本没有 CFF 岛、仅 43 个有岛（23
+  processor 门 / 18 形状 / 2 岛外引用）。**二轮修正**：候选实为 desc 形
+  状与 `__grt$indy$` indy 蹬床及 NumberBasicEncrypt 数值走廊方法碰撞
+  （anti-候选），**非 post-Redirect junk 前缀**（jar 内 `[iload N;
+  tableswitch]` 头形 = 0，grunt3 源零处向方法首条前插指令，前批引述的
+  `[iload_0; ldc_w; i2l; …]` 实拍样张是数值走廊方法非分发器）；罐内
+  真分发器全部被 CFF 摊平成岛。**真实解锁路径 = IndyRestore 还原 proc
+  体内 indy → ConstantCall 折叠纯算术 proc → 本 pass processor 桥可解
+  → DispatcherRestore**。
 - **wave2c 正例罐**（缺口 #3 语料复用）：单跑
   `dispatchers=290 islands-solvable=0 rejects=290`（全数形状不符 =
   InvokeDispatcher 原生头反误伤面），产物逐条目 CRC 与输入全等

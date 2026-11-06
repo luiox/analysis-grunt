@@ -87,17 +87,24 @@ rewrittenVirtual}` → `ProofResult{ok, failed, residual}`。Era 不消费
   Grunteon 按 config 顺序执行（`Grunteon.create` 直 map
   `config.transformers`；orderRules 只是事后断言）；(b) 容器侧——5827 个
   desc 形 static 候选全数形状拒绝（4425 头锚第二条非 TABLESWITCH +
-  1402 首条非 key 槽 ILOAD）。**归因修正**（cff_unflatten 收口批实证，
-  修正本条旧记「CFF 摊平所致」）：与 `grunt.CffUnflatten` 解岛台账
-  join 后 5827 候选中 **0 个**命中已解岛、**5784 个**根本没有 CFF 岛
-  （仅 43 个有岛：23 processor 门 / 18 形状 / 2 岛外引用）——头锚缺席
-  由 post-Redirect junk 前缀所致（头锚实拍 `[iload_0; ldc_w; i2l; …]`
-  数值垃圾前缀，上游 junk/数值藏形在 Redirect 之后运行）；TrampolineSqueeze
-  单跑（4729 处）不改变该拒绝分布，`CffUnflatten,DispatcherRestore`
-  组合链同样 0 分发器。会命中的 config 产物：InvokeDispatcher 排在
-  Controlflow 之后（或 CFF 关闭）且调用点未被 ReferenceObfuscate indy 化
-  （或已经 IndyRestore 还原）；解锁面属 junk 前缀/processor 族
-  （缺口 #4 余量），不在 CffUnflatten 语义面内。
+  1402 首条非 key 槽 ILOAD）。**归因修正**（cff_unflatten 收口批 + 独立
+  jar 全量头形扫描双轮实证，修正本条旧记「CFF 摊平所致」）：5827 候选
+  中 **0 个**命中已解岛、**5784 个**根本没有 CFF 岛（仅 43 个有岛：23
+  processor 门 / 18 形状 / 2 岛外引用）——4425「第二条非 TABLESWITCH」
+  实为 `(I)R` 形 `__grt$indy$` ReferenceObfuscate indy 蹦床（7 字节完整
+  方法）与 NumberBasicEncrypt 数值藏形走廊方法（原程序算术方法，非分发
+  器）；1402「首条非 key 槽 ILOAD」= `(Object×N;I)R` 形 indy 蹬床
+  （~1335）+ ~30 个真 CFF 摊平分发器 + 34 杂项。**desc 形状与 indy 蹬床
+  /算术方法碰撞（anti-候选），罐内真分发器全部被 CFF 摊平成岛**；头锚
+  实拍 `[iload_0; ldc_w; i2l; …]` 样张是数值走廊方法而非被挡分发器。
+  jar 全量头形扫描：`[iload N; tableswitch]` 头形 = 0、谓词守卫块落方法
+  头 = 0；grunt3 源零处向方法首条前插指令（junk 插在边上），
+  `dispatcherLandingJunkChance=0.0`。TrampolineSqueeze（4729 处）与
+  `CffUnflatten,DispatcherRestore` 组合链均不改变该拒绝分布。**真实解锁
+  路径 = IndyRestore 还原 `__grt$indy$X(II)I` proc 体内 indy → 纯算术
+  proc 可折叠 → CffUnflatten processor 桥可解 → DispatcherRestore**
+  （会命中的 config 产物：InvokeDispatcher 排在 CFF 之前 + 调用点未被
+  ReferenceObfuscate indy 化）。
 - **正例罐**（boar-main-origin.jar + 仅 InvokeDispatcher `chance=1.0`，
   Grunteon 3.0.0 build 260705 自产，775 类）：识别 283 分发器 / 52 形状
   拒；站点 1181（keyNotConst=0 keyNotInTable=0 padMismatch=0）；rewrite
