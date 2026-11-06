@@ -92,7 +92,17 @@ boar-main.jar 逐字节互证（mjt-mcp method_jasm 级取证）：656 材料类
   grunt.MaterialKeyRestore,grunt.IndyRestore`）：materialLane 42228 →
   5060（37168 站点第二轮联动折叠；余 5060 = 70 native 类的站点，静态
   天花板）；`-Xverify:all` 逐类失败集与输入全等、类数 3065 不增、双跑
-  逐位一致（见 README 残留表行语料注）。
+  逐位一致（见 README 残留表行语料注）。产物罐相对输入新增 12 条目均
+  为 zip 目录占位项（jar_writer 目录树行为，JVM 忽略；已记移交清单）。
+- **接口旁证口径（对账注记）**：组合链须带 `--jdk`（corretto-17.0.5，
+  接口集 2696 条）与 doc/indy-restore.impl.md 台账跑法对齐——两轮
+  `iface=0`：#1 sites=30924（static 29847 + virtual 1077，逐位复现旧
+  台账）、#2 sites=37168（static 30785 + virtual 6383）全定案。无
+  `--jdk` 时接口落点两无 fail-closed：#1 iface=645（sites=30279）、
+  #2 iface=3047（sites=37168 不变）。**`materialLane` 折回数字两种口
+  径一致（42228 → 5060），本 pass 与旁证面零冲突**；曾并存的「还原
+  30924」（带旁证台账）与「还原 30279」（无旁证跑法）差异即此 645，
+  非行为回归。
 
 ## 单测（unittest/material_key_restore_test.cpp）
 
