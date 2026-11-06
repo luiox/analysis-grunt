@@ -86,7 +86,7 @@
 7. **ArithmeticEncrypt/ArithmeticSubstitute 恒等简化**：封闭 int 算术恒等式简化链（IXOR/IAND/IOR/INEG 替换族 + 三元组整体替换）。
 8. **NumberEncrypt v2 IAND/LAND 位拼模板扩面**：`first & second = v` 对（int/long）进 NumberFold 词汇表；v3 无此形态，仅 v2 语料需要。
 9. **MethodExtractor 还原**：透传桩与伴生方法体合并、owner 类 accessor-getter/setter 内联、伴生类删除（面大价值中）。
-10. **ControlflowJump processor 门与异常桥**：`INVOKESTATIC (III)I` processor 返回值参与的门需跨方法读 processor 体静态求值；合成 try + `POP; GOTO handler` 异常桥的 CFG 边还原。
+10. **ControlflowJump processor 门与异常桥**：`INVOKESTATIC (III)I` processor 返回值参与的门需跨方法读 processor 体静态求值；合成 try + `POP; GOTO handler` 异常桥的 CFG 边还原。**boar 语料停报（取证批字节级双证，未写代码）**：面 (a) 门点形态成立且量大（26 866 站/709 类）但 processor 体 100% 随 NativePipeline 出 jar（26 999 个 `(III)I` 方法 = 18 461 native 无体 + 8 538 indy 蹬床链终到 native，纯算术可求值体 = 0；罐内 `grunteon_native.dll` 27.4 MB 实证），可行动站点 0——写了即全量 fail-closed 的 no-op，违反「没有消费方的模块不进仓」；面 (b) 异常桥站点 0（config `exceptionBridgeChance=0.0` 与 jar 字节双证）。**重启条件**：语料换用 `exceptionBridgeChance>0` 或 `nativeCandidateRatio<1.0` 的罐即可按源锚形态重启（ControlflowJump.kt 门点/BitAction/PredicateStep 全集已录取证报告，processor 体求值可复用 ConstantCall 纯算术先例）——自产全链罐（关 native + 全 transformer 开）即同时满足。另注：boar 站点普查须按 StackMapTable 帧根做校验器式可达遍历（罐内 DecompilerCrasher junk 区会骗线性扫描漏掉过半站点）。
 
 **P3——清理、检测与基线面**：
 
