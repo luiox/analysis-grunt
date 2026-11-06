@@ -20,6 +20,7 @@
 #include "grunt/container.hpp"
 #include "grunt/dead_code.hpp"
 #include "grunt/dead_member.hpp"
+#include "grunt/cff_unflatten.hpp"
 #include "grunt/dispatcher_restore.hpp"
 #include "grunt/field_access_proxy.hpp"
 #include "grunt/flags_strip.hpp"
@@ -1035,6 +1036,64 @@ mjbase::spi::PreservedAnalyses DispatcherRestorePass::run(
                      verdict.ok ? "ok" : "FAILED", verdict.residual);
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.DispatcherRestore] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses CffUnflattenPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+
+    // 无旁证注入面：判据全为容器自证事实（state 槽 confinement + 岛形 +
+    // 桥块形状），Era 不消费——v3-only 形态（v2 Controlflow 无 state 槽摊平），
+    // 岛形自证家族；SSA 变体不同构（LookupSwitch + per-case stub + passArgs
+    // 编组）挂账，processor 桥键静态不可解整岛保留（解锁路径记 doc）。
+    const cff_unflatten::ScanInput input;
+    const cff_unflatten::ScanResult scanned =
+        cff_unflatten::scan(container, input);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.CffUnflatten] scan: dispatchers=%zu islands-solvable=%zu"
+                     " rejects=%zu (key-processor=%zu span-unsolvable=%zu foreign-ref=%zu"
+                     " state-polluted=%zu shape-mismatch=%zu blocks-shared=%zu"
+                     " exc-blocked=%zu) skip-classes=%zu\n",
+                     scanned.dispatchers, scanned.islandsSolvable, scanned.rejects.size(),
+                     scanned.keyProcessor, scanned.spanUnsolvable, scanned.foreignRef,
+                     scanned.statePolluted, scanned.shapeMismatch, scanned.blocksShared,
+                     scanned.excBlocked, scanned.classesSkipped);
+        if (std::getenv("GRUNT_CFF_UNFLATTEN_TRACE") != nullptr) {
+            for (const cff_unflatten::IslandPlan& plan : scanned.islands) {
+                std::fprintf(stderr, "[grunt.CffUnflatten]   island %s#%zu pc=%u\n",
+                             plan.uri.c_str(), plan.methodIndex, plan.headSrcPc);
+            }
+            for (const cff_unflatten::Reject& rej : scanned.rejects) {
+                std::fprintf(stderr, "[grunt.CffUnflatten]   reject %s#%zu pc=%u: %s\n",
+                             rej.uri.c_str(), rej.methodIndex, rej.anchorSrcPc,
+                             rej.why.c_str());
+            }
+        }
+    }
+    if (scanned.islands.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const cff_unflatten::DirtySet dirty =
+        cff_unflatten::rewrite(container, scanned);
+    const cff_unflatten::ProofResult verdict =
+        cff_unflatten::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.CffUnflatten] rewrite: classes=%zu islands=%zu scrambles=%zu"
+                     " entry-restored=%zu entry-trampoline=%zu failed=%zu"
+                     " roundtrip-skip=%zu proof=%s residual=%zu\n",
+                     dirty.classes, dirty.islands, dirty.scrambles, dirty.entryRestored,
+                     dirty.entryTrampoline, dirty.failed, dirty.skippedByRoundTrip,
+                     verdict.ok ? "ok" : "FAILED", verdict.residual);
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.CffUnflatten] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

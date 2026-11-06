@@ -31,6 +31,8 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.MetadataStrip` | Kasumi 元数据残留清理三面：`@dev/kasumi/internal/Metadata` 注解摘除（类/字段/方法三张挂载面，其余注解保留）、水印字段整删（带注解字段 ∨ ConstantValue 为水印串：含 `PROTECTED BY Kasumi` / 含 `Gruntpocalypse` / 前缀 `kasumi_`，树版三判据逐字口径）、反 LLM 注入资源删除（`META-INF/Kasumi/*.md` 前缀 + 内容探针五选一，本仓首个资源面写动词）；方法体不碰（引导/解密器交 indy 还原与下游死码清理） | S2 形状钉面（注解描述符全等 ∧ 资源 URI 前缀+`.md` 形状 ∧ 水印串形状）→ S3 Era 门（三面判据全是 Kasumi 版本实现选择，`Era::Kasumi` 分支唯一合法落点，未判整面关闭一个资源不动）→ S1 互证（资源删除要内容探针坐实注入物，形状命中而探针缺席保留 + `resourceCandidates` 盘点；水印字段要 ConstantValue 内容命中）；注解槽过深度预检（mjbase #158），解不开 fail-closed 不摘 + `annoBlocked` 记账；proof 双门：类数不增 + 资源对账（数只减 + 删除清单逐条不在场）（`SnakeGame-obf.jar` 语料 25 注解 + 10 水印字段 + 4 资源全清，residual=0） | S1 |
 | `grunt.StringPoolFold` | Grunt v2 `StringEncrypt` / v3 `StringArrayedEncrypt` 字符串池读点折回：`(getstatic String[] 池; 紧邻常量下标; aaload)` 三元组原地换 `ldc <明文>`（srcPc 保留、跨度其余擦除）；明文由池链静态复算——clinit 分配前导四连 → arrayInit 块序列（v2 literal `ldc+toCharArray` / v3 arrayed `NEWARRAY T_CHAR+CASTORE`，按常量 KIND 判形）→ `([CJI)String` 解密器（classKey 烧体、seed/key 全装载期常量，自逆 XOR 流静态重放），无外部旁证；直线静态蹦床（indy 还原后产物形）跟一跳，indy 藏面 fail-closed；池字段/arrayInit/解密器不在此删（仍被前导引用，压池属后续批次） | S2 选面（三元组形状 + 池字段描述符）→ S1 定案（池链三件套逐字钉形 + 52 条解密器核窗口唯一命中 + 槽位互证 + 逐下标解密）；任一环缺席/歧义/被混淆打碎整类 fail-closed（boar 语料单跑 0 折叠——Grunteon 全链把 arrayInit 调用藏进 indy 蹦床，fail-closed 正确；`IndyRestore` 上游接通后 19342 站点 / 19244 折叠，residual=0） | S1 |
 | `grunt.IndyRestore` | Grunt v2 `InvokeDynamic` / v3 `ReferenceObfuscate` indy 调用点直接解密回填：simple 形三段串密文（点分 owner/name/desc + kind 位）按 `encrypt` 自逆 XOR 纯算术直解；heavy 形 owner 经 BSM 体 LDC generalKey 解一层、真目标由 owner 类 `@Metadata`（mv≥100 门）d1/d2 数组 `data1 % 59557 == magic2` 自证命中后解出 `name<>desc`；调用点**纯原地**换真实 invoke（static → invokestatic，virtual → invokevirtual/invokeinterface，receiver 槽就是 indy 首参不插不删）；BSM 名随机不进判据，key 定位走三路键链（同名解密器直连 → BSM 体跟随 → 名字族推导 c1/c2，覆盖 NativePipeline 壳死现场） | S2 选面（simple/heavy 7 参 BSM desc 指纹 ∧ 解密器窗口形状，v2/v3 逐字同源）→ S1 定案（解密产物与 indy desc 互证：static 参数段全等 / virtual 首参严格 Object + 其余逐位一致；heavy 另加 `data1 % 59557 == magic2` 完整性自证 + `name<>desc` 严格两段拆分；kind 位只认 0/1）→ S3 Era 门（heavy 的 @Metadata 数组解释版本敏感，`Era::Grunt3` 双指纹判出才激活；simple 面全结构自证不挂 Era）；接口落点容器普查优先 + `--jdk` 穷举集双向作证，两无 fail-closed；材料通道（RuntimeMaterial 运行期材料字段）静态不可解 fail-closed + `materialLane` 记账（boar 语料 78154 指纹站点还原 30924=static 29847+virtual 1077，failed=0，residual=47230 如实挂账；组合链上 StringPoolFold 0 → 19244 折叠；`-Xverify:all` 逐类失败集与输入全等） | S1 |
+| `grunt.CffUnflatten` | Grunt v3 `ControlflowFlattening` 反摊平：state 槽摊平岛（`[ILOAD s; TABLESWITCH]`，键窗连续乱序、default 落岛首真块 = alias face）+ 常量供给桥（inline Add/Sub/Xor/Mul/Div/Math.max 闭链）三件套还原块序——桥 span 静态求值回查键表后前驱 goto 直连真实块（出表键一律剪到 default：直连 default 与原「经岛分发落 default」逐位等价，语义安全下限恒等）、岛与纯形桥整擦、scramble 假桥剪枝、入口真块 moveRange 归位（异常保护区内/junk 前缀退蹦床不移动）、异常 handler 桥重绑；位置边单独守卫（`usersOf` 只看字段引用——已归类条件载体紧邻岛头补 GOTO 钉住落空臂，其余位置落入整岛拒）；processor 桥（键在 `__grt$indy$` proc 体）与 SSA exp 变体 fail-closed 挂账（缺口 #4 余量） | S2 结构事实（state 槽全方法读写 confined ∧ 岛形两条块 ∧ span 常量闭链可解 ∧ alias face ∈ case 目标）；任一环缺席整岛逐位不动；InvokeDispatcher 原生头是天然反误伤面（default 回指岛头 + alias 缺席 → 形状拒）（boar 全链罐 9880 岛还原 1481/类 653，failed=41 fail-closed 如实计 residual；wave2c 正例罐 290 候选全数反误伤、产物逐条目 CRC 与输入全等；组合链 `CffUnflatten,DispatcherRestore` 上 DispatcherRestore 正例面 1181 站点台账零干扰；`-Xverify:all` 基线同挂零新增、类数 3065 不增、双跑一致） | S2 |
+| `grunt.DispatcherRestore` | Grunt v3 `InvokeDispatcher` 调用点反查回填：头锚（ILOAD key 槽 + TABLESWITCH default 回跳方法头 + 无异常表）钉分发器、逐 case 直线转发体（载实参 + 唯一 invoke + ret 型 return）重建键 → 目标表，调用点（补位 null 跑 + 常量 key + invokestatic 分发器）**原地**换真实 invoke（srcPc 保留、末段补位/key 擦除，null 跑 ∈ [addNulls, N] 互证）；分发器本体与键表不删，交 DeadCode/DeadMember 回收 | S2（desc 形 `(LObject;*I)R` static 选面 ∧ 头锚钉形 ∧ case 体转发形 ∧ 键表静态编码 ∧ 调用点常量 key 反查回表）；纯常量键表直查不需 jsim，v2 无此 transformer 无 Era 门（正例罐 283 分发器 / 1181 站点回填 1081，residual=49 为宿主方法 Strict 帧重算既有冲突 fail-closed；boar 全链罐头锚缺席由 post-Redirect junk 前缀所致非 CFF——5827 desc 形候选 0 个有已解 CFF 岛，组合链 `CffUnflatten,DispatcherRestore` 零干扰） | S2 |
 
 `S1` = 语义后果：混淆器为了保持功能必须如此，改了自己就坏。`S2` = 结构性清理：判据成立即安全，但混淆器换代可能换形态。`S3` = 面向未来形态的预留面：当前语料无站点，判据按形态写、按换代样本验收。判据不依赖方法名、签名形状、所在类或注入模板，所以 Grunt 换代不需要改这一行。
 
@@ -95,6 +97,17 @@ Kasumi 改写产物 16/25 类）的对外引用，专链产物上误删（语料
 压缩失败的类按原始字节照常入普查（枚举超集宁误留），连骨架都解不开的类
 census-blind 整轮零删除；通用链 × 专链组合与通用链单跑复验通过，修复前后
 数字与 JVM 实调证据见 kasumi-verify.md §3。
+
+**Grunt v3 摊平反演面（v3 全链罐专用，不入 BoogerV2 主线）**：
+`CffUnflatten` + `DispatcherRestore` 是 v3 语料的块序/调用点还原对——
+BoogerV2 语料无此二形态（主线 15 pass 判据对其天然静默），v3 全链罐上
+先值还原（`IndyRestore`/`NumberFold`，桥 span 求值与 processor 键的解锁
+面）再 `CffUnflatten` 最后 `DispatcherRestore`。`CffUnflatten` 对
+DispatcherRestore 的分发器原生头是反误伤面（alias 缺席整岛拒，wave2c
+正例罐 290 候选全数此桶、产物逐条目 CRC 全等），组合链零干扰；
+boar 全链罐上 DispatcherRestore 的头锚缺席由 post-Redirect junk 前缀
+所致（非 CFF 摊平，`doc/cff-unflatten.impl.md` 语料账本有归因量化），
+junk 摘除与 processor 键解锁同属缺口 #4 余量。
 
 
 ## 全局不变量

@@ -255,4 +255,14 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
+/// @brief `grunt.CffUnflatten`：Grunt v3 ControlflowFlattening 反摊平（Flow
+/// IR 岛形结构自证判据，无外部旁证注入面；v3-only，Era 不消费——SSA 变体
+/// 不同构挂账；processor 桥键静态不可解整岛保留，解锁路径记 doc）。
+class CffUnflattenPass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
 }   // namespace grunt

@@ -47,6 +47,8 @@
 | [string-pool-fold.impl.md](string-pool-fold.impl.md) | 本仓的 Scan / Rewrite / Proof，含算法源锚点、蹦床跟随与语料账本 |
 | [dispatcher-restore.md](dispatcher-restore.md) | Grunt v3 InvokeDispatcher：tableswitch 分发器、头锚识别、调用点 key 反查回填的形态 |
 | [dispatcher-restore.impl.md](dispatcher-restore.impl.md) | 本仓的 Scan / Rewrite / Proof，含算法源锚点、promote 纪律与语料账本 |
+| [cff-unflatten.md](cff-unflatten.md) | Grunt v3 ControlflowFlattening：state 槽摊平岛、常量供给桥、alias-face 剪枝反演的形态 |
+| [cff-unflatten.impl.md](cff-unflatten.impl.md) | 本仓的 Scan / Rewrite / Proof，含七相判据、执行序与语料账本 |
 | [kasumi-verify.md](kasumi-verify.md) | Kasumi 专链端到端复现记录：五项门逐项数字、与树版口径差异点、通用链取证 |
 
 ## obf 行为账

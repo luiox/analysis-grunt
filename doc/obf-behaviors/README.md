@@ -51,7 +51,7 @@
 | ReferenceObfuscate | S1 | 部分 | IndyRestore（缺口 #2 闭环：simple 直接解密回填 + heavy `@Metadata` 互证回填，`Era::Grunt3` 门；RuntimeMaterial 联动的材料通道静态不可解 fail-closed → 缺口 #15 联动面）+ IndyFold（S3 兜底） |
 | StringArrayedEncrypt | S1 | 已处理 | StringPoolFold（arrayed 形折叠；供给链被 indy 藏面时依赖上游还原，见 doc/string-pool-fold.impl.md 语料账本） |
 | InvokeDispatcher | S2 | 已处理 | DispatcherRestore（头锚 + 键表 + 调用点 key 反查回填；分发器本体与键表交 DeadCode/DeadMember 回收。宿主方法被 CFF 摊平或调用点被 ReferenceObfuscate indy 化时依赖链序/上游还原，见 doc/dispatcher-restore.impl.md 语料账本） |
-| ControlflowFlattening（含 SSA exp） | S1/S2 | 无处理 | 缺口 #4 |
+| ControlflowFlattening（含 SSA exp） | S1/S2 | 已处理（主面） | CffUnflatten（岛识别 + span 求值反摊平 + alias-face 剪枝 + 入口归位/handler 重绑/位置边钉，缺口 #4 主面闭环，见 doc/cff-unflatten.impl.md 语料账本；processor 键解锁（NumberFold 先行）+ SSA exp 变体 → 缺口 #4 余量） |
 | ArithmeticSubstitute（Hidden） | S2 | 无处理 | 缺口 #7 |
 | StringEqualsOptimize | S2 | 无处理 | 缺口 #11 |
 | ParameterObfuscate | S2 | 无处理 | 缺口 #12 |
@@ -77,7 +77,7 @@
 1. ~~string-encrypt 还原面~~（已闭环）：`grunt.StringPoolFold` 承载（v2/v3 同一 residue），池链三件套结构自证 + 自逆 XOR 流静态复算。boar 语料实证：Grunteon 全链产物把 clinit 的 arrayInit 调用藏进 indy 蹦床，折叠面在 indy 还原（缺口 #2）打通后才能接通。
 2. ~~indy 直接解密还原~~（缺口 #2 已闭环）：`grunt.IndyRestore` 承载——simple 形三段串按 `encrypt` 自逆 XOR 纯算术直解 + 三路键链（同名解密器/BSM 体跟随/名字族推导，覆盖 NativePipeline BSM 壳死现场）；heavy 形 owner 经 BSM 体 generalKey 解一层 + owner 类 `@Metadata`（mv≥100 门）d1/d2 数组 `data1 % 59557 == magic2` 自证回填（`Era::Grunt3` 门）。boar 语料（Grunteon 全链）78154 指纹站点还原 30924，组合链接通 StringPoolFold 0 → 19244 折叠；材料通道（RuntimeMaterial 联动）静态不可解 fail-closed 挂 `materialLane`（42228），随缺口 #15 联动面与模拟执行原语再扩。`IndyFold`（S3 模拟面）保留为兜底。
 3. ~~InvokeDispatcher 调用点反查~~（缺口 #3 已闭环）：`grunt.DispatcherRestore` 承载——头锚（ILOAD key 槽 + TABLESWITCH default 回跳方法头 + 无异常表）钉分发器、逐 case 直线转发体重建键 → 目标表、调用点 key 常量反查回填真实 invoke（原地换 + 末段补位/key 擦除，null 跑 ∈ [addNulls, N] 互证）；分发器本体与键表不删，交 DeadCode/DeadMember 回收。正例罐（Grunteon 仅 InvokeDispatcher 自产）1181 站点回填 1081，residual=49 为宿主方法 Strict 帧重算既有冲突（无编辑探针复现）fail-closed；boar 全链罐不覆盖（config 顺序 InvokeDispatcher 先于 CFF/ReferenceObfuscate，5827 desc 形候选全数头锚缺席），组合链 `IndyRestore,DispatcherRestore` corpus-regress 绿 + JVM verify 零新增。
-4. **CFF 反摊平**：v3 `ControlflowFlattening`/SSA 的 dispatcher 岛识别 + 单岛反摊平（state → 块序重建）+ **alias-face 剪枝**（同一真实块的多键别名只留活键）；key processor 藏形由 NumberFold 先解锁。
+4. ~~CFF 反摊平~~（缺口 #4 主面已闭环）：`grunt.CffUnflatten` 承载——岛识别（state 槽 confinement + `[ILOAD s; TABLESWITCH]` 键窗 + alias face ∈ case 目标）→ 桥 span 常量闭链静态求值回查键表 → 前驱直连真实块（出表键剪到 default，语义安全下限恒等）+ 岛/纯形桥整擦 + scramble 剪枝 + 入口块归位（异常保护区/junk 前缀退蹦床）+ handler 桥重绑 + 位置边守卫（条件载体紧邻岛头补 GOTO 钉落空臂）。boar 全链罐 9880 岛还原 1481（类 653，failed=residual=41 fail-closed 如实计），wave2c 正例罐（仅 InvokeDispatcher）290 候选全数反误伤产物逐条目 CRC 全等，corpus-regress 绿 + JVM `-Xverify:all` 基线同挂零新增 + 类数 3065 不增 + 双跑一致。**余量**：processor 键藏形（`__grt$indy$` proc 体，6201/8358 拒绝桶）由 NumberFold 先解锁；SSA exp 变体（LookupSwitch + per-case stub + passArgs 编组）不同构挂账；boar 分发器头锚缺席由 post-Redirect junk 前缀所致（5827 desc 形候选 0 个有已解 CFF 岛），junk 摘除属独立面。
 
 **P2——加密与控制流扩展面**：
 

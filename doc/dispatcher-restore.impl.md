@@ -87,9 +87,17 @@ rewrittenVirtual}` → `ProofResult{ok, failed, residual}`。Era 不消费
   Grunteon 按 config 顺序执行（`Grunteon.create` 直 map
   `config.transformers`；orderRules 只是事后断言）；(b) 容器侧——5827 个
   desc 形 static 候选全数形状拒绝（4425 头锚第二条非 TABLESWITCH +
-  1402 首条非 key 槽 ILOAD，CFF 摊平所致）。会命中的 config 产物：
-  InvokeDispatcher 排在 Controlflow 之后（或 CFF 关闭）且调用点未被
-  ReferenceObfuscate indy 化（或已经 IndyRestore 还原）。
+  1402 首条非 key 槽 ILOAD）。**归因修正**（cff_unflatten 收口批实证，
+  修正本条旧记「CFF 摊平所致」）：与 `grunt.CffUnflatten` 解岛台账
+  join 后 5827 候选中 **0 个**命中已解岛、**5784 个**根本没有 CFF 岛
+  （仅 43 个有岛：23 processor 门 / 18 形状 / 2 岛外引用）——头锚缺席
+  由 post-Redirect junk 前缀所致（头锚实拍 `[iload_0; ldc_w; i2l; …]`
+  数值垃圾前缀，上游 junk/数值藏形在 Redirect 之后运行）；TrampolineSqueeze
+  单跑（4729 处）不改变该拒绝分布，`CffUnflatten,DispatcherRestore`
+  组合链同样 0 分发器。会命中的 config 产物：InvokeDispatcher 排在
+  Controlflow 之后（或 CFF 关闭）且调用点未被 ReferenceObfuscate indy 化
+  （或已经 IndyRestore 还原）；解锁面属 junk 前缀/processor 族
+  （缺口 #4 余量），不在 CffUnflatten 语义面内。
 - **正例罐**（boar-main-origin.jar + 仅 InvokeDispatcher `chance=1.0`，
   Grunteon 3.0.0 build 260705 自产，775 类）：识别 283 分发器 / 52 形状
   拒；站点 1181（keyNotConst=0 keyNotInTable=0 padMismatch=0）；rewrite

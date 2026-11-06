@@ -227,6 +227,29 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.DispatcherRestore"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.CffUnflatten",
+            [] { return makeFailClosed<CffUnflattenPass>("grunt.CffUnflatten"); },
+            "Statically un-flatten Grunt v3 ControlflowFlattening (Flow IR"
+            " variants): recognize per-method dispatcher islands ([ILOAD state;"
+            " TABLESWITCH] blocks with contiguous shuffled key windows whose"
+            " default targets the island's first real block), evaluate the"
+            " constant-fed state spans on each incoming bridge (inline"
+            " Add/Sub/Xor/Mul/Div/Math.max closed chains; processor-mode spans"
+            " stay fail-closed since the key lives behind the key-processor"
+            " trampoline), then rewrite each island: bridge predecessors jump"
+            " straight to their real case targets (alias-face pruning sends"
+            " leftover and out-of-table keys to the default target), stateless"
+            " junk gates re-aim their branch arm via the unique constant-fed"
+            " feeder, the entry bridge is erased and the original entry block"
+            " moves back to the method head (trampoline fallback when it sits"
+            " inside an exception range), exception handler bridges rebind to"
+            " their bridge targets and end anchors on erased blocks shift"
+            " forward. Entire islands stay untouched when any reference,"
+            " shape, slot-confinement or exception edge fails to resolve.");
+        r.is_err()) {
+        return Err(std::string("grunt.CffUnflatten"));
+    }
     return Ok();
 }
 

@@ -154,4 +154,20 @@ inline constexpr ca::i32 kGruntDispatcherMaxHandles = 10;
 ///        it.value.size > 1 }`——键表 case 数 ≥ 2 是生成面事实，作形状门）。
 inline constexpr ca::i32 kGruntDispatcherMinCases = 2;
 
+// ---- CFF dispatcher 岛形态（v3 专属；grunt3 FlowControlFlowFlattener.kt
+//      生成面 + boar-main.jar 实证。源锚 e41e852）--------------------------
+
+/// @brief inline span 词汇表的 Math.max 三元组（`StateOp.MaxConst.emitTo`
+///        逐字面 `INVOKESTATIC "java/lang/Math", "max", "(II)I"`）。
+inline constexpr std::string_view kGruntCffMathMaxOwner = "java/lang/Math";
+inline constexpr std::string_view kGruntCffMathMaxName  = "max";
+inline constexpr std::string_view kGruntCffMathMaxDesc  = "(II)I";
+
+/// @brief processor 形 span 与链内 processor 调用的动作描述符
+///        （CffKeyProcessorRegistry ActionDesc / emitProcessorStateProgram 的
+///        INVOKESTATIC desc——span 链内非 Math.max 的 `(II)I` INVOKESTATIC
+///        一律按 key processor 藏形 fail-closed，boar 实证其落在
+///        `__grt$indy$` 蹦床后）。
+inline constexpr std::string_view kGruntCffProcessorActionDesc = "(II)I";
+
 }   // namespace grunt::knowledge

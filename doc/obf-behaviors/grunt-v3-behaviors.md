@@ -34,7 +34,7 @@ v3 是 Kotlin 重写的管线：`Grunteon` 持 `transformers: List<Pair<Transfor
 | 9 | Encryption | StringArrayedEncrypt | String[] 池加密（carray 密文直存） | S1 | 无处理 |
 | 10 | Encryption | ArithmeticSubstitute（Hidden） | 算术指令恒等替换 | S2 | 无处理 |
 | 11 | Controlflow | ControlflowJump | junk 分支/mangled IF/opaque predicate 门/异常桥 | S1/S2 | 部分（TrampolineSqueeze/PredicateFold/NumberFold/DeadCode 处理静态可裁决子集；processor 门与异常桥无面） |
-| 12 | Controlflow | ControlflowFlattening | Flow IR 摊平（dispatcher 岛/state key/fake case） | S1/S2 | 无处理 |
+| 12 | Controlflow | ControlflowFlattening | Flow IR 摊平（dispatcher 岛/state key/fake case） | S1/S2 | 已处理（CffUnflatten，缺口 #4 主面；processor 键 + SSA 余量挂账） |
 | 13 | Controlflow | ControlflowFlatteningSSA（Hidden） | SSA IR 摊平（exp 实验面） | S1/S2 | 无处理 |
 | 14 | Controlflow | FlowIRRoundTrip（Hidden） | 方法体经 Flow IR 往返 | 伴随面 | 伴随面（infra） |
 | 15 | Controlflow | SSARoundTrip（Hidden） | 方法体经 SSA IR 往返 | 伴随面 | 伴随面（infra） |
@@ -295,34 +295,39 @@ v2 `ArithmeticEncrypt` 的 v3 同构（`encrypt/ArithmeticSubstitute.kt`，标 `
 
 **判据分级**：S1（dispatcher 键表与 state 传播在块序已知时编译期可重建——单 dispatcher 岛可反摊平）/ S2（多岛、key processor 藏形、fake/junk case 识别是结构事实）。
 
-**本仓现状**：无处理。还原缺口（缺口清单 P1）：dispatcher 岛识别 + 单岛反摊平（state → 块序重建）+ **alias-face 剪枝**（同一真实块经多个 state 键别名进入时，键表里只有一个是活键，其余是 alias face，剪掉才能恢复线性块序）；key processor 藏形由 NumberFold 解锁。morpher obf-forms §3.7 已给 dispatcher 岛形态判据。
+**本仓现状**：`grunt.CffUnflatten` 承载（缺口 #4 主面闭环，见 doc/cff-unflatten.md / cff-unflatten.impl.md）。dispatcher 岛识别 + 单岛反摊平（桥 span 常量闭链静态求值回查键表 → 前驱 goto 直连真实块，出表键剪到 default——直连 default 与原「经岛分发落 default」逐位等价）+ **alias-face 剪枝**（default 落岛首真块，入口键 case 同址）+ 入口块归位（异常保护区/junk 前缀退蹦床）+ handler 桥重绑；位置边单独守卫（usersOf 只看字段引用，条件载体紧邻岛头补 GOTO 钉落空臂）。boar 全链罐 9880 岛还原 1481（类 653）；processor 键藏形（`__grt$indy$` proc 体）fail-closed 挂账（6201/8358 拒绝），由 NumberFold 先解锁——缺口 #4 余量 = processor 键 + SSA exp 变体。morpher obf-forms §3.7 已给 dispatcher 岛形态判据。
 
-**样例**（单 dispatcher 岛 + fake case + alias face）：
+**样例**（单 dispatcher 岛 + fake case + alias face；boar-main.jar `AD.a` 实证同构）：
 
 ```jasm
 .super java/lang/Object
 .class public super GtCff {
     .method public static run (I)I {
         code: {
-            ldc 100                           // state 初始化（判据锚点：方法头
-            istore 1                          //   ISTORE 常量 → GOTO dispatcher）
+            ldc 100                           // 入口桥（判据锚点：方法头 ISTORE
+            istore 1                          //   span 闭链供给 key → GOTO 岛头）
             goto Ld
         Ld:
             iload 1                           // dispatcher 岛：ILOAD state +
-            tableswitch {                     //   tableswitch（判据锚点：default
-                min: 100,                     //   回跳 dispatcher 头，键表连续）
-                max: 102,
-                cases: { Ld, Lb0, Lfake },
-                default: Ld
+            tableswitch {                     //   tableswitch（判据锚点：键窗
+                min: 100,                     //   连续乱序、default 落岛首真块
+                max: 102,                     //   = alias face，∈ case 目标）
+                cases: { Lb0, Lb1, Lfake },
+                default: Lb0
             }
-        Ld_alias:                             // alias face（判据锚点）：GOTO 回
-            goto Ld                           //   dispatcher 的别名块——P1 剪枝对象
         Lb0:
             iload 0                           // 真实块：原逻辑 + 尾部改写 state
-            iconst_3                          //   （istore 101）→ GOTO dispatcher
+            iconst_3                          //   （istore 101）→ GOTO 岛头
             imul
             istore 2
             ldc 101
+            istore 1
+            goto Ld
+        Lb1:
+            iload 0
+            iconst_1
+            isub
+            ldc 102
             istore 1
             goto Ld
         Lfake:
@@ -336,7 +341,7 @@ v2 `ArithmeticEncrypt` 的 v3 同构（`encrypt/ArithmeticSubstitute.kt`，标 `
 
 ### 2.3 ControlflowFlatteningSSA（Hidden）：SSA 摊平实验面
 
-与 §2.2 同构但走 SSA IR（`SSAAstBuilder` → `SSAControlFlowFlattener`/`SSARegionControlFlowFlattener` → `JvmSSAExporter` 导回），`@HiddenTransformer` 实验面。保守跳过构造器（uninitializedThis 不能被 dispatcher 分派）、synthetic bridge、`$default` 方法与未初始化 NEW 跨控制流的方法；预算门 `MaxInstructions=1000`/`MaxLocals=64`/`MaxRegionBlocks=8`/`MaxEstimatedDispatcherArgs=64` 超限跳过。判据与还原面同 §2.2（SSA 摊平导回后仍是 dispatcher 岛形态），本仓无处理，语料命中前按 §2.2 的缺口一并考虑。
+与 §2.2 同构但走 SSA IR（`SSAAstBuilder` → `SSAControlFlowFlattener`/`SSARegionControlFlowFlattener` → `JvmSSAExporter` 导回），`@HiddenTransformer` 实验面。保守跳过构造器（uninitializedThis 不能被 dispatcher 分派）、synthetic bridge、`$default` 方法与未初始化 NEW 跨控制流的方法；预算门 `MaxInstructions=1000`/`MaxLocals=64`/`MaxRegionBlocks=8`/`MaxEstimatedDispatcherArgs=64` 超限跳过。判据与还原面同 §2.2（SSA 摊平导回后仍是 dispatcher 岛形态），本仓无处理——SSA 导回形是 LookupSwitch + per-case stub + passArgs 编组，与 `CffUnflatten` 的 tableswitch 岛家族不同构，缺口 #4 余量挂账（语料命中前按 §2.2 缺口一并考虑）。
 
 ### 2.4 FlowIRRoundTrip / SSARoundTrip（Hidden）：IR 往返 infra
 
@@ -728,12 +733,13 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（`TrashClassProvider
 已处理：DeclaredFieldsExtract→ConstValuePromote、NumberBasicEncrypt→NumberFold（全覆盖）、
         InvokeProxy→ProxyInline、FieldAccessProxy→FieldAccessProxy、
         FakeSyntheticBridge→FlagsStrip、StringArrayedEncrypt→StringPoolFold、
-        InvokeDispatcher→DispatcherRestore（缺口 #3）
+        InvokeDispatcher→DispatcherRestore（缺口 #3）、
+        ControlflowFlattening→CffUnflatten（缺口 #4 主面；processor 键 + SSA 余量挂账）
 部分  ：ControlflowJump→TrampolineSqueeze/PredicateFold/NumberFold/DeadCode
         （processor 调用门、异常桥缺口）
         ReferenceObfuscate→IndyRestore（缺口 #2，materialLane/keyMissing fail-closed）
         + IndyFold（S3 兜底）
-无处理：ControlflowFlattening（含 SSA）、ArithmeticSubstitute、StringEqualsOptimize、
+无处理：ControlflowFlatteningSSA（缺口 #4 余量）、ArithmeticSubstitute、StringEqualsOptimize、
         ParameterObfuscate、TrashClassGenerator、RuntimeMaterial、AntiLLM、Watermark、
         DecompilerCrasher、垃圾类、改名族
 伴随面：FlowIRRoundTrip、SSARoundTrip、NativePreProcessor、ReflectionSupport、MappingApplier
