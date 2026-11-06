@@ -112,6 +112,21 @@ residual=41 与 `failed=41` 同源（processor 相邻面遗留，见语料账本
   真分发器全部被 CFF 摊平成岛。**真实解锁路径 = IndyRestore 还原 proc
   体内 indy → ConstantCall 折叠纯算术 proc → 本 pass processor 桥可解
   → DispatcherRestore**。
+- **解锁链落地批（processor 键解锁链，ConstantCall 扩面后实链复测）**：
+  链 `IndyRestore,ConstantCall,CffUnflatten,DispatcherRestore` 上
+  ConstantCall 7→**687**（413 类），本 pass `key-processor=6201→**6121**`
+  （消化 80：**66 座岛转 solvable 进改写**、14 座转 foreign-ref 桶）、
+  `islands-solvable=1522→1588`、改写 `islands=1481→1547`、
+  failed=residual=41 不变；**DispatcherRestore 仍 0**——5827 候选中
+  23 个 processor 门岛全部属 native action 面（boar 配置
+  `keyProcessorNativeCandidateRatio=1.0`，19701 座 `(II)I` proc 蹬床的
+  6117 个恢复目标 100% `ACC_NATIVE` 无体，算术已随 native pipeline 出
+  jar；三路取证见 doc/constant-call.impl.md 语料账本），Math.max 蹬床
+  面消化的 80 座岛没有一座落在分发器方法上，头锚不出场。加挂
+  NumberFold/PredicateFold 变体验证同样 0——瓶颈是 native 墙，不是
+  链序。DispatcherRestore 的 boar 解锁需 native action 静态语义（无
+  native 库无解），如实挂账。双跑产物逐条目 CRC 全等、类数 3065 不增、
+  JVM `-Xverify:all` 基线同挂零新增、origin 罐照旧零站点静默全等。
 - **wave2c 正例罐**（缺口 #3 语料复用）：单跑
   `dispatchers=290 islands-solvable=0 rejects=290`（全数形状不符 =
   InvokeDispatcher 原生头反误伤面），产物逐条目 CRC 与输入全等

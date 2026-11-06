@@ -372,7 +372,7 @@ TEST(ConstantCallScan, IgnoresTargetsOutsideContainer)
 TEST(ConstantCallScan, RejectsTargetWhoseClassInitHasBody)
 {
     // invokestatic 是类的主动使用：删掉调用会改变 <clinit> 的执行时机。
-    // 目标类初始化器非空时必须拒绝。
+    // 目标类初始化器非空时必须拒绝——**跨类**调用照旧。
     model::ResourceContainer container = makeContainer({
         {"fixture/Util",
          ".super java/lang/Object\n"
@@ -407,6 +407,114 @@ TEST(ConstantCallScan, RejectsTargetWhoseClassInitHasBody)
     const ScanResult result = scan(container);
     EXPECT_TRUE(result.sites.empty());
     EXPECT_NE(findReject(result, RejectReason::ClassInitPresent), nullptr);
+}
+
+/// proc 形夹具（boar 蹬床的最小闭环）：类带非中性 clinit，本类 helper 体是
+/// `[iload a; iload b; invokestatic java/lang/Math.max (II)I; ireturn]`，
+/// 本类 caller 喂双常量——同类门豁免 + Math.max 接管两条扩面各钉一半。
+std::string procSource(const std::string& helperBody)
+{
+    return ".super java/lang/Object\n"
+           ".class public super fixture/Proc {\n"
+           "  .field public static counter I\n"
+           "  .method static <clinit> ()V {\n"
+           "    code: {\n"
+           "      iconst_1\n"
+           "      putstatic fixture/Proc.counter I\n"
+           "      return\n"
+           "    }\n"
+           "  }\n"
+           "  .method public static proc (II)I {\n"
+           "    parameters: { a, b },\n"
+           "    code: {\n" +
+           helperBody +
+           "    }\n"
+           "  }\n"
+           "  .method public static call ()I {\n"
+           "    code: {\n"
+           "      bipush 3\n"
+           "      bipush 9\n"
+           "      invokestatic fixture/Proc.proc (II)I\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+}
+
+TEST(ConstantCallScan, KeepsSameClassCallWhenClassInitHasBody)
+{
+    // 同类调用不触发初始化（JVMS 5.5：本类方法执行时类已在初始化中/已完成），
+    // 删调用不移时机——非中性 clinit 只豁免同类站点，跨类照旧拒绝。
+    // 这是 processor 键解锁链的门面：boar 全部可折蹬床站点都在非中性类里。
+    model::ResourceContainer container = makeContainer({
+        {"fixture/Proc", procSource("      iload a\n"
+                                    "      iload b\n"
+                                    "      iadd\n"
+                                    "      bipush 7\n"
+                                    "      imul\n"
+                                    "      ireturn\n")},
+        {"fixture/Util", utilSource()},
+        {"fixture/Caller",
+         callerSource("      bipush 3\n"
+                      "      bipush 4\n"
+                      "      invokestatic fixture/Util.pure (II)I\n"
+                      "      ireturn\n")},
+    });
+
+    const ScanResult result = scan(container);
+    // 同类站点在 sites（Util 目标中性，跨类站点本来就在）；Proc 目标非中性
+    // clinit，同类豁免是它还在的唯一理由。
+    ASSERT_EQ(result.sites.size(), 2u);
+    const Site* procSite = nullptr;
+    for (const Site& s : result.sites) {
+        if (s.targetOwner == "fixture/Proc") procSite = &s;
+    }
+    ASSERT_NE(procSite, nullptr);
+    EXPECT_EQ(procSite->callerOwner, "fixture/Proc");
+    EXPECT_EQ(static_cast<ca::i32>(procSite->value.intBits), 84);   // (3+9)*7
+}
+
+TEST(ConstantCallScan, FoldsMaxBackedHelper)
+{
+    // 蹬床体还原成 Math.max 调用（IndyRestore 后的 boar 形态）：求值器必须有
+    // Math.max 接管才算得出；否则整面在 EvalBadState 拒。
+    model::ResourceContainer container = makeContainer({
+        {"fixture/Proc", procSource("      iload a\n"
+                                    "      iload b\n"
+                                    "      invokestatic java/lang/Math.max (II)I\n"
+                                    "      ireturn\n")},
+    });
+
+    const ScanResult result = scan(container);
+    ASSERT_EQ(result.sites.size(), 1u);
+    ASSERT_TRUE(result.sites.front().value.known);
+    EXPECT_EQ(static_cast<ca::i32>(result.sites.front().value.intBits), 9);
+}
+
+TEST(ConstantCallRewrite, FoldsSameClassMaxHelperInPlace)
+{
+    // 同类 + 非中性 clinit + Math.max 蹬床：三条扩面合流的 boar 最小闭环，
+    // 折完调用消失、字面量出现、脏类是本类。
+    model::ResourceContainer container = makeContainer({
+        {"fixture/Proc", procSource("      iload a\n"
+                                    "      iload b\n"
+                                    "      invokestatic java/lang/Math.max (II)I\n"
+                                    "      ireturn\n")},
+    });
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_EQ(dirty.applied, 1u);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+    EXPECT_EQ(dirty.uris.front(), std::string("fixture/Proc.class"));
+
+    const std::string after = disassemble(classBytes(container, "fixture/Proc.class"));
+    EXPECT_EQ(countOf(after, "invokestatic fixture/Proc.proc"), 0u) << after;
+    EXPECT_NE(after.find("bipush 9"), std::string::npos) << after;
+    // proc 蹬床本体与 clinit 不在本次改写面（折叠只动调用点区间）。
+    EXPECT_NE(after.find("invokestatic java/lang/Math.max"), std::string::npos) << after;
 }
 
 // ============================================================================

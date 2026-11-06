@@ -295,7 +295,7 @@ v2 `ArithmeticEncrypt` 的 v3 同构（`encrypt/ArithmeticSubstitute.kt`，标 `
 
 **判据分级**：S1（dispatcher 键表与 state 传播在块序已知时编译期可重建——单 dispatcher 岛可反摊平）/ S2（多岛、key processor 藏形、fake/junk case 识别是结构事实）。
 
-**本仓现状**：`grunt.CffUnflatten` 承载（缺口 #4 主面闭环，见 doc/cff-unflatten.md / cff-unflatten.impl.md）。dispatcher 岛识别 + 单岛反摊平（桥 span 常量闭链静态求值回查键表 → 前驱 goto 直连真实块，出表键剪到 default——直连 default 与原「经岛分发落 default」逐位等价）+ **alias-face 剪枝**（default 落岛首真块，入口键 case 同址）+ 入口块归位（异常保护区/junk 前缀退蹦床）+ handler 桥重绑；位置边单独守卫（usersOf 只看字段引用，条件载体紧邻岛头补 GOTO 钉落空臂）。boar 全链罐 9880 岛还原 1481（类 653）；processor 键藏形（`__grt$indy$` proc 体）fail-closed 挂账（6201/8358 拒绝），由 NumberFold 先解锁——缺口 #4 余量 = processor 键 + SSA exp 变体。morpher obf-forms §3.7 已给 dispatcher 岛形态判据。
+**本仓现状**：`grunt.CffUnflatten` 承载（缺口 #4 主面闭环，见 doc/cff-unflatten.md / cff-unflatten.impl.md）。dispatcher 岛识别 + 单岛反摊平（桥 span 常量闭链静态求值回查键表 → 前驱 goto 直连真实块，出表键剪到 default——直连 default 与原「经岛分发落 default」逐位等价）+ **alias-face 剪枝**（default 落岛首真块，入口键 case 同址）+ 入口块归位（异常保护区/junk 前缀退蹦床）+ handler 桥重绑；位置边单独守卫（usersOf 只看字段引用，条件载体紧邻岛头补 GOTO 钉落空臂）。boar 全链罐 9880 岛还原 1481（类 653）；processor 键藏形（`__grt$indy$` proc 体）经解锁链落地批消化 80 座（ConstantCall 同类豁免 + Math.max 接管，6201→6121）——剩余 6121 为静态天花板（boar `keyProcessorNativeCandidateRatio=1.0`，proc 恢复目标 100% native 无体，算术不在 jar 里）——缺口 #4 余量 = native action 键（须 native 库）+ SSA exp 变体。morpher obf-forms §3.7 已给 dispatcher 岛形态判据。
 
 **样例**（单 dispatcher 岛 + fake case + alias face；boar-main.jar `AD.a` 实证同构）：
 

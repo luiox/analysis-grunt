@@ -138,6 +138,29 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
                                -> const jsim::reflect::ClassMeta* { return nullptr; });
     jsim::indy::install(exec.session());
 
+    // Math.max (II)I 接管（本文件内最小扩面，申报理由： IndyRestore 还原
+    // `__grt$indy$` 蹬床体内的 indy 后，CFF inline 桥的 MaxConst 站点从
+    // 「蹬床调用」还原成「蹬床体内 invokestatic java/lang/Math.max(II)I」；
+    // 求值蹬床体时必然踩到这条 JDK 调用，jsim 核心/num 包没有 JDK 数学面，
+    // 缺这个接管整条面在 EvalBadState 拒——processor 键解锁链断在最后一环。
+    // Math.max 是全序纯函数：双常量实参下值唯一确定；unknown 按未知口径
+    // 传播（折叠面 ValueKindUnsupported 拒），不编值。）
+    exec.session().callMocks["java/lang/Math.max(II)I"] =
+        [](jsim::Frame& frame) -> jsim::Result<jsim::SimValue, jsim::Bail> {
+            jsim::Result<jsim::SimValue, jsim::Bail> b = frame.popChecked();
+            if (!b.isOk()) return b;
+            jsim::Result<jsim::SimValue, jsim::Bail> a = frame.popChecked();
+            if (!a.isOk()) return a;
+            if (!a.value().known || !b.value().known) {
+                return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
+                    jsim::SimValue::unknownOf(jsim::ValType::I32));
+            }
+            const ca::i32 va = static_cast<ca::i32>(a.value().intBits);
+            const ca::i32 vb = static_cast<ca::i32>(b.value().intBits);
+            return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
+                jsim::SimValue::knownI32(va > vb ? va : vb));
+        };
+
     forEachClass(container, [&](const ClassEntry& entry) {
         scanGuard("evaluate", entry.uri, [&] {
             auto session = openSession(*entry.bytes);
@@ -148,17 +171,32 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
             if (group == byOwner.end()) return;
 
             if (!scan_tools::classInitNeutral(*session)) {
+                // 类初始化门：跨类调用删掉会改变被调类的初始化时机——照旧
+                // 整组拒绝。同类调用（boar proc 蹬床形态：NativePreProcessor
+                // 的桥与蹬床同类）豁免——JVMS 5.5：本类方法开始执行时类已经
+                // 在初始化中/已完成，同类 INVOKESTATIC 不触发初始化，删调用
+                // 不移时机；豁免站点的纯性由下面的封闭环境求值独立证明
+                // （boar 取证：全部 3262 个可折蹬床站点都落在非中性 clinit
+                // 类里，门不豁免则整条 processor 键解锁链空转）。
+                bool anyKept = false;
                 for (const ca::usize si : group->second) {
-                    rejects.push_back(RejectedSite{sites[si].callerOwner, sites[si].callerMethod,
-                                                   sites[si].callSrcPc,
+                    const Site& site = sites[si];
+                    if (site.targetOwner == site.callerOwner) {
+                        anyKept = true;
+                        continue;
+                    }
+                    rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod,
+                                                   site.callSrcPc,
                                                    RejectReason::ClassInitPresent});
                     ok[si] = 2;
                 }
-                return;
+                if (!anyKept) return;
             }
 
             for (const ca::usize si : group->second) {
                 Site& site = sites[si];
+
+                if (ok[si] == 2) continue;   // 门组拒绝已记账
 
                 if (!ir::hasCode(*session, site.targetMethodIndex)) {
                     rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod,

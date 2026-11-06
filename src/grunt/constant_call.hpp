@@ -25,7 +25,17 @@
 ///      可静态重放且无外部副作用」的证明。
 ///
 /// 额外的保守面（不算判据，是拒绝理由）：被调类的 `<clinit>` 必须缺失或
-/// 只剩 `return`——否则删掉调用会改变类初始化时机。
+/// 只剩 `return`——否则删掉调用会改变类初始化时机。**同类豁免**（JVMS 5.5）：
+/// 本类方法开始执行时类已经在初始化中/已完成，同类 `INVOKESTATIC` 不触发
+/// 初始化，删调用不移时机——豁免站点的纯性仍由封闭环境求值独立证明。
+/// （boar 取证：processor 键解锁链的全部可折蹬床站点都落在非中性 clinit
+/// 类里，门不豁免则整条链空转。）
+///
+/// 求值环境接管（本残留自带）：`java/lang/Math.max(II)I`——IndyRestore 还原
+/// `__grt$indy$` 蹬床体内 indy 后，CFF inline 桥的 MaxConst 站点落在
+/// `java/lang/Math.max(II)I` 上；jsim 核心/num 包无 JDK 数学面，缺接管整条
+/// 面在 EvalBadState 拒。max 是全序纯函数，双常量实参下值唯一确定，
+/// unknown 按未知口径传播。
 #pragma once
 
 #include <string>

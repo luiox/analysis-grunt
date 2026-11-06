@@ -22,7 +22,11 @@
 2. **实参定值**：从调用点向前逐条走，每条都必须是纯常量装载，累计槽数必须**恰好等于**描述符参数槽数（`long`/`double` 双槽）。中途遇到任何非常量装载（`iload`、`getstatic`、`dup` 等）即拒绝。`ldc` 经会话常量池解析：数值常量接受，`String`/`Class`/`MethodHandle` 等一律拒绝（不猜内容）。
 3. **求值成功**：用 mjbase 的 `asm_evaluator` 在常量实参下跑目标方法。求值子集只含数值运算、栈整形、分支与返回——**不含字段访问、数组访问、方法调用、对象分配、显式抛出**。因此「跑出值」等价于「这条执行路径无堆副作用」。
 
-额外保守面（不算判据，是拒绝理由）：被调类的 `<clinit>` 必须缺失或只剩 `NOP`/`RETURN` 且无异常表。理由：`invokestatic` 是类的主动使用，删掉调用会改变类初始化时机；只有确认初始化器什么都不做才允许折。
+额外保守面（不算判据，是拒绝理由）：被调类的 `<clinit>` 必须缺失或只剩 `NOP`/`RETURN` 且无异常表。理由：`invokestatic` 是类的主动使用，删掉调用会改变类初始化时机；只有确认初始化器什么都不做才允许折。**同类豁免**（JVMS 5.5）：调用点与目标同类时，本类方法开始执行时类已经在初始化中/已完成，同类 `INVOKESTATIC` 不触发初始化，删调用不移时机——豁免；豁免站点的纯性仍由求值独立证明（boar 取证：processor 键解锁链全部 3262 个可折蹬床站点都在非中性 clinit 类里，门不豁免整条链空转；跨类站点照旧拒绝）。
+
+### 求值环境接管：`java/lang/Math.max(II)I`
+
+ IndyRestore 还原 `__grt$indy$` 蹬床体内的 indy 后，CFF inline 桥的 MaxConst 站点（grunt3 `StateOp.MaxConst.emitTo` 逐字，`e41e852`）从「蹬床调用」还原成「蹬床体内 `invokestatic java/lang/Math.max(II)I`」——求值蹬床体必然踩到这条 JDK 调用，而 jsim 核心/num 包没有 JDK 数学面，缺接管整条面在 `EvalBadState` 拒。本残留的求值会话按签名注册 `Math.max` 接管：弹双参、全序取大；unknown 按未知口径传播（结果落 `ValueKindUnsupported`），不编值。申报理由（最小扩面）：max 是全序纯函数，双常量实参下值唯一确定，接管不引入任何猜测面。
 
 ### 拒绝面
 
@@ -84,3 +88,23 @@ CONVENTION §5.1：三段的状态需求本来就不对称，**只有 scan 需�
 - **不做跨方法常量传播**：目标方法若读字段或调别的纯方法，求值器直接 `Unsupported`，站点被拒。要支持得先做字段终值/调用内联，那是另外的残留。
 - **不做 `<clinit>` 常量传播**：`getstatic arr; <idx>; iaload` 这类字段池化数字不在本残留范围内。
 - **不折引用结果**：返回 `String`/对象的方法即使纯也不折——引用身份不可静态构造。
+- **同类豁免只豁免「初始化时机」这一个门**：纯性、常量实参、求值三条判据对同类站点照收不误。
+- **processor 键解锁链的静态天花板**（boar 全量取证，grunt3 `e41e852` 源钉死）：CFF 桥的 key processor 形（`emitProcessorStateProgram` 五条窗口 `[INT; ISTORE; ILOAD; INT; INVOKESTATIC proc]`）的 proc 恢复目标全部落在 native 摘除的 action 壳上——boar 配置 `keyProcessorNativeCandidateRatio=1.0`，6117 个 `(II)I` 恢复目标 100% `ACC_NATIVE` 无体，算术已随 native pipeline 出 jar。实参又是 `ILOAD s`（夹心形，非紧邻常量）——两道静态墙叠加，这部分**永远不可静态折**，属 CffUnflatten key-processor 桶的永久余量（6121）。可折的只有 Math.max 蹬床面（inline 链 MaxConst 被 ReferenceObfuscate→NativePreProcessor 包成蹬床的形态）：687 站点折叠、80 座岛离开 processor 桶（66 解 + 14 转 foreign-ref 桶）。
+
+## 语料账本（boar 全链罐，缺口 #4 余量解锁链）
+
+链（`--list` 实证注册名）`grunt.IndyRestore,grunt.ConstantCall,grunt.CffUnflatten,grunt.DispatcherRestore`：
+
+| pass | 改前 | 改后 |
+| --- | --- | --- |
+| IndyRestore | sites=30279 | 同（不改） |
+| ConstantCall | sites=7 | **sites=687**（413 类） |
+| CffUnflatten | islands=1481 / key-processor=6201 | **islands=1547 / key-processor=6121** |
+| DispatcherRestore | 0 | 0（见下） |
+
+- **proc 蹬床全貌**（独立解析器全量取证）：jar 内 78154 处 Grunt simple-form indy **全部**位于 `__grt$indy$` 蹬床体内（NativePreProcessor `e41e852` 的 indy 桥，体形 `[实参装载; indy; ireturn]`）；其中 `(II)I` 蹬床 19701 座。IndyRestore 已覆盖蹬床（无名字过滤）：8477 还原 / 10173 材料通道拒 / 1051 键链断。
+- **恢复目标构成**（19701 `(II)I` 蹬床的去向）：Math.max 1699；native action 壳 6117（`keyProcessorNativeCandidateRatio=1.0`）； exotic/缺类 62；其余 desc 非 `(II)I`。
+- **数学**：5 条窗口形（真 key processor 桥）3262 站点全部指 native 壳——静态不可折（算术不在 jar 里）；Math.max 蹬床 1699 站点全是链中位形，其中双紧邻常量实参的 657 上限——687 实折（含同类门豁免放行的其余纯算术站点）落在这个量级。
+- **DispatcherRestore 仍 0**：5827 desc 形候选中有岛的 43 个（23 processor 门）里，processor 门岛全部属 native action 面（population A）——Math.max 面消化 80 座岛没有一座落在分发器方法上，头锚不出场。加挂 NumberFold/PredicateFold 变体验证（sites=21422 / 0）同样 0——**瓶颈是 native 墙，不是链序**。DispatcherRestore 的 boar 解锁需要 native action 的静态语义（无 native 库即无解），如实挂账。
+- **门结果**：boar + origin 双罐 corpus-regress（链 `IndyRestore,ConstantCall,CffUnflatten,DispatcherRestore`）0 失败；类数 3065→3065 / 775→775；JVM `-Xverify:all` 输入/输出失败集逐类相同（基线同挂，零新增）；双跑产物逐条目 CRC 全等（3084 条目 0 差异）；run-lab 语料全链与 ConstantCall 单跑双绿。
+- **unittest**：`constant_call_test.cpp` 19 案（原 16 + 同类门豁免正例 + Math.max 蹬床求值正例 + 同类 Math.max 蹬床改写正例），全套 229/229（基线 226 + 3）。
