@@ -1,6 +1,6 @@
 /// @file        number_fold.hpp
 /// @brief       残留 `number_fold`：藏形数值常量还原（XOR 隐匿跨度 + 基 32
-///              长整跨度 + 位形包装调用）。
+///              长整跨度 + 位形包装调用 + v2 位拼跨度）。
 ///
 /// ## 形态（artifact 侧）
 ///
@@ -9,6 +9,8 @@
 ///
 ///     int 跨度 1：  <i32 a> I2L <i32 b> I2L LXOR L2I   → a ^ b
 ///     int 跨度 2：  <i64 a> L2I <i32 b> IXOR           → (int)a ^ b
+///     int 位拼 3：  <i32 a> <i32 b> IAND               → a & b
+///     long 位拼 4： <i64 a> <i64 b> LAND               → a & b
 ///     long 跨度：   LDC "key" <i32 32>
 ///                   INVOKESTATIC Long.parseUnsignedLong(String,I)J
 ///                   <i64 obf> LXOR                     → key ^ obf
@@ -16,6 +18,11 @@
 ///                   Float.intBitsToFloat(I)F           → 位形 f32
 ///     double 包装： long 跨度 + INVOKESTATIC
 ///                   Double.longBitsToDouble(J)D        → 位形 f64
+///
+/// 位拼两式是 v2 Gruntpocalypse NumberEncrypt 的产出（Int 第二式 / Long
+/// 全式，生成侧 `first & second = value`）；v3 生成侧无此形态，但 v2 语料
+/// 与 junk builder 混合同形人群，模板按形状吃、不分来源。位与是纯位运算，
+/// 折叠值直接取 a & b 的 JVM 位形逐位复算，不依赖生成侧构造意图。
 ///
 /// 跨度运算封闭、无栈外输入，包装调用的 JDK 语义确定（位形换算）——判据
 /// 钉的是「跨度求值即常量」这一结构事实（S2）：混淆器无法在保持功能的前提
@@ -25,9 +32,13 @@
 ///
 ///   1. 跨度逐条吻合（允许 NOP 夹层——squeeze 遗留落点不驻栈）；
 ///   2. 操作数全部由纯常量装载产生（`const_args` 工具箱；字符串键只认基 32
-///      数字串，radix 恒 32，超 64 位拒绝）；
+///      数字串，radix 恒 32，超 64 位拒绝；位拼第二操作数类型钉死——IAND
+///      钉 I32、LAND 钉 I64，栈形破裂即拒绝）；
 ///   3. 包装调用的 owner/name/desc 精确吻合，且实参类型与跨度产出吻合；
 ///   4. 跨度内除锚点外无标签（合并点 = 外部到达路径与跨度产出耦合，放弃）。
+///
+/// 同锚点多式分派旧式先试（int 跨度 1 先于位拼 3、long 跨度 2 先于位拼
+/// 4）——新式只接旧式拒绝的站点，旧四式折叠数跨批次不动。
 ///
 /// ## 改写（rewrite）
 ///
@@ -56,10 +67,13 @@ namespace grunt::number_fold {
 inline constexpr ca::usize kScanClassBudget    = 1'000'000;
 inline constexpr ca::usize kRewriteClassBudget = 4'000'000;
 
-/// @brief 一个可折叠站点。`anchorSrcPc`/`anchorOp` 跨会话稳定，rewrite 靠它重定位。
+/// @brief 一个可折叠站点。`anchorSrcPc`/`anchorOp` 跨会话稳定，rewrite 靠它
+///        重定位。`classIdx` 是 scan/rewrite 同一轮里容器 visitResources 的
+///        类序号（两段同序遍历，见 rewrite 注）——万类大罐上站点不带 uri
+///        字符串，数十万站点只按索引聚类。
 struct Site
 {
-    std::string           uri;
+    ca::u32               classIdx    = 0;
     ca::usize             methodIndex = 0;
     ca::u32               anchorSrcPc = 0;
     jbc::core::Op         anchorOp    = jbc::core::Op::NOP;
