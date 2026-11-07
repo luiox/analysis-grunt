@@ -68,7 +68,7 @@ void addDummy(model::ResourceContainer& container, const std::string& name)
                                    uri, std::vector<ca::u8>{0xCA, 0xFE, 0xBA, 0xBE}));
 }
 
-/// 三类容器，资源序 a/b/c。
+/// 三类容器（资源名 a/b/c；unordered 迭代序无保证，测试不断言顺序）。
 model::ResourceContainer threeJars()
 {
     model::ResourceContainer container;
@@ -126,9 +126,12 @@ TEST(PassClockTest, ExpireMidwaySkipsOnlyRest)
             seen.emplace_back(e.uri);
             scope.clock().forceExpire();   ///< 第一类处理完即到墙
         });
-        // a 已下发并处理；b/c 被门拒收。
+        // 首类已下发并处理，余两类被门拒收；容器迭代序不设保证（mjbase
+        // ResourceContainer unordered 契约），只认数目不点名。
         ASSERT_EQ(seen.size(), ca::usize{1});
-        EXPECT_EQ(seen[0], "a.class");
+        EXPECT_TRUE(seen[0] == "a.class" || seen[0] == "b.class" ||
+                    seen[0] == "c.class")
+            << seen[0];
         EXPECT_EQ(scope.clock().skipped(), ca::usize{2});
     }
 }
