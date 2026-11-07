@@ -193,6 +193,23 @@ std::string athrowSource()
            "}\n";
 }
 
+/// multianewarray 维数不符夹具：类常量 [I 配 dims=2（畸形形态）。
+std::string badDimSource()
+{
+    return ".super java/lang/Object\n"
+           ".class public super fixture/BadDim {\n"
+           "  .method public static bad ()I {\n"
+           "    code: {\n"
+           "      iconst_2\n"
+           "      iconst_3\n"
+           "      multianewarray [I 2\n"
+           "      arraylength\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+}
+
 /// allocTypes 占位口径夹具：NEW 的类进表，CHECKCAST/INSTANCEOF 不进（官方
 /// 语义 checkcast 恒等 / instanceof 压 Unknown，操作数无需落位——自建桥曾
 /// 把它们也推进表，属无害但多余的占位，官方口径统一为 no-op）。
@@ -328,6 +345,21 @@ TEST(JsimBridgeReject, AthrowIsWholeMethodUnsupportedOp)
     const auto bridged = jsim::jbcbridge::toSimMethod(*s, methodIndexByName(*s, "boom"));
     ASSERT_FALSE(bridged.isOk());
     EXPECT_EQ(bridged.error().stage, jsim::jbcbridge::BridgeError::Stage::UnsupportedOp);
+}
+
+TEST(JsimBridgeReject, MultianewarrayDimMismatchIsBadClass)
+{
+    // JVMS 6.5：multianewarray 的类常量维数必须 >= dims。[I 配 dims=2 是
+    // 畸形字节码——官方桥在桥面拒绝（BadClass），不产出静默错形。
+    model::ResourceContainer container =
+        makeContainer({{"fixture/BadDim", badDimSource()}});
+    const std::vector<ca::u8>* bytes = findClassBytes(container, "fixture/BadDim.class");
+    ASSERT_NE(bytes, nullptr);
+    std::shared_ptr<jbc::ir::ClassSession> s = openSession(*bytes);
+
+    const auto bridged = jsim::jbcbridge::toSimMethod(*s, methodIndexByName(*s, "bad"));
+    ASSERT_FALSE(bridged.isOk());
+    EXPECT_EQ(bridged.error().stage, jsim::jbcbridge::BridgeError::Stage::BadClass);
 }
 
 // ============================================================================
