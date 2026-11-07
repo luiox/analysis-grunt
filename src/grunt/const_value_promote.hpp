@@ -4,7 +4,7 @@
 ///
 /// ## 形态（artifact 侧）
 ///
-/// 混淆器把 `static final` 常量的字面量抹掉，改成 <clinit> 里 putstatic：
+/// 混淆器把 `static final` 常量的字面量抹掉，改成 `<clinit>` 里 putstatic：
 ///
 ///     static { aGjy = 89737686; aaKO = 855681668; aGUJ = 424665907; }
 ///
@@ -17,7 +17,7 @@
 ///   1. 字段 static，描述符是基本类型或 Ljava/lang/String;（ConstantValue
 ///      的合法形态），且尚未带 ConstantValue；
 ///   2. 访问面普查（promote 精确口径）：全容器该字段只有一次写，落在本类
-///      <clinit>（读的次数不限）；
+///      `<clinit>`（读的次数不限）；
 ///   3. putstatic 紧邻前驱（NOP 落点跳过）就是完整产生该槽位数的常量装载
 ///      （int 族 / ldc String / ldc2_w long/double；ACONST_NULL 不是合法
 ///      ConstantValue 形态，拒绝）。

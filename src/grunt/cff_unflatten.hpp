@@ -3,7 +3,7 @@
 ///
 /// ## 形态（artifact 侧；doc/obf-behaviors/grunt-v3-behaviors.md §2.2）
 ///
-/// v3 ControlflowFlattening（grunt3@e41e852，FlowControlFlowFlattener 逐行，
+/// v3 ControlflowFlattening（`grunt3@e41e852`，FlowControlFlowFlattener 逐行，
 /// jbc jasm 样例 boar-main.jar `net/spartanb312/obf/AD.a` 互证）把 maximal
 /// region 块序打乱收缩：每方法一个 fresh state 槽 s（`method.locals.nextSlot`），
 /// 每个出口一个 dispatcher 岛 `[ILOAD s; TABLESWITCH]`（键窗 [lo, lo+n) 连续

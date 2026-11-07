@@ -2,7 +2,7 @@
 /// @brief       残留 `exc_bridge_restore`：Grunt v3 ControlflowJump 异常桥
 ///              还原——合成 throw/catch 蹦床边摘除，原边直连真实目标。
 ///
-/// ## 形态（artifact 侧；源锚 grunt3@e41e852 FlowExceptionBridgeInserter.kt）
+/// ## 形态（artifact 侧；源锚 `grunt3@e41e852` FlowExceptionBridgeInserter.kt）
 ///
 /// v3 ControlflowJump（`exceptionBridgeChance > 0`）把一条 Real 边改道进合
 /// 成 trap 块、再经异常表跳回原目标（skidfuscator 同源面）。导出字节码形：

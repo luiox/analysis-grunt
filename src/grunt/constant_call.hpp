@@ -77,10 +77,10 @@ enum class RejectReason : ca::u8 {
     TargetNotInContainer = 0,  ///< 目标不在本容器（JDK / 依赖 jar）
     TargetNotStatic,           ///< 非 static
     TargetNoCode,              ///< abstract / native / 无方法体
-    TargetInitializer,         ///< <init> / <clinit>
+    TargetInitializer,         ///< `<init>` / `<clinit>`
     TargetSynchronized,        ///< 监视器语义，删调用会改变可观测行为
     TargetVoid,                ///< 返回值 void，无值可折
-    ClassInitPresent,          ///< 被调类的 <clinit> 非空，删调用会改变初始化时机
+    ClassInitPresent,          ///< 被调类的 `<clinit>` 非空，删调用会改变初始化时机
     ArgsNotConstant,           ///< 实参不是紧邻的纯常量装载
     ArgsKindUnsupported,       ///< 实参里有非数值常量（String/Class 等）
     EvalUnsupported,           ///< 求值器不支持该指令形状

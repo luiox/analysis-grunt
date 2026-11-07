@@ -5,18 +5,18 @@
 ///
 /// 内联与折叠完成后，大量成员只剩空壳：纯算术辅助方法（调用点已折成常量）、
 /// `/* bridge */ /* synthetic */` 转发器（调用点已内联）、private 辅助字段、
-/// 拆空后的 <clinit>。反编译出来就是用户点名要删的空壳。
+/// 拆空后的 `<clinit>`。反编译出来就是用户点名要删的空壳。
 ///
 /// ## 判据（scan 的细找）
 ///
 /// 形状候选（scan，S2 结构事实）：
 ///   - 方法：`static` 且方法体纯算术形态（常量/栈/算术/分支/return 词汇表），
 ///     或带 ACC_SYNTHETIC/ACC_BRIDGE，或 `private`；跳过 main / native /
-///     abstract / 无码 / <init> 特例不作形状豁免；
+///     abstract / 无码 / `<init>` 特例不作形状豁免；
 ///   - 字段：`private`（public/包级零引用可能是按名反射面，宁留勿删），或
 ///     `static [I` 零访问孤儿数组（seed_strip 拆除建表后的形状，独立强证
 ///     明）；serialVersionUID / 带 ConstantValue 的不删；
-///   - <clinit>：方法体只剩 NOP/RETURN（拆空形状）。
+///   - `<clinit>`：方法体只剩 NOP/RETURN（拆空形状）。
 ///
 /// 引用门（rewrite 复核）：活引用普查按**全容器对外引用全集**口径——每个类
 /// 都必须成为引用方，缺一个类就是漏计（K4 实证：压缩失败类被排除在普查外，
@@ -32,7 +32,7 @@
 /// 「晚到的类不在普查里」。压缩失败的类仍不作删除候选（字节面封闭集之外，
 /// 两边宁留勿删），只是引用照入普查。静态普查之外的两类运行时引用面（scan
 /// 时整类/按名豁免）：类内 BootstrapMethods 的盲区（BSM 可经解密字符串
-/// findStatic 本类任意成员）、注解字符串按名引用（@Redirect）；另有跨类
+/// findStatic 本类任意成员）、注解字符串按名引用（`@Redirect`）；另有跨类
 /// indy 目标——scan 内嵌 indy_fold::scan 跑一遍全容器 BSM，解析出的目标方法
 /// 按 owner+name 保护（Grunt 形态：BSM 在 A 类，目标在 B 类）。反射是理论
 /// 逃逸面（按名反射方法拦不住），台账如实记录每一次删除。

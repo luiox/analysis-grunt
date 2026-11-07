@@ -84,7 +84,7 @@ enum class RejectReason : ca::u8 {
     BodyNotSingleConst = 0,  ///< 方法体不是「单常量生产 + 匹配返回」的形状
     TargetSynchronized,      ///< 监视器语义，删调用会改变可观测行为
     GetstaticUnsupported,    ///< getstatic 目标不是九大原始 TYPE
-    OwnerClassInitImpure,    ///< 所有者 <clinit> 不在纯常量白名单内
+    OwnerClassInitImpure,    ///< 所有者 `<clinit>` 不在纯常量白名单内
 };
 
 /// @brief 一条定义侧拒绝记录。

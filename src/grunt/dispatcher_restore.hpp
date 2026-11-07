@@ -4,7 +4,7 @@
 ///
 /// ## 形态（artifact 侧；doc/obf-behaviors/grunt-v3-behaviors.md §3.1）
 ///
-/// v3 InvokeDispatcher（grunt3@e41e852，`redirect/InvokeDispatcher.kt`）把同
+/// v3 InvokeDispatcher（`grunt3@e41e852`，`redirect/InvokeDispatcher.kt`）把同
 /// 返回类型的多个方法调用点合并进一个分发器：按返回类型分组（每组 ≥2 个
 /// 调用点、参数含 primitive 的调用点跳过），每类生成 `PRIVATE + STATIC` 分
 /// 发器方法、desc `(N × Object; I) ret`（N = 组内最大参数槽位数），体为：

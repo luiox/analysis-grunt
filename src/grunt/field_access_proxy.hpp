@@ -115,7 +115,7 @@ enum class RejectReason : ca::u8 {
     FieldDescMismatch,       ///< 字段描述符与代理描述符互证不过（返回区/接收者）
     ReturnMismatch,          ///< 返回指令与描述符返回类型不符
     ProxySynchronized,       ///< 监视器语义，内联会丢锁
-    OwnerInitExposed,        ///< 调用点越出 owner 类且 owner <clinit> 非中性
+    OwnerInitExposed,        ///< 调用点越出 owner 类且 owner `<clinit>` 非中性
 };
 
 /// @brief 一条定义侧拒绝记录。

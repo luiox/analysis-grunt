@@ -2,7 +2,7 @@
 /// @brief       残留 `material_key_restore`：Grunt v3 RuntimeMaterial 材料通道
 ///              解密器 key 静态折回（indy_restore `materialLane` 拒绝桶的闭环）。
 ///
-/// ## 形态（artifact 侧，boar-main.jar 逐字节实证；源锚 grunt3@e41e852
+/// ## 形态（artifact 侧，boar-main.jar 逐字节实证；源锚 `grunt3@e41e852`
 ///    `RuntimeMaterial.kt` / `ReferenceObfuscate.kt`）
 ///
 /// v3 `ReferenceObfuscate` 在带 RuntimeMaterial 草稿的类里生成材料通道解密器
@@ -95,7 +95,7 @@ struct Site
 {
     std::string uri;                    ///< 材料解密器所在类
     ca::usize   decryptorMethodIndex = 0;  ///< (String;)String 材料解密器槽
-    ca::u32     invokeSrcPc          = 0;  ///< INVOKESTATIC <self>()I 旧布局 pc
+    ca::u32     invokeSrcPc          = 0;  ///< INVOKESTATIC `<self>`()I 旧布局 pc
     ca::i32     decryptorRawKey      = 0;  ///< 窗口 LDC K（异或前原始 key）
     ca::i32     materialKey          = 0;  ///< 静态折回值（= K ^ 有效 key 的补数面）
     ca::usize   sitesVerified        = 0;  ///< S1 互证的路由站点数

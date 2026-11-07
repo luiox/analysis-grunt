@@ -5,13 +5,13 @@
 /// `invokedynamic`，由每类自带的 8 参 bootstrap 在运行时解密 bsmArgs、按
 /// mode/extra 选 `findStatic/findVirtual/findGetter/…/findConstructor` 出句柄。
 /// 本表钉的是「8 参 bootstrap 描述符、解密器描述符、mode×extra 7 形态、
-/// @Metadata 注解、水印串、反 LLM 资源前缀」这批版本常量。
+/// `@Metadata` 注解、水印串、反 LLM 资源前缀」这批版本常量。
 ///
 /// 常量逐字取自 morpher 树版（origin/main @ 077b0ac64）
 /// `mjt-deobf/src/mjt/deobf/passes/misc/kasumi/{kasumi_indy_resolve_pass,
 /// kasumi_metadata_cleanup_pass,kasumi_string_decrypt_pass}.{hpp,cpp}`、
 /// `tools/kasumi_string_dumper/KasumiStringDumper.java` 与
-/// `doc_ai/notes/kasumi_reverse_notes.md`，
+/// morpher 仓 `doc_ai/notes/kasumi_reverse_notes.md`，
 /// SnakeGame-obf.jar（582,974 B，语料账本见 doc/indy-decode.impl.md）实证。
 #pragma once
 
@@ -80,7 +80,7 @@ enum class KasumiIndyForm : ca::u8 {
     PutField,     ///< mode 1 extra 1 → putfield
     GetStatic,    ///< mode 1 extra 2 → getstatic
     PutStatic,    ///< mode 1 extra 3 → putstatic
-    Constructor,  ///< mode 2（extra 任意，语料恒 0）→ NEW;DUP + INVOKESPECIAL <init>
+    Constructor,  ///< mode 2（extra 任意，语料恒 0）→ NEW;DUP + INVOKESPECIAL `<init>`
 };
 
 /// @brief mode+extra → 形态；不在表内的组合返回 false（fail-closed，不猜）。
