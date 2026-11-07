@@ -109,65 +109,9 @@ ca::usize findMethodSlot(const ir::ClassUnit& unit, std::string_view name,
     return kNoSlot;
 }
 
-/// @brief MUTF-8 → UTF-16 码元（与 string_pool_fold 同形独立实现：密文/明文
-///        都按码元面处理，孤立代理合法承载）。
-bool mutf8ToUnits(std::string_view in, std::vector<ca::u16>& out)
-{
-    out.clear();
-    ca::usize i = 0;
-    while (i < in.size()) {
-        const ca::u8 b0 = static_cast<ca::u8>(in[i]);
-        if (b0 < 0x80) {
-            out.push_back(static_cast<ca::u16>(b0));
-            ++i;
-            continue;
-        }
-        if ((b0 & 0xE0) == 0xC0) {
-            if (i + 1 >= in.size()) return false;
-            const ca::u8 b1 = static_cast<ca::u8>(in[i + 1]);
-            if ((b1 & 0xC0) != 0x80) return false;
-            out.push_back(static_cast<ca::u16>(((b0 & 0x1F) << 6) | (b1 & 0x3F)));
-            i += 2;
-            continue;
-        }
-        if ((b0 & 0xF0) == 0xE0) {
-            if (i + 2 >= in.size()) return false;
-            const ca::u8 b1 = static_cast<ca::u8>(in[i + 1]);
-            const ca::u8 b2 = static_cast<ca::u8>(in[i + 2]);
-            if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return false;
-            out.push_back(static_cast<ca::u16>(((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6)
-                                               | (b2 & 0x3F)));
-            i += 3;
-            continue;
-        }
-        return false;
-    }
-    return true;
-}
-
-/// @brief 对齐 Grunt encrypt 语义的逐码元自逆 XOR（S1 互证用；与 indy_restore
-///        同形独立实现）。@return false = MUTF-8 解码失败。
-bool decryptXor(std::string_view encrypted, ca::i32 key, std::string& out)
-{
-    std::vector<ca::u16> units;
-    if (!mutf8ToUnits(encrypted, units)) return false;
-    const ca::u16 lo = static_cast<ca::u16>(key);
-    out.clear();
-    for (ca::u16& u : units) {
-        u = static_cast<ca::u16>(u ^ lo);
-        if (u < 0x80) {
-            out.push_back(static_cast<char>(u));
-        } else if (u < 0x800) {
-            out.push_back(static_cast<char>(0xC0 | (u >> 6)));
-            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        } else {
-            out.push_back(static_cast<char>(0xE0 | (u >> 12)));
-            out.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        }
-    }
-    return true;
-}
+// ============================================================================
+// ==== 码元面编解码走 scan_toolbox（mutf8ToUnits / decryptXor）================
+// ============================================================================
 
 /// @brief `Long.foldToInt`（ReferenceObfuscate 源面逐字）：
 ///        `(seed ^ (seed ushr 32)).toInt()`。
@@ -597,7 +541,7 @@ bool evalKeyInit(ir::ClassSession& s, std::unordered_map<ca::usize, MethodView>&
                     return false;
                 }
                 std::vector<ca::u16> units;
-                if (!mutf8ToUnits(cs.str, units)) {
+                if (!scan_tools::mutf8ToUnits(cs.str, units)) {
                     blockedWhy = "Form B 明文 MUTF-8 解码失败";
                     return false;
                 }
@@ -1057,8 +1001,9 @@ std::optional<Site> analyzeClass(ir::ClassSession& s, const std::string& uri, Sc
                 std::string decOwner;
                 std::string decName;
                 std::string decDesc;
-                if (!decryptXor(enc[0], effectiveKey, decOwner) || !decryptXor(enc[1], effectiveKey, decName)
-                    || !decryptXor(enc[2], effectiveKey, decDesc)) {
+                if (!scan_tools::decryptXor(enc[0], effectiveKey, decOwner)
+                    || !scan_tools::decryptXor(enc[1], effectiveKey, decName)
+                    || !scan_tools::decryptXor(enc[2], effectiveKey, decDesc)) {
                     return reject(5, "候选 key 解密失败（MUTF-8 断链）");
                 }
                 if (decOwner.empty() || decName.empty() || decDesc.empty()) {

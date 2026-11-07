@@ -243,69 +243,6 @@ bool readBsmArgs(const jbc::core::ConstantPool& cp, const std::vector<ca::u32>& 
            && intAt(args[4], out.extra);
 }
 
-/// @brief MUTF-8 → UTF-16 码元（不经严格 UTF-8 解码：密文里合法地存在
-///        Java 孤代理码元——classfile 以 CESU-8 形 3 字节承载，严格 UTF-8
-///        解码器会拒收，而 Kasumi 语义只在码元层面异或）。MUTF-8 的 NUL
-///        特例（0xC0 0x80）一并处理。坏字节返回 false。
-bool mutf8ToUnits(std::string_view in, std::vector<ca::u16>& out)
-{
-    out.clear();
-    ca::usize i = 0;
-    while (i < in.size()) {
-        const ca::u8 b0 = static_cast<ca::u8>(in[i]);
-        if (b0 < 0x80) {
-            out.push_back(static_cast<ca::u16>(b0));
-            ++i;
-            continue;
-        }
-        if ((b0 & 0xE0) == 0xC0) {
-            if (i + 1 >= in.size()) return false;
-            const ca::u8 b1 = static_cast<ca::u8>(in[i + 1]);
-            if ((b1 & 0xC0) != 0x80) return false;
-            out.push_back(static_cast<ca::u16>(((b0 & 0x1F) << 6) | (b1 & 0x3F)));
-            i += 2;
-            continue;
-        }
-        if ((b0 & 0xF0) == 0xE0) {
-            if (i + 2 >= in.size()) return false;
-            const ca::u8 b1 = static_cast<ca::u8>(in[i + 1]);
-            const ca::u8 b2 = static_cast<ca::u8>(in[i + 2]);
-            if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return false;
-            out.push_back(static_cast<ca::u16>(((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6)
-                                               | (b2 & 0x3F)));
-            i += 3;
-            continue;
-        }
-        return false;   // 4 字节形 / 挂续字节：classfile Utf8 不出现
-    }
-    return true;
-}
-
-/// @brief 对齐 Kasumi 解密器语义：每个 UTF-16 码元 XOR key 低 16 位
-///        （Java `char ^ int` 后 `i2c`）。明文落 UTF-8（异常码元按 3 字节
-///        原样承载——垃圾解密结果会死在下游 desc 互证，不在这里猜）。
-bool decryptXor(std::string_view encrypted, ca::i32 key, std::string& out)
-{
-    std::vector<ca::u16> units;
-    if (!mutf8ToUnits(encrypted, units)) return false;
-    const ca::u16 lo = static_cast<ca::u16>(key);
-    out.clear();
-    for (ca::u16& u : units) {
-        u = static_cast<ca::u16>(u ^ lo);
-        if (u < 0x80) {
-            out.push_back(static_cast<char>(u));
-        } else if (u < 0x800) {
-            out.push_back(static_cast<char>(0xC0 | (u >> 6)));
-            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        } else {
-            out.push_back(static_cast<char>(0xE0 | (u >> 12)));
-            out.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        }
-    }
-    return true;
-}
-
 /// @brief 解密 owner/name/desc 三段并过基本合法性（owner 非空；name 非空
 ///        除 ctor——new 不需要方法名）。owner 点分 → slash。
 bool decryptTargets(const BsmArgs& args, ca::i32 key, bool ctor, std::string& owner,
@@ -318,9 +255,9 @@ bool decryptTargets(const BsmArgs& args, ca::i32 key, bool ctor, std::string& ow
     std::string decOwner;
     std::string decName;
     std::string decDesc;
-    if (!decryptXor(args.encOwner, key, decOwner)) return fail("owner 解密失败");
-    if (!decryptXor(args.encName, key, decName)) return fail("name 解密失败");
-    if (!decryptXor(args.encDesc, key, decDesc)) return fail("desc 解密失败");
+    if (!scan_tools::decryptXor(args.encOwner, key, decOwner)) return fail("owner 解密失败");
+    if (!scan_tools::decryptXor(args.encName, key, decName)) return fail("name 解密失败");
+    if (!scan_tools::decryptXor(args.encDesc, key, decDesc)) return fail("desc 解密失败");
     if (decOwner.empty()) return fail("owner 解密为空");
     if (decName.empty() && !ctor) return fail("name 解密为空");
     owner = jbc::type::binaryToInternal(decOwner).to_std_string();

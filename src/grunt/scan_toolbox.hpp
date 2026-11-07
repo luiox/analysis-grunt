@@ -1,13 +1,16 @@
 /// @file        scan_toolbox.hpp
-/// @brief       SCAN 工具箱：跨残留共享的扫描判定。
+/// @brief       SCAN 工具箱：跨残留共享的扫描判定与码元面编解码。
 ///
-/// CONVENTION §7：跨残留复用只允许发生在工具箱。当前收口两件：
+/// CONVENTION §7：跨残留复用只允许发生在工具箱。当前收口四件：
 /// `classInitNeutral`——owner 类 `<clinit>` 的「中性」判定，被
 /// constant_call（求值前的类初始化门）与 proxy_inline（owner 中性门）共用；
 /// `bsmEntries`——类级 BootstrapMethods 条目表读取，被 indy_fold /
-/// indy_decode 共用。
+/// indy_decode 共用；`mutf8ToUnits`/`decryptXor`——MUTF-8 码元面解码与逐码
+/// 元自逆 XOR，被 indy_restore / indy_decode / material_key_restore 共用
+/// （原三 pass 各持同形私有副本，B2 单源化）。
 #pragma once
 
+#include <string>
 #include <vector>
 
 #include "libca/core/datatype.hpp"
@@ -21,6 +24,71 @@
 #include "mjbase/util/annotation_depth.hpp"
 
 namespace grunt::scan_tools {
+
+/// @brief MUTF-8 → UTF-16 码元（不经严格 UTF-8 解码：密文里合法地存在
+///        Java 孤代理码元——classfile 以 CESU-8 形 3 字节承载，严格 UTF-8
+///        解码器会拒收，而加密语义只在码元层面异或）。MUTF-8 的 NUL 特例
+///        （0xC0 0x80）一并处理；4 字节形 / 挂续字节（classfile Utf8 不出现）
+///        返回 false。
+inline bool mutf8ToUnits(std::string_view in, std::vector<ca::u16>& out)
+{
+    out.clear();
+    ca::usize i = 0;
+    while (i < in.size()) {
+        const ca::u8 b0 = static_cast<ca::u8>(in[i]);
+        if (b0 < 0x80) {
+            out.push_back(static_cast<ca::u16>(b0));
+            ++i;
+            continue;
+        }
+        if ((b0 & 0xE0) == 0xC0) {
+            if (i + 1 >= in.size()) return false;
+            const ca::u8 b1 = static_cast<ca::u8>(in[i + 1]);
+            if ((b1 & 0xC0) != 0x80) return false;
+            out.push_back(static_cast<ca::u16>(((b0 & 0x1F) << 6) | (b1 & 0x3F)));
+            i += 2;
+            continue;
+        }
+        if ((b0 & 0xF0) == 0xE0) {
+            if (i + 2 >= in.size()) return false;
+            const ca::u8 b1 = static_cast<ca::u8>(in[i + 1]);
+            const ca::u8 b2 = static_cast<ca::u8>(in[i + 2]);
+            if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return false;
+            out.push_back(static_cast<ca::u16>(((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6)
+                                               | (b2 & 0x3F)));
+            i += 3;
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+/// @brief 逐码元自逆 XOR（每 UTF-16 码元 XOR key 低 16 位，Java `char ^ int`
+///        后 `i2c` 的语义），产物落 UTF-8——异常码元按 3 字节原样承载，垃圾
+///        解密结果会死在下游 desc 互证，不在这里猜。@return false = MUTF-8
+///        解码失败。
+inline bool decryptXor(std::string_view encrypted, ca::i32 key, std::string& out)
+{
+    std::vector<ca::u16> units;
+    if (!mutf8ToUnits(encrypted, units)) return false;
+    const ca::u16 lo = static_cast<ca::u16>(key);
+    out.clear();
+    for (ca::u16& u : units) {
+        u = static_cast<ca::u16>(u ^ lo);
+        if (u < 0x80) {
+            out.push_back(static_cast<char>(u));
+        } else if (u < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (u >> 6)));
+            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xE0 | (u >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
+        }
+    }
+    return true;
+}
 
 /// @brief 取类级 BootstrapMethods 的条目表（没有属性就是空表）。
 ///
