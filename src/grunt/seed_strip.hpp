@@ -1,5 +1,5 @@
 /// @file        seed_strip.hpp
-/// @brief       残留 `seed_strip`：<clinit> 里的 int[] 种子建表拆除。
+/// @brief       残留 `seed_strip`：`<clinit>` 里的 int[] 种子建表拆除。
 ///
 /// ## 形态（artifact 侧）
 ///
