@@ -97,7 +97,7 @@ void collectReal(const ir::CodeDom& dom, const std::vector<ir::InsnId>& order,
     }
 }
 
-// ---- 跨度形状（逐条钉死；三式的锚点类型互斥，站点跨度天然不重叠）----------
+// ---- 跨度形状（逐条钉死；同锚点各形状第二指令 op 分叉，站点跨度天然不重叠）--
 
 /// int 跨度 1：<i32 a> I2L <i32 b> I2L LXOR L2I → a ^ b。
 ///
@@ -143,6 +143,55 @@ bool matchLongToInt(ir::ClassSession& s, const std::vector<ca::usize>& pos,
     out.value.kind  = ValueLoad::Kind::I32;
     out.value.bits  = static_cast<ca::u64>(static_cast<ca::i64>(x ^ y));
     out.value.slots = 1;
+    return true;
+}
+
+/// int 位拼（v2 NumberEncrypt Int 第二式 + junk 同形）：
+/// <i32 a> <i32 b> IAND → a & b。
+///
+/// 位与是纯位运算：i32 逐位与与 JVM IAND 逐位等价，无符号性/溢出无涉；
+/// 折叠值直接取 a & b 的位形，不依赖生成侧「first & second = 原值」的构造
+/// 意图。第二操作数类型钉 I32（I64/LDC2_W 喂给 = 栈形破裂，拒绝）。
+bool matchIntSplice(ir::ClassSession& s, const std::vector<ca::usize>& pos,
+                    const std::vector<const ir::Insn*>& in, Span& out)
+{
+    if (in.size() < 3) return false;
+    ValueLoad b;
+    if (!const_args::decodeValueLoad(s, *in[1], b) || b.kind != ValueLoad::Kind::I32) {
+        return false;
+    }
+    if (in[2]->op != Op::IAND) return false;
+    const ca::i32 x = out.value.i32();
+    const ca::i32 y = b.i32();
+    out.firstPos = pos[0];
+    out.lastPos  = pos[2];
+    out.tailIdx  = 2;
+    out.value.kind  = ValueLoad::Kind::I32;
+    out.value.bits  = static_cast<ca::u64>(static_cast<ca::i64>(x & y));
+    out.value.slots = 1;
+    return true;
+}
+
+/// long 位拼（v2 NumberEncrypt Long 全式 + junk 同形）：
+/// <i64 a> <i64 b> LAND → a & b。64 位逐位与，与 JVM LAND 逐位等价；
+/// 第二操作数类型钉 I64。
+bool matchLongSplice(ir::ClassSession& s, const std::vector<ca::usize>& pos,
+                     const std::vector<const ir::Insn*>& in, Span& out)
+{
+    if (in.size() < 3) return false;
+    ValueLoad b;
+    if (!const_args::decodeValueLoad(s, *in[1], b) || b.kind != ValueLoad::Kind::I64) {
+        return false;
+    }
+    if (in[2]->op != Op::LAND) return false;
+    const ca::i64 x = out.value.i64();
+    const ca::i64 y = b.i64();
+    out.firstPos = pos[0];
+    out.lastPos  = pos[2];
+    out.tailIdx  = 2;
+    out.value.kind  = ValueLoad::Kind::I64;
+    out.value.bits  = static_cast<ca::u64>(x & y);
+    out.value.slots = 2;
     return true;
 }
 
@@ -238,9 +287,10 @@ bool tryMatchAt(ir::ClassSession& s, const ir::CodeDom& dom,
     out.value = anchor;
     bool matched = false;
     if (anchor.kind == ValueLoad::Kind::I32) {
-        matched = matchIntViaLong(s, pos, in, out);
+        // 旧式先试：新式只接旧式拒绝的站点（旧四式折叠数跨批次不动）。
+        matched = matchIntViaLong(s, pos, in, out) || matchIntSplice(s, pos, in, out);
     } else if (anchor.kind == ValueLoad::Kind::I64) {
-        matched = matchLongToInt(s, pos, in, out);
+        matched = matchLongToInt(s, pos, in, out) || matchLongSplice(s, pos, in, out);
     } else if (anchor.kind == ValueLoad::Kind::Str) {
         matched = matchBase32Long(s, pos, in, out);
     }
@@ -263,7 +313,7 @@ jsim::SimValue simOf(const ValueLoad& v)
 }
 
 /// @brief 单方法 SCAN。@return false = 类级迭代预算超限（调用方放弃该类剩余方法）。
-bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& uri,
+bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, ca::u32 classIdx,
                 ScanResult& result, iter_budget::ClassBudget& budget)
 {
     if (!ir::hasCode(s, methodIndex)) return true;
@@ -284,7 +334,7 @@ bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
         Span span;
         if (tryMatchAt(s, cu->dom, order, pos, span)
             && !labelBlocked(cu->dom, order, span.firstPos, span.lastPos)) {
-            result.sites.push_back(Site{uri, methodIndex, in->srcPc, in->op, span.value});
+            result.sites.push_back(Site{classIdx, methodIndex, in->srcPc, in->op, span.value});
             pos = span.lastPos + 1;   ///< 跨度内部不再起锚（锚点类型互斥，无嵌套站点）
             continue;
         }
@@ -393,7 +443,9 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
 {
     ScanResult result;
     ca::usize  named = 0;
+    ca::u32    classIdx = 0;
     forEachClass(container, [&](const ClassEntry& entry) {
+        const ca::u32 idx = classIdx++;   ///< 类序号与 rewrite 的遍历同序（同一 visitResources 序）
         auto session = openSession(*entry.bytes);
         if (!session) {
             ++result.classesSkipped;
@@ -403,7 +455,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
         ir::ClassSession&        s      = *session;
         const ir::ClassUnit&     unit   = s.unit();
         for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
-            if (!scanMethod(s, mi, std::string(entry.uri), result, budget)) {
+            if (!scanMethod(s, mi, idx, result, budget)) {
                 ++result.classesSkippedByBudget;
                 iter_budget::reportExhausted("grunt.NumberFold", "scan",
                                              std::string(entry.uri), budget, named);
@@ -426,25 +478,21 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
     rewrite_tools::FrameContext frames(container);
 
-    // 站点按 uri 聚类（一遍建索引；此前逐类线性筛全站点的做法在万类大罐上
-    // 是 classes × sites 的平方账）。
-    std::unordered_map<std::string, std::vector<const Site*>> byUri;
-    for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
+    // 站点按类序号聚类（一遍建索引；此前逐类线性筛全站点的做法在万类大罐上
+    // 是 classes × sites 的平方账）。scan/rewrite 两段对同一容器走同一
+    // visitResources 序，classIdx 跨段一致。
+    std::unordered_map<ca::u32, std::vector<const Site*>> byIdx;
+    for (const Site& site : result.sites) byIdx[site.classIdx].push_back(&site);
 
-    struct PendingWrite
-    {
-        std::string         uri;
-        std::vector<ca::u8> bytes;
-        ca::usize           hit = 0;
-    };
-    std::vector<PendingWrite> pending;
-
-    ca::usize named = 0;
+    ca::usize named  = 0;
+    ca::u32   curIdx = 0;
     forEachClass(container, [&](const ClassEntry& entry) {
-        const std::string uri(entry.uri);
-        const auto        it = byUri.find(uri);
-        if (it == byUri.end()) return;
-        const std::vector<const Site*>& sitesOf = it->second;
+        const ca::u32 idx = curIdx++;
+        const auto    it  = byIdx.find(idx);
+        if (it == byIdx.end()) return;
+        // 先值拷出再删节点：map 节点销毁会连带销毁聚类向量，引用不能跨 erase。
+        const std::vector<const Site*> sitesOf = it->second;
+        byIdx.erase(it);   ///< 该类站点已到手，聚类条目即弃（峰值驻留只留当前类）
 
         auto session = openSession(*entry.bytes);
         if (!session) return;
@@ -492,20 +540,23 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         dirty.failed += failed;
         dirty.skippedByBudget += skippedByBudget;
         if (skippedByBudget > 0) {
-            iter_budget::reportExhausted("grunt.NumberFold", "rewrite", uri, budget, named);
+            iter_budget::reportExhausted("grunt.NumberFold", "rewrite",
+                                         std::string(entry.uri), budget, named);
         }
         if (hit == 0) return;
 
+        // 类字节就地回写：类资源内容原位换新（容器映射不动、无待写缓冲——
+        // 万类大罐上全量 dirty 类字节驻留是 GB 级账，流式写回把峰值削平）。
         auto encoded = jbc::core::writeClass(s.backing());
         if (encoded.is_err()) return;
-        pending.push_back(PendingWrite{uri, std::move(encoded).unwrap(), hit});
+        mjbase::model::IResource* raw = container.getResource(entry.uri);
+        if (!ca::core::tag_cast::isa<mjbase::model::ClassResource>(raw)) return;
+        auto* clsRes = ca::core::tag_cast::cast<mjbase::model::ClassResource>(raw);
+        if (clsRes == nullptr) return;
+        clsRes->set(std::move(encoded).unwrap());
+        dirty.uris.emplace_back(entry.uri);
+        dirty.sites += hit;
     });
-
-    for (PendingWrite& item : pending) {
-        replaceClass(container, item.uri, std::move(item.bytes));
-        dirty.uris.push_back(std::move(item.uri));
-        dirty.sites += item.hit;
-    }
     return dirty;
 }
 

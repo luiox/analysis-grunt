@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -102,6 +103,29 @@ bool contains(const std::vector<jbc::core::Op>& ops, jbc::core::Op op)
         if (o == op) return true;
     }
     return false;
+}
+
+/// 拒绝面反证：scan 零站点 + rewrite 零改写后，类字节与夹具原字节逐位全等。
+void expectRejectionLeavesBytesUntouched(model::ResourceContainer& container,
+                                         const std::string& uri)
+{
+    const model::IResource* raw = container.getResource(uri);
+    const auto* cls = ca::core::tag_cast::dyn_cast<const model::ClassResource>(raw);
+    ASSERT_NE(cls, nullptr);
+    const std::vector<ca::u8> original = cls->get();
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 0u);
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.uris.size(), 0u);
+
+    const model::IResource* after = container.getResource(uri);
+    const auto* clsAfter = ca::core::tag_cast::dyn_cast<const model::ClassResource>(after);
+    ASSERT_NE(clsAfter, nullptr);
+    const std::vector<ca::u8>& bytes = clsAfter->get();
+    ASSERT_EQ(bytes.size(), original.size());
+    EXPECT_EQ(std::memcmp(bytes.data(), original.data(), original.size()), 0)
+        << "拒绝面类字节必须逐位不动";
 }
 
 // ---- 正例夹具 --------------------------------------------------------------
@@ -201,6 +225,147 @@ const char* kPoolValue =
     "      i2l\n"
     "      lxor\n"
     "      l2i\n"
+    "      ireturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+// ---- v2 位拼正例夹具 -------------------------------------------------------
+
+/// int 位拼：305419896 & -252645136 = 271601776（0x12345678 & 0xF0F0F0F0 =
+/// 0x10305070，生成侧 first & second = value 的构造形，两操作数都是 LDC）。
+const char* kIntSplice =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfIntSplice {\n"
+    "  .method public static m ()I {\n"
+    "    code: {\n"
+    "      ldc 305419896\n"
+    "      ldc -252645136\n"
+    "      iand\n"
+    "      ireturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+/// int 位拼短形态：bipush/iconst 域操作数 12 & 5 = 4。
+const char* kIntSpliceShort =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfIntSpliceShort {\n"
+    "  .method public static m ()I {\n"
+    "    code: {\n"
+    "      bipush 12\n"
+    "      iconst_5\n"
+    "      iand\n"
+    "      ireturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+/// long 位拼：-2401053086426760323 & -8645941142645738499 = -8646574489311087747。
+const char* kLongSplice =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfLongSplice {\n"
+    "  .method public static m ()J {\n"
+    "    code: {\n"
+    "      ldc2_w -2401053086426760323L\n"
+    "      ldc2_w -8645941142645738499L\n"
+    "      land\n"
+    "      lreturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+/// 位拼 + 位形包装：v2 encrypt(Float) 走 int 加密第二式。
+/// 1069547520 & -1 = 1069547520 = 0x3FC00000 = 1.5f。
+const char* kIntSpliceFloatWrapper =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfIntSpliceFloat {\n"
+    "  .method public static m ()F {\n"
+    "    code: {\n"
+    "      ldc 1069547520\n"
+    "      ldc -1\n"
+    "      iand\n"
+    "      invokestatic java/lang/Float.intBitsToFloat (I)F\n"
+    "      freturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+/// 位拼 + 位形包装（double）：0x4008000000000000 & -1 = 0x4008000000000000
+/// = 3.0。
+const char* kLongSpliceDoubleWrapper =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfLongSpliceDouble {\n"
+    "  .method public static m ()D {\n"
+    "    code: {\n"
+    "      ldc2_w 4613937818241073152L\n"
+    "      ldc2_w -1L\n"
+    "      land\n"
+    "      invokestatic java/lang/Double.longBitsToDouble (J)D\n"
+    "      dreturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+// ---- 位拼反例夹具 ----------------------------------------------------------
+
+/// 位拼第二操作数非常量：iload_0 打断（真实掩码计算形，不是生成面跨度）。
+const char* kSpliceNonConstOperand =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfSpliceNonConst {\n"
+    "  .method public static m (I)I {\n"
+    "    code: {\n"
+    "      ldc 255\n"
+    "      iload_0\n"
+    "      iand\n"
+    "      ireturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+/// 位拼栈形破裂：cat1/cat2 混喂（iconst_3 喂 LAND，第二操作数类型门拒绝）。
+const char* kSpliceMixedWidth =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfSpliceMixed {\n"
+    "  .method public static m ()J {\n"
+    "    code: {\n"
+    "      ldc2_w -2401053086426760323L\n"
+    "      iconst_3\n"
+    "      iand\n"
+    "      i2l\n"
+    "      lreturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+/// 位拼 op 断裂：尾条不是 IAND（ISUB 不构成位拼跨度）。
+const char* kSpliceShapeBreak =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfSpliceShapeBreak {\n"
+    "  .method public static m ()I {\n"
+    "    code: {\n"
+    "      ldc 100\n"
+    "      ldc 5\n"
+    "      isub\n"
+    "      ireturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+/// 位拼中段标签：分支在第二操作数（ldc 5）汇合 = 合并点，整站放弃。
+const char* kSpliceMidLabel =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfSpliceMidLabel {\n"
+    "  .method public static m (I)I {\n"
+    "    code: {\n"
+    "      ldc 100\n"
+    "      iload_0\n"
+    "      ifeq Lmid\n"
+    "      pop\n"
+    "      ldc 100\n"
+    "    Lmid:\n"
+    "      ldc 5\n"
+    "      iand\n"
     "      ireturn\n"
     "    }\n"
     "  }\n"
@@ -414,6 +579,93 @@ TEST(NumberFoldScan, RejectsMidSpanMergeLabel)
         << "跨度中段标签 = 合并点，必须整站放弃";
 }
 
+// ==== SCAN（v2 位拼）========================================================
+
+TEST(NumberFoldScan, FindsIntSplice)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfIntSplice", kIntSplice);
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites[0].anchorOp, jbc::core::Op::LDC);
+    EXPECT_EQ(scanned.sites[0].value.kind, ValueLoad::Kind::I32);
+    EXPECT_EQ(scanned.sites[0].value.i32(), 271601776);
+}
+
+TEST(NumberFoldScan, FindsIntSpliceShortForms)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfIntSpliceShort", kIntSpliceShort);
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites[0].value.i32(), 4);
+}
+
+TEST(NumberFoldScan, FindsLongSplice)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfLongSplice", kLongSplice);
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites[0].value.kind, ValueLoad::Kind::I64);
+    EXPECT_EQ(scanned.sites[0].value.i64(), -8646574489311087747LL);
+    EXPECT_EQ(scanned.sites[0].value.slots, 2u);
+}
+
+TEST(NumberFoldScan, FindsIntSpliceFloatWrapper)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfIntSpliceFloat", kIntSpliceFloatWrapper);
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites[0].value.kind, ValueLoad::Kind::F32);
+    EXPECT_EQ(scanned.sites[0].value.f32(), 1.5f);
+}
+
+TEST(NumberFoldScan, FindsLongSpliceDoubleWrapper)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfLongSpliceDouble", kLongSpliceDoubleWrapper);
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites[0].value.kind, ValueLoad::Kind::F64);
+    EXPECT_EQ(jsim::doubleToBits(scanned.sites[0].value.f64()), 0x4008000000000000ULL);
+}
+
+TEST(NumberFoldScan, RejectsSpliceNonConstOperand)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfSpliceNonConst", kSpliceNonConstOperand);
+    const ScanResult scanned = scan(container);
+    EXPECT_EQ(scanned.sites.size(), 0u);
+}
+
+TEST(NumberFoldScan, RejectsSpliceMixedWidth)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfSpliceMixed", kSpliceMixedWidth);
+    const ScanResult scanned = scan(container);
+    EXPECT_EQ(scanned.sites.size(), 0u)
+        << "cat1/cat2 混喂 = 栈形破裂，位拼第二操作数类型门必须拒绝";
+}
+
+TEST(NumberFoldScan, RejectsSpliceShapeBreak)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfSpliceShapeBreak", kSpliceShapeBreak);
+    const ScanResult scanned = scan(container);
+    EXPECT_EQ(scanned.sites.size(), 0u);
+}
+
+TEST(NumberFoldScan, RejectsSpliceMidSpanMergeLabel)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfSpliceMidLabel", kSpliceMidLabel);
+    const ScanResult scanned = scan(container);
+    EXPECT_EQ(scanned.sites.size(), 0u)
+        << "位拼跨度中段标签 = 合并点，必须整站放弃";
+}
+
 // ==== REWRITE ===============================================================
 
 TEST(NumberFoldRewrite, FoldsIntSpanAndPersists)
@@ -539,6 +791,128 @@ TEST(NumberFoldRewrite, RescanAfterRewriteFindsNothing)
 
     const ScanResult rescanned = scan(container);
     EXPECT_EQ(rescanned.sites.size(), 0u) << "折叠产物不得再成站点（收敛判据）";
+}
+
+// ==== REWRITE（v2 位拼）=====================================================
+
+TEST(NumberFoldRewrite, FoldsIntSpliceAndPersists)
+{
+    model::ResourceContainer container;
+    const std::string uri = addFixture(container, "fixture/NfIntSplice", kIntSplice);
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+    EXPECT_EQ(dirty.sites, 1u);
+
+    const model::IResource* raw = container.getResource(uri);
+    const auto* cls = ca::core::tag_cast::dyn_cast<const model::ClassResource>(raw);
+    ASSERT_NE(cls, nullptr);
+
+    // 跨度消失：第二操作数与 IAND 全清，只剩常量装载 + 返回。
+    const std::vector<jbc::core::Op> ops = realOps(cls->get());
+    EXPECT_FALSE(contains(ops, jbc::core::Op::IAND)) << "位拼跨度未擦除";
+    ASSERT_EQ(ops.size(), 2u);
+    EXPECT_EQ(ops[1], jbc::core::Op::IRETURN);
+
+    const ValueLoad v = firstConstLoad(cls->get());
+    EXPECT_EQ(v.kind, ValueLoad::Kind::I32);
+    EXPECT_EQ(v.i32(), 271601776);
+}
+
+TEST(NumberFoldRewrite, FoldsLongSpliceAndPersists)
+{
+    model::ResourceContainer container;
+    const std::string uri = addFixture(container, "fixture/NfLongSplice", kLongSplice);
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+
+    const model::IResource* raw = container.getResource(uri);
+    const auto* cls = ca::core::tag_cast::dyn_cast<const model::ClassResource>(raw);
+    ASSERT_NE(cls, nullptr);
+
+    const std::vector<jbc::core::Op> ops = realOps(cls->get());
+    EXPECT_FALSE(contains(ops, jbc::core::Op::LAND)) << "位拼跨度未擦除";
+    ASSERT_EQ(ops.size(), 2u);
+    EXPECT_EQ(ops[1], jbc::core::Op::LRETURN);
+
+    const ValueLoad v = firstConstLoad(cls->get());
+    EXPECT_EQ(v.kind, ValueLoad::Kind::I64);
+    EXPECT_EQ(v.i64(), -8646574489311087747LL);
+}
+
+TEST(NumberFoldRewrite, FoldsSpliceWrappersToBits)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfIntSpliceFloat", kIntSpliceFloatWrapper);
+    addFixture(container, "fixture/NfLongSpliceDouble", kLongSpliceDoubleWrapper);
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 2u);
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.uris.size(), 2u);
+
+    const model::IResource* raw = container.getResource("fixture/NfIntSpliceFloat.class");
+    const auto* clsF = ca::core::tag_cast::dyn_cast<const model::ClassResource>(raw);
+    ASSERT_NE(clsF, nullptr);
+    const ValueLoad vf = firstConstLoad(clsF->get());
+    EXPECT_EQ(vf.kind, ValueLoad::Kind::F32);
+    EXPECT_EQ(vf.f32(), 1.5f);
+
+    const model::IResource* rawD = container.getResource("fixture/NfLongSpliceDouble.class");
+    const auto* clsD = ca::core::tag_cast::dyn_cast<const model::ClassResource>(rawD);
+    ASSERT_NE(clsD, nullptr);
+    const ValueLoad vd = firstConstLoad(clsD->get());
+    EXPECT_EQ(vd.kind, ValueLoad::Kind::F64);
+    EXPECT_EQ(jsim::doubleToBits(vd.f64()), 0x4008000000000000ULL);
+}
+
+/// 位拼与旧式共存：同一容器两类站点全折、重扫归零（新式不蚕食旧式站点）。
+TEST(NumberFoldRewrite, FoldsMixedOldAndSpliceForms)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfIntViaLong", kIntViaLong);
+    addFixture(container, "fixture/NfIntSplice", kIntSplice);
+    addFixture(container, "fixture/NfLongSplice", kLongSplice);
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 3u);
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.uris.size(), 3u);
+    EXPECT_EQ(dirty.sites, 3u);
+
+    const ScanResult rescanned = scan(container);
+    EXPECT_EQ(rescanned.sites.size(), 0u) << "折叠产物不得再成站点（收敛判据）";
+}
+
+// ==== 拒绝面反证（memcmp 全等）==============================================
+
+TEST(NumberFoldRejectSurface, SpliceRejectionsLeaveBytesUntouched)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfSpliceNonConst", kSpliceNonConstOperand);
+    addFixture(container, "fixture/NfSpliceShapeBreak", kSpliceShapeBreak);
+    expectRejectionLeavesBytesUntouched(container, "fixture/NfSpliceNonConst.class");
+}
+
+TEST(NumberFoldRejectSurface, SpliceLabelRejectionLeavesBytesUntouched)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfSpliceMidLabel", kSpliceMidLabel);
+    expectRejectionLeavesBytesUntouched(container, "fixture/NfSpliceMidLabel.class");
+}
+
+TEST(NumberFoldRejectSurface, OldFormRejectionsStillLeaveBytesUntouched)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfNonConst", kNonConstOperand);
+    addFixture(container, "fixture/NfRadix16", kRadixNot32);
+    expectRejectionLeavesBytesUntouched(container, "fixture/NfNonConst.class");
+    expectRejectionLeavesBytesUntouched(container, "fixture/NfRadix16.class");
 }
 
 // ==== PROOF =================================================================
