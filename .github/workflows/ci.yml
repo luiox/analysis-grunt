@@ -1,0 +1,127 @@
+# grunt CI（Linux + Windows）
+#
+# 范围：grunt 静态库 + grunt_cli + grunt_unittest 全量单测（cff_unflatten /
+# exc_bridge_restore 有 JVM 实跑验证门，setup-java 常备 JDK 保证真跑；
+# java 缺席时该类测试自跳，CI 不依赖这个退路）。
+# 依赖：luiox-repo git 直连包（mjbase/libjbc/libca 等）——root xmake.lua 内
+# add_repositories 已指向 GitHub 远端，CI 无需显式注册（同 mjbase 口径）；
+# gtest 走 xrepo。
+# libjsim：源码级 header-only（xmake.lua 默认找兄弟目录 ../libjsim，CI 以
+# LIBSIM_DIR 指向随仓检出的 commit 锁副本，升级随 libjsim main 显式改 ref）。
+# 注意 set_defaultplat("windows")：Linux 配置必须显式 -p linux。
+#
+# 与家族 base 仓（libjbc/mjbase）docs 门禁的差异：本仓 doc/ 是纯 markdown
+# 行为账，无 RST 站 / check_refs / Doxyfile，那套 Sphinx + Doxygen 门禁
+# 无从挂起，如实省略。
+
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LIBSIM_DIR: ${{ github.workspace }}/libjsim
+
+jobs:
+  build-and-test-linux:
+    name: build & test (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout libjsim (header-only, commit 锁)
+        uses: actions/checkout@v4
+        with:
+          repository: luiox/libjsim
+          ref: 65ff62f156805b656c184e5312b5cb0230edb7b8
+          path: libjsim
+
+      - name: Setup JDK (JVM 实跑验证门)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: v3.0.9
+          actions-cache-folder: '.xmake-cache'
+
+      - name: Cache xrepo packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.xmake/packages
+            ~/.local/share/xmake
+          key: grunt-xrepo-linux-x64-xmake309-${{ hashFiles('xmake.lua') }}
+          restore-keys: |
+            grunt-xrepo-linux-x64-xmake309-
+
+      - name: Configure (with tests)
+        run: xmake f -p linux --with_tests=y -y
+
+      - name: Build
+        run: |
+          xmake build -y grunt_cli
+          xmake build -y grunt_unittest
+
+      - name: Run unit tests
+        run: xmake run grunt_unittest --gtest_brief=1
+
+  build-and-test-windows:
+    name: build & test (windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout libjsim (header-only, commit 锁)
+        uses: actions/checkout@v4
+        with:
+          repository: luiox/libjsim
+          ref: 65ff62f156805b656c184e5312b5cb0230edb7b8
+          path: libjsim
+
+      - name: Setup JDK (JVM 实跑验证门)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: v3.0.9
+          actions-cache-folder: '.xmake-cache'
+
+      - name: Cache xrepo packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/.xmake/packages
+          key: grunt-xrepo-windows-x64-xmake309-${{ hashFiles('xmake.lua') }}
+          restore-keys: |
+            grunt-xrepo-windows-x64-xmake309-
+
+      - name: Configure (with tests)
+        shell: bash
+        run: xmake f -p windows --with_tests=y -y
+
+      - name: Build
+        shell: bash
+        run: |
+          xmake build -y grunt_cli
+          xmake build -y grunt_unittest
+
+      - name: Run unit tests
+        shell: bash
+        run: xmake run grunt_unittest --gtest_brief=1
