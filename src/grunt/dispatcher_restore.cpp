@@ -32,6 +32,7 @@
 #include "jbc/ir/units.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/knowledge/const_args.hpp"
 #include "grunt/knowledge/grunt_names.hpp"
 #include "grunt/pass_clock.hpp"
 #include "grunt/proof_toolbox.hpp"
@@ -42,7 +43,6 @@ namespace grunt::dispatcher_restore {
 namespace {
 
 namespace ir = jbc::ir;
-using jbc::core::CpTag;
 using jbc::core::Op;
 
 constexpr ca::u32   kAccStatic = 0x0008;
@@ -50,34 +50,8 @@ constexpr ca::usize kNoSlot    = static_cast<ca::usize>(-1);
 constexpr ca::usize kNoPos     = static_cast<ca::usize>(-1);
 
 // ============================================================================
-// ==== 形状钉面辅助（S2）=====================================================
+// ==== 形状钉面辅助（S2；常量装载读数走 const_args）==========================
 // ============================================================================
-
-/// @brief 一条 int 常量装载（ICONST_M1..5 / BIPUSH / SIPUSH / LDC(LDC_W) Integer）。
-bool constIntAt(const ir::ClassSession& s, const ir::Insn& in, ca::i32& out)
-{
-    switch (in.op) {
-    case Op::ICONST_M1: out = -1; return true;
-    case Op::ICONST_0:  out = 0; return true;
-    case Op::ICONST_1:  out = 1; return true;
-    case Op::ICONST_2:  out = 2; return true;
-    case Op::ICONST_3:  out = 3; return true;
-    case Op::ICONST_4:  out = 4; return true;
-    case Op::ICONST_5:  out = 5; return true;
-    case Op::BIPUSH:
-    case Op::SIPUSH:    out = in.a; return true;
-    case Op::LDC:
-    case Op::LDC_W: {
-        const jbc::core::ConstantPool& cp = s.backing().cp;
-        if (!cp.valid(in.cp)) return false;
-        const jbc::core::ConstantPool::Entry& e = cp.at(in.cp);
-        if (e.tag != CpTag::Integer) return false;
-        out = e.ival;
-        return true;
-    }
-    default: return false;
-    }
-}
 
 /// @brief int 槽装载读取（ILOAD a / ILOAD_0..3 → 槽号进 slot；失败 false）。
 bool intLoadSlotOf(const ir::Insn& in, ca::u32& slot)
@@ -521,7 +495,7 @@ void scanClass(ir::ClassSession& s, const std::string& uri, ScanResult& result,
                 continue;
             }
             ca::i32 key = 0;
-            if (keyQ == kNoPos || keyInsn == nullptr || !constIntAt(s, *keyInsn, key)) {
+            if (keyQ == kNoPos || keyInsn == nullptr || !const_args::decodeConstInt(s, *keyInsn, key)) {
                 reject("key 位非常量（含 NumberBasicEncrypt 藏形可能，fail-closed）",
                        &result.keyNotConst);
                 continue;
@@ -674,7 +648,7 @@ bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
     ca::i32 key = 0;
     {
         const ir::Insn* keyInsn = cu.dom.peek(order[keyQ]);
-        if (keyInsn == nullptr || !constIntAt(s, *keyInsn, key) || key != site.key) {
+        if (keyInsn == nullptr || !const_args::decodeConstInt(s, *keyInsn, key) || key != site.key) {
             return siteFail(site, "key 复核不符");
         }
     }

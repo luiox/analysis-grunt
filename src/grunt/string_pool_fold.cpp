@@ -30,6 +30,7 @@
 #include "jbc/ir/units.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/knowledge/const_args.hpp"
 #include "grunt/knowledge/grunt_names.hpp"
 #include "grunt/pass_clock.hpp"
 #include "grunt/proof_toolbox.hpp"
@@ -193,52 +194,8 @@ void gruntCharXorStream(std::vector<ca::u16>& chars, ca::i64 seed, ca::i32 key, 
 }
 
 // ============================================================================
-// ==== 形状钉面辅助（S2）=====================================================
+// ==== 形状钉面辅助（S2；常量装载读数走 const_args）==========================
 // ============================================================================
-
-/// @brief 一条 int 常量装载（ICONST_M1..5 / BIPUSH / SIPUSH / LDC(LDC_W) Integer）。
-bool constIntAt(const ir::ClassSession& s, const ir::Insn& in, ca::i32& out)
-{
-    switch (in.op) {
-    case Op::ICONST_M1: out = -1; return true;
-    case Op::ICONST_0:  out = 0; return true;
-    case Op::ICONST_1:  out = 1; return true;
-    case Op::ICONST_2:  out = 2; return true;
-    case Op::ICONST_3:  out = 3; return true;
-    case Op::ICONST_4:  out = 4; return true;
-    case Op::ICONST_5:  out = 5; return true;
-    case Op::BIPUSH:
-    case Op::SIPUSH:    out = in.a; return true;
-    case Op::LDC:
-    case Op::LDC_W: {
-        const jbc::core::ConstantPool& cp = s.backing().cp;
-        if (!cp.valid(in.cp)) return false;
-        const jbc::core::ConstantPool::Entry& e = cp.at(in.cp);
-        if (e.tag != CpTag::Integer) return false;
-        out = e.ival;
-        return true;
-    }
-    default: return false;
-    }
-}
-
-/// @brief 一条 long 常量装载（LCONST_0/1 / LDC2_W Long）。
-bool constLongAt(const ir::ClassSession& s, const ir::Insn& in, ca::i64& out)
-{
-    switch (in.op) {
-    case Op::LCONST_0: out = 0; return true;
-    case Op::LCONST_1: out = 1; return true;
-    case Op::LDC2_W: {
-        const jbc::core::ConstantPool& cp = s.backing().cp;
-        if (!cp.valid(in.cp)) return false;
-        const jbc::core::ConstantPool::Entry& e = cp.at(in.cp);
-        if (e.tag != CpTag::Long) return false;
-        out = e.lval;
-        return true;
-    }
-    default: return false;
-    }
-}
 
 /// @brief int 槽装载（ILOAD a==slot 或 ILOAD_0..3 快捷形）。
 bool intLoadAt(const ir::Insn& in, ca::u32 slot)
@@ -447,7 +404,7 @@ bool extractClassKey(ir::ClassSession& s, const PromotedCode& code, std::string&
                 || seq[p + 31]->op != Op::IXOR || seq[p + 32]->op != Op::I2C
                 || seq[p + 33]->op != Op::CASTORE) continue;
             ca::i32 mask = 0;
-            if (!intLoadAt(*seq[p + 34], i) || !constIntAt(s, *seq[p + 35], mask)
+            if (!intLoadAt(*seq[p + 34], i) || !const_args::decodeConstInt(s, *seq[p + 35], mask)
                 || mask != knowledge::kGruntRotateMask
                 || seq[p + 36]->op != Op::IAND || !intStoreSlotOf(*seq[p + 37], t)) continue;
             if (!intLoadAt(*seq[p + 38], k) || !intLoadAt(*seq[p + 39], t)
@@ -483,7 +440,7 @@ bool extractClassKey(ir::ClassSession& s, const PromotedCode& code, std::string&
     std::optional<ca::i32> initKey;
     for (ca::usize p = 0; p + 6 <= seq.size(); ++p) {
         ca::i32 c = 0;
-        if (!constIntAt(s, *seq[p], c)) continue;
+        if (!const_args::decodeConstInt(s, *seq[p], c)) continue;
         if (!intLoadAt(*seq[p + 1], kSlot) || seq[p + 2]->op != Op::IXOR
             || !intStoreAt(*seq[p + 3], sSlot) || seq[p + 4]->op != Op::ICONST_0
             || !intStoreAt(*seq[p + 5], iSlot)) continue;
@@ -599,7 +556,7 @@ bool parseArrayInit(ir::ClassSession& s, const PromotedCode& code,
         ++p;
         // ---- 下标 ----
         ca::i32 idx = 0;
-        if (!constIntAt(s, *seq[p], idx) || idx < 0) {
+        if (!const_args::decodeConstInt(s, *seq[p], idx) || idx < 0) {
             why = "arrayInit 下标非常量/负值";
             return false;
         }
@@ -609,7 +566,7 @@ bool parseArrayInit(ir::ClassSession& s, const PromotedCode& code,
         // 形态判别按常量 KIND（v2/v3 的差异是密文形态配置，不是版本键）：
         // String 常量 → literal（v2 ldc+toCharArray 直存形）；int 常量 →
         // arrayed 长度（v3 NEWARRAY T_CHAR 直存码元形；len 经 iconst/bipush/
-        // ldc 任意装载，归一后统一 constIntAt 读）。
+        // ldc 任意装载，归一后统一 const_args::decodeConstInt 读）。
         ir::ClassSession::ConstSem cs;
         const bool stringCipher = (seq[p]->op == Op::LDC || seq[p]->op == Op::LDC_W)
                                 && s.constOf(*seq[p], cs)
@@ -634,7 +591,7 @@ bool parseArrayInit(ir::ClassSession& s, const PromotedCode& code,
             ++p;
         } else {
             ca::i32 len = 0;
-            if (!constIntAt(s, *seq[p], len) || len < 0) {
+            if (!const_args::decodeConstInt(s, *seq[p], len) || len < 0) {
                 why = "arrayed 密文长度非常量/负值";
                 return false;
             }
@@ -653,13 +610,13 @@ bool parseArrayInit(ir::ClassSession& s, const PromotedCode& code,
                 }
                 ++p;
                 ca::i32 slot = 0;
-                if (!constIntAt(s, *seq[p], slot) || slot != e) {
+                if (!const_args::decodeConstInt(s, *seq[p], slot) || slot != e) {
                     why = "arrayed 码元下标非常量/乱序";
                     return false;
                 }
                 ++p;
                 ca::i32 code = 0;
-                if (!constIntAt(s, *seq[p], code) || code < 0 || code > 0xFFFF) {
+                if (!const_args::decodeConstInt(s, *seq[p], code) || code < 0 || code > 0xFFFF) {
                     why = "arrayed 码元值非常量/越界";
                     return false;
                 }
@@ -673,13 +630,13 @@ bool parseArrayInit(ir::ClassSession& s, const PromotedCode& code,
             }
         }
         // ---- seed(long) ----
-        if (!constLongAt(s, *seq[p], entry.seed)) {
+        if (!const_args::decodeConstLong(s, *seq[p], entry.seed)) {
             why = "arrayInit seed 非常量";
             return false;
         }
         ++p;
         // ---- key(int) ----
-        if (!constIntAt(s, *seq[p], entry.key)) {
+        if (!const_args::decodeConstInt(s, *seq[p], entry.key)) {
             why = "arrayInit key 非常量";
             return false;
         }
@@ -740,7 +697,7 @@ ChainFail buildPoolChain(ir::ClassSession& s, PoolChain& out, std::string& why)
     std::optional<std::string>          arrayInitName;
     for (ca::usize p = 0; p + 4 <= seq.size(); ++p) {
         ca::i32 poolLen = 0;
-        if (!constIntAt(s, *seq[p], poolLen) || poolLen <= 0) continue;
+        if (!const_args::decodeConstInt(s, *seq[p], poolLen) || poolLen <= 0) continue;
         if (seq[p + 1]->op != Op::ANEWARRAY
             || s.classOf(*seq[p + 1]) != knowledge::kGruntPoolElemType) continue;
         ir::ClassSession::MemberSem fsem;
@@ -946,7 +903,7 @@ void scanClass(ir::ClassSession& s, const std::string& uri, ScanResult& result,
             const ir::Insn* tail =
                 (mid == nullptr) ? nullptr : nextRealInsn(cu->dom, order, midQ + 1, &tailQ, &labeled);
             ca::i32         idx  = 0;
-            if (labeled || mid == nullptr || tail == nullptr || !constIntAt(s, *mid, idx)
+            if (labeled || mid == nullptr || tail == nullptr || !const_args::decodeConstInt(s, *mid, idx)
                 || tail->op != Op::AALOAD) {
                 if (labeled && !countOnly) {
                     Reject rej;
@@ -1074,7 +1031,7 @@ bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
     ca::i32                     idx = 0;
     if (!s.memberOf(*head, sem) || sem.kind != ir::ClassSession::MemberSem::Kind::Field
         || sem.owner != selfName || sem.name != site.fieldName
-        || sem.desc != knowledge::kGruntPoolFieldDesc || !constIntAt(s, *mid, idx)
+        || sem.desc != knowledge::kGruntPoolFieldDesc || !const_args::decodeConstInt(s, *mid, idx)
         || idx != site.index || tail->op != Op::AALOAD) {
         return false;
     }

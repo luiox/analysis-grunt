@@ -21,6 +21,7 @@
 #include "jbc/type/descriptor.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/knowledge/const_args.hpp"
 #include "grunt/knowledge/grunt_names.hpp"
 #include "grunt/pass_clock.hpp"
 #include "grunt/proof_toolbox.hpp"
@@ -42,52 +43,8 @@ constexpr ca::u32   kAccPrivate = 0x0002;
 constexpr ca::u32   kAccStatic  = 0x0008;
 
 // ============================================================================
-// ==== 形状钉面辅助（与 string_pool_fold / indy_restore 同形独立实现）========
+// ==== 形状钉面辅助（常量装载读数走 const_args，槽装载仍就地钉形）============
 // ============================================================================
-
-/// @brief 一条 int 常量装载（ICONST_M1..5 / BIPUSH / SIPUSH / LDC(LDC_W) Integer）。
-bool constIntAt(const ir::ClassSession& s, const ir::Insn& in, ca::i32& out)
-{
-    switch (in.op) {
-    case Op::ICONST_M1: out = -1; return true;
-    case Op::ICONST_0:  out = 0; return true;
-    case Op::ICONST_1:  out = 1; return true;
-    case Op::ICONST_2:  out = 2; return true;
-    case Op::ICONST_3:  out = 3; return true;
-    case Op::ICONST_4:  out = 4; return true;
-    case Op::ICONST_5:  out = 5; return true;
-    case Op::BIPUSH:
-    case Op::SIPUSH:    out = in.a; return true;
-    case Op::LDC:
-    case Op::LDC_W: {
-        const jbc::core::ConstantPool& cp = s.backing().cp;
-        if (!cp.valid(in.cp)) return false;
-        const jbc::core::ConstantPool::Entry& e = cp.at(in.cp);
-        if (e.tag != CpTag::Integer) return false;
-        out = e.ival;
-        return true;
-    }
-    default: return false;
-    }
-}
-
-/// @brief 一条 long 常量装载（LCONST_0/1 / LDC2_W Long）。
-bool constLongAt(const ir::ClassSession& s, const ir::Insn& in, ca::i64& out)
-{
-    switch (in.op) {
-    case Op::LCONST_0: out = 0; return true;
-    case Op::LCONST_1: out = 1; return true;
-    case Op::LDC2_W: {
-        const jbc::core::ConstantPool& cp = s.backing().cp;
-        if (!cp.valid(in.cp)) return false;
-        const jbc::core::ConstantPool::Entry& e = cp.at(in.cp);
-        if (e.tag != CpTag::Long) return false;
-        out = e.lval;
-        return true;
-    }
-    default: return false;
-    }
-}
 
 /// @brief int 槽装载（ILOAD a==slot 或 ILOAD_0..3 快捷形）。
 bool intLoadAt(const ir::Insn& in, ca::u32 slot)
@@ -349,7 +306,7 @@ std::vector<MaterialWindow> findMaterialWindows(
             }
             if (sem.desc != "()I" || sem.owner != self) continue;
             ca::i32 raw = 0;
-            if (!constIntAt(s, *seq[p - 4], raw)) continue;
+            if (!const_args::decodeConstInt(s, *seq[p - 4], raw)) continue;
             MaterialWindow w;
             w.decryptorIndex = mi;
             w.decryptorName  = std::string(unit.symbols().str(unit.methods[mi].name));
@@ -408,7 +365,7 @@ std::optional<MaterialKeyBody> matchMaterialKeyBody(
         return std::nullopt;
     }
     ca::i32 shift = 0;
-    if (seq[1]->op != Op::DUP2 || !constIntAt(s, *seq[2], shift)
+    if (seq[1]->op != Op::DUP2 || !const_args::decodeConstInt(s, *seq[2], shift)
         || shift != static_cast<ca::i32>(knowledge::kGruntMaterialKeySlotShift)
         || seq[3]->op != Op::LUSHR || seq[4]->op != Op::LXOR || seq[5]->op != Op::L2I) {
         return std::nullopt;
@@ -607,7 +564,7 @@ bool evalKeyInit(ir::ClassSession& s, std::unordered_map<ca::usize, MethodView>&
     // ---- Form A：单条 long 常量装载 ----
     if (q >= 1) {
         ca::i64 v = 0;
-        if (constLongAt(s, *seq[q - 1], v)) {
+        if (const_args::decodeConstLong(s, *seq[q - 1], v)) {
             out = v;
             return true;
         }
@@ -616,7 +573,7 @@ bool evalKeyInit(ir::ClassSession& s, std::unordered_map<ca::usize, MethodView>&
     // ---- Form B：`ldc 明文; INT(32); INVOKESTATIC parse; ldc2_w C; lxor` ----
     if (q >= 5 && seq[q - 1]->op == Op::LXOR) {
         ca::i64 cxor = 0;
-        if (constLongAt(s, *seq[q - 2], cxor) && seq[q - 3]->op == Op::INVOKESTATIC) {
+        if (const_args::decodeConstLong(s, *seq[q - 2], cxor) && seq[q - 3]->op == Op::INVOKESTATIC) {
             ir::ClassSession::MemberSem psem;
             const bool parseDirect =
                 memberOf(s, *seq[q - 3], ir::ClassSession::MemberSem::Kind::Method, psem)
@@ -630,7 +587,7 @@ bool evalKeyInit(ir::ClassSession& s, std::unordered_map<ca::usize, MethodView>&
                                     && psem.desc == knowledge::kGruntMaterialParseDesc
                                     && parseTrampolineShape(s, views, std::string(psem.name));
             ca::i32 radix = 0;
-            if ((parseDirect || parseTramp) && constIntAt(s, *seq[q - 4], radix)
+            if ((parseDirect || parseTramp) && const_args::decodeConstInt(s, *seq[q - 4], radix)
                 && radix == knowledge::kGruntMaterialParseRadix
                 && (seq[q - 5]->op == Op::LDC || seq[q - 5]->op == Op::LDC_W)
                 && !interiorLabeled(q - 5, q)) {
@@ -1227,7 +1184,7 @@ bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
     const ir::Insn* next3 = cu.dom.peek(order[pos + 3]);
     ca::i32         raw   = 0;
     if (prev == nullptr || next1 == nullptr || next2 == nullptr || next3 == nullptr
-        || !constIntAt(s, *prev, raw) || raw != site.decryptorRawKey
+        || !const_args::decodeConstInt(s, *prev, raw) || raw != site.decryptorRawKey
         || next1->op != Op::IXOR || next2->op != Op::IXOR || next3->op != Op::I2C) {
         return false;
     }

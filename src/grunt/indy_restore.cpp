@@ -31,6 +31,7 @@
 #include "jbc/type/descriptor.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/knowledge/const_args.hpp"
 #include "grunt/knowledge/grunt_names.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/rewrite_toolbox.hpp"
@@ -77,40 +78,6 @@ bool parseMethod(std::string_view desc, MethodDesc& out) noexcept
     if (r.is_err()) return false;
     out = std::move(r).unwrap();
     return true;
-}
-
-// ============================================================================
-// ==== int 常量读取（键提取窗口用）==========================================
-// ============================================================================
-
-/// @brief 位置 p 是否一条 int 常量装载（ICONST/BIPUSH/SIPUSH/LDC(LDC_W) Integer）。
-bool constIntAt(const ir::ClassSession& s, const ir::CodeUnit& cu,
-                const std::vector<ir::InsnId>& order, ca::usize pos, ca::i32& out)
-{
-    if (pos >= order.size()) return false;
-    const ir::Insn* in = cu.dom.peek(order[pos]);
-    if (in == nullptr) return false;
-    switch (in->op) {
-    case Op::ICONST_M1: out = -1; return true;
-    case Op::ICONST_0:  out = 0; return true;
-    case Op::ICONST_1:  out = 1; return true;
-    case Op::ICONST_2:  out = 2; return true;
-    case Op::ICONST_3:  out = 3; return true;
-    case Op::ICONST_4:  out = 4; return true;
-    case Op::ICONST_5:  out = 5; return true;
-    case Op::BIPUSH:
-    case Op::SIPUSH:    out = in->a; return true;
-    case Op::LDC:
-    case Op::LDC_W: {
-        const jbc::core::ConstantPool& cp = s.backing().cp;
-        if (!cp.valid(in->cp)) return false;
-        const jbc::core::ConstantPool::Entry& e = cp.at(in->cp);
-        if (e.tag != CpTag::Integer) return false;
-        out = e.ival;
-        return true;
-    }
-    default: return false;
-    }
 }
 
 // ============================================================================
@@ -251,7 +218,7 @@ std::optional<std::pair<DecShape, ca::i32>> scanDecryptKey(ir::ClassSession& s, 
 
         // plain 单层：I2C ← IXOR ← LDC K。
         ca::i32 single = 0;
-        if (p >= 2 && constIntAt(s, cu, order, p - 2, single)) {
+        if (p >= 2 && const_args::decodeConstInt(s, cu, order, p - 2, single)) {
             return std::make_pair(DecShape::Plain, single);
         }
         if (p < 4) continue;
@@ -268,7 +235,7 @@ std::optional<std::pair<DecShape, ca::i32>> scanDecryptKey(ir::ClassSession& s, 
                 continue;
             }
             ca::i32 raw = 0;
-            if (constIntAt(s, cu, order, p - 4, raw)) {
+            if (const_args::decodeConstInt(s, cu, order, p - 4, raw)) {
                 return std::make_pair(DecShape::Material, raw);
             }
             continue;
@@ -278,7 +245,7 @@ std::optional<std::pair<DecShape, ca::i32>> scanDecryptKey(ir::ClassSession& s, 
         // LDC K ← LDC value，key = value ^ K。
         ca::i32 ka = 0;
         ca::i32 kb = 0;
-        if (constIntAt(s, cu, order, p - 3, ka) && constIntAt(s, cu, order, p - 4, kb)) {
+        if (const_args::decodeConstInt(s, cu, order, p - 3, ka) && const_args::decodeConstInt(s, cu, order, p - 4, kb)) {
             return std::make_pair(DecShape::Plain, ka ^ kb);
         }
     }
@@ -352,7 +319,7 @@ void collectClassKeys(ir::ClassSession& s, ClassKeys& out)
             }
             if (p == 0) continue;
             ca::i32 key = 0;
-            if (constIntAt(s, *cu, order, p - 1, key)) {
+            if (const_args::decodeConstInt(s, *cu, order, p - 1, key)) {
                 out.heavyBsmKey[mname] = key;
             }
             break;

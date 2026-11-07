@@ -13,6 +13,7 @@
 
 #include "libca/core/datatype.hpp"
 
+#include "jbc/core/constant_pool.hpp"
 #include "jbc/core/opcode.hpp"
 #include "jbc/ir/code_dom.hpp"
 #include "jbc/ir/units.hpp"
@@ -25,6 +26,68 @@ namespace grunt::const_args {
 
 namespace ir = jbc::ir;
 using jbc::core::Op;
+
+/// @brief 一条 int 常量装载（ICONST_M1..5 / BIPUSH / SIPUSH / LDC(LDC_W)
+///        Integer）。原 7 个 pass 各自的 `constIntAt` 私有副本单源化至此。
+///
+/// 只认 int 形装载：LDC2_W 是 long 形不收，String/Class 等引用形一律拒绝。
+/// 两种签名变体保形共存——Insn 变体是判定本体；CodeUnit 位置变体
+/// （indy_restore / indy_decode 原形）只做位置界检与取指，随即落回 Insn 变体。
+inline bool decodeConstInt(const ir::ClassSession& s, const ir::Insn& in, ca::i32& out)
+{
+    switch (in.op) {
+    case Op::ICONST_M1: out = -1; return true;
+    case Op::ICONST_0:  out = 0; return true;
+    case Op::ICONST_1:  out = 1; return true;
+    case Op::ICONST_2:  out = 2; return true;
+    case Op::ICONST_3:  out = 3; return true;
+    case Op::ICONST_4:  out = 4; return true;
+    case Op::ICONST_5:  out = 5; return true;
+    case Op::BIPUSH:
+    case Op::SIPUSH:    out = in.a; return true;
+    case Op::LDC:
+    case Op::LDC_W: {
+        const jbc::core::ConstantPool& cp = s.backing().cp;
+        if (!cp.valid(in.cp)) return false;
+        const jbc::core::ConstantPool::Entry& e = cp.at(in.cp);
+        if (e.tag != jbc::core::CpTag::Integer) return false;
+        out = e.ival;
+        return true;
+    }
+    default: return false;
+    }
+}
+
+/// @brief decodeConstInt 的 CodeUnit 位置变体：`pos` 界外或指令不可解码即
+///        false，判定口径与 Insn 变体逐位同。
+inline bool decodeConstInt(const ir::ClassSession& s, const ir::CodeUnit& cu,
+                           const std::vector<ir::InsnId>& order, ca::usize pos,
+                           ca::i32& out)
+{
+    if (pos >= order.size()) return false;
+    const ir::Insn* in = cu.dom.peek(order[pos]);
+    if (in == nullptr) return false;
+    return decodeConstInt(s, *in, out);
+}
+
+/// @brief 一条 long 常量装载（LCONST_0/1 / LDC2_W Long）。原
+///        material_key_restore / string_pool_fold 两份 `constLongAt` 单源化。
+inline bool decodeConstLong(const ir::ClassSession& s, const ir::Insn& in, ca::i64& out)
+{
+    switch (in.op) {
+    case Op::LCONST_0: out = 0; return true;
+    case Op::LCONST_1: out = 1; return true;
+    case Op::LDC2_W: {
+        const jbc::core::ConstantPool& cp = s.backing().cp;
+        if (!cp.valid(in.cp)) return false;
+        const jbc::core::ConstantPool::Entry& e = cp.at(in.cp);
+        if (e.tag != jbc::core::CpTag::Long) return false;
+        out = e.lval;
+        return true;
+    }
+    default: return false;
+    }
+}
 
 /// @brief 纯常量装载识别：iconst/bipush/sipush/ldc 族 + aconst_null + l/f/dconst。
 ///

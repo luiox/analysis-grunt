@@ -32,6 +32,7 @@
 #include "jbc/type/descriptor.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/knowledge/const_args.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/rewrite_toolbox.hpp"
 #include "grunt/scan_toolbox.hpp"
@@ -111,38 +112,8 @@ bool parseMethod(std::string_view desc, MethodDesc& out) noexcept
 }
 
 // ============================================================================
-// ==== key 提取（S2：解密器形状）=============================================
+// ==== key 提取（S2：解密器形状；int 常量读取走 const_args）==================
 // ============================================================================
-
-/// @brief 位置 p 是否一条 int 常量装载（ICONST/BIPUSH/SIPUSH/LDC(LDC_W) Integer）。
-bool constIntAt(const ir::ClassSession& s, const ir::CodeUnit& cu,
-                const std::vector<ir::InsnId>& order, ca::usize pos, ca::i32& out)
-{
-    if (pos >= order.size()) return false;
-    const ir::Insn* in = cu.dom.peek(order[pos]);
-    if (in == nullptr) return false;
-    switch (in->op) {
-    case Op::ICONST_M1: out = -1; return true;
-    case Op::ICONST_0:  out = 0; return true;
-    case Op::ICONST_1:  out = 1; return true;
-    case Op::ICONST_2:  out = 2; return true;
-    case Op::ICONST_3:  out = 3; return true;
-    case Op::ICONST_4:  out = 4; return true;
-    case Op::ICONST_5:  out = 5; return true;
-    case Op::BIPUSH:
-    case Op::SIPUSH:    out = in->a; return true;
-    case Op::LDC:
-    case Op::LDC_W: {
-        const jbc::core::ConstantPool& cp = s.backing().cp;
-        if (!cp.valid(in->cp)) return false;
-        const jbc::core::ConstantPool::Entry& e = cp.at(in->cp);
-        if (e.tag != CpTag::Integer) return false;
-        out = e.ival;
-        return true;
-    }
-    default: return false;
-    }
-}
 
 /// @brief 从解密器方法体提取 XOR key。
 ///
@@ -166,14 +137,14 @@ std::optional<ca::i32> extractDecryptKey(const ir::ClassSession& s, ir::CodeUnit
         if (inner->op == Op::IXOR) {
             if (p < 4) break;
             ca::i32 k2 = 0;
-            if (!constIntAt(s, cu, order, p - 3, k2)) break;
+            if (!const_args::decodeConstInt(s, cu, order, p - 3, k2)) break;
             ca::i32 k1 = 0;
-            if (!constIntAt(s, cu, order, p - 4, k1)) break;
+            if (!const_args::decodeConstInt(s, cu, order, p - 4, k1)) break;
             return k1 ^ k2;
         }
         // 单层：inner 位置直接是 int 常量。
         ca::i32 single = 0;
-        if (constIntAt(s, cu, order, p - 2, single)) return single;
+        if (const_args::decodeConstInt(s, cu, order, p - 2, single)) return single;
         break;
     }
     return std::nullopt;

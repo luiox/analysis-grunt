@@ -67,6 +67,7 @@
 #include "jbc/ir/units.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/knowledge/const_args.hpp"
 #include "grunt/knowledge/grunt_names.hpp"
 #include "grunt/pass_clock.hpp"
 #include "grunt/proof_toolbox.hpp"
@@ -77,7 +78,6 @@ namespace grunt::cff_unflatten {
 namespace {
 
 namespace ir = jbc::ir;
-using jbc::core::CpTag;
 
 using jbc::core::Op;
 
@@ -85,34 +85,8 @@ constexpr ca::usize kNoPos           = static_cast<ca::usize>(-1);
 constexpr ca::usize kCarrierDepthCap = 8;   // 边载体链深上限（环防御）
 
 // ============================================================================
-// ==== 形状钉面辅助 ==========================================================
+// ==== 形状钉面辅助（常量装载读数走 const_args）==============================
 // ============================================================================
-
-/// @brief 一条 int 常量装载（ICONST_M1..5 / BIPUSH / SIPUSH / LDC(LDC_W) Integer）。
-bool constIntAt(const ir::ClassSession& s, const ir::Insn& in, ca::i32& out)
-{
-    switch (in.op) {
-    case Op::ICONST_M1: out = -1; return true;
-    case Op::ICONST_0:  out = 0; return true;
-    case Op::ICONST_1:  out = 1; return true;
-    case Op::ICONST_2:  out = 2; return true;
-    case Op::ICONST_3:  out = 3; return true;
-    case Op::ICONST_4:  out = 4; return true;
-    case Op::ICONST_5:  out = 5; return true;
-    case Op::BIPUSH:
-    case Op::SIPUSH:    out = in.a; return true;
-    case Op::LDC:
-    case Op::LDC_W: {
-        const jbc::core::ConstantPool& cp = s.backing().cp;
-        if (!cp.valid(in.cp)) return false;
-        const jbc::core::ConstantPool::Entry& e = cp.at(in.cp);
-        if (e.tag != CpTag::Integer) return false;
-        out = e.ival;
-        return true;
-    }
-    default: return false;
-    }
-}
 
 /// @brief int 槽装载读取（ILOAD a / ILOAD_0..3 → 槽号；失败 false）。
 bool intLoadSlotOf(const ir::Insn& in, ca::u32& slot)
@@ -308,9 +282,9 @@ SpanParse evalSpanTail(const MethodView& mv, const Blk& blk, ca::usize tailIdx, 
         ir::ClassSession::MemberSem sem;
         if (i1.op == Op::INVOKESTATIC && s.memberOf(i1, sem)
             && sem.kind == ir::ClassSession::MemberSem::Kind::Method
-            && sem.desc == knowledge::kGruntCffProcessorActionDesc && constIntAt(s, i2, salt)
+            && sem.desc == knowledge::kGruntCffProcessorActionDesc && const_args::decodeConstInt(s, i2, salt)
             && intLoadSlotOf(i3, ld) && ld == slot && intStoreSlotOf(i4, sd) && sd == slot
-            && constIntAt(s, i5, input)) {
+            && const_args::decodeConstInt(s, i5, input)) {
             SpanParse out;
             out.kind  = SpanKind::Processor;
             out.start = tailIdx - 5;
@@ -335,7 +309,7 @@ SpanParse evalSpanTail(const MethodView& mv, const Blk& blk, ca::usize tailIdx, 
             || in.op == Op::IDIV) {
             if (walk < 2) return SpanParse{};
             ca::i32 c = 0;
-            if (!constIntAt(s, at(walk - 2), c)) return SpanParse{};
+            if (!const_args::decodeConstInt(s, at(walk - 2), c)) return SpanParse{};
             rev.push_back(Step{in.op, c, false});
             walk -= 2;
             continue;
@@ -348,7 +322,7 @@ SpanParse evalSpanTail(const MethodView& mv, const Blk& blk, ca::usize tailIdx, 
                 && sem.desc == knowledge::kGruntCffMathMaxDesc) {
                 if (walk < 2) return SpanParse{};
                 ca::i32 c = 0;
-                if (!constIntAt(s, at(walk - 2), c)) return SpanParse{};
+                if (!const_args::decodeConstInt(s, at(walk - 2), c)) return SpanParse{};
                 rev.push_back(Step{Op::NOP, c, true});
                 walk -= 2;
                 continue;
@@ -362,7 +336,7 @@ SpanParse evalSpanTail(const MethodView& mv, const Blk& blk, ca::usize tailIdx, 
             }
             return SpanParse{};                    // 出词汇表
         }
-        if (constIntAt(s, in, base)) {             // span base
+        if (const_args::decodeConstInt(s, in, base)) {             // span base
             walk -= 1;
             break;
         }
@@ -643,7 +617,7 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
                             const ir::Insn&                 iv  = mv.insn(blk.insns[i + 2]);
                             const ir::Insn&                 st  = mv.insn(blk.insns[i + 3]);
                             const ir::Insn&                 pre = mv.insn(blk.insns[i - 1]);
-                            ahead = constIntAt(s, k1, salt) && iv.op == Op::INVOKESTATIC
+                            ahead = const_args::decodeConstInt(s, k1, salt) && iv.op == Op::INVOKESTATIC
                                     && s.memberOf(iv, sem)
                                     && sem.kind == ir::ClassSession::MemberSem::Kind::Method
                                     && sem.desc == knowledge::kGruntCffProcessorActionDesc
