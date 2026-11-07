@@ -1,5 +1,9 @@
 # indy_fold 实现笔记
 
+> 桥注记：BSM 模拟骑的 jsim 桥已迁官方 `jsim/jbc.hpp`（`jsim::jbcbridge::
+> toSimMethod`，自建 `src/grunt/jsim_bridge.hpp` 退役）；含 indy 的方法官方
+> 桥面整方法拒绝（UnsupportedOp），不再有占位 CallRef 运行期兜底。
+
 ## 数据流
 
 `Site{uri, methodIndex, insnPc, bsm 三元组, args[], indyName/Desc, foldable,

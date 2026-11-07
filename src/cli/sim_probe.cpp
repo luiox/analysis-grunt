@@ -22,7 +22,6 @@
 #include <vector>
 
 #include "grunt/container.hpp"
-#include "grunt/jsim_bridge.hpp"
 #include "grunt/jsim_executor.hpp"
 
 #include "mjbase/jasm/jvm_jasm_service.hpp"
@@ -51,11 +50,11 @@ const char* reasonName(jsim::Bail::Reason r)
     return "?";
 }
 
-/// @brief 描述符参数列表 → 值类型序列（桥里有同一份，探针不另写）。
+/// @brief 描述符参数列表 → 值类型序列（执行器侧有同一份，探针不另写）。
 std::vector<jsim::ValType> paramTypes(std::string_view desc)
 {
     std::vector<jsim::ValType> out;
-    (void)jsim_bridge::paramTypesOfDesc(desc, out);
+    (void)paramTypesOfDesc(desc, out);
     return out;
 }
 
@@ -339,7 +338,13 @@ int runSimProbe(const SimProbeOptions& options)
     // 「桥的问题」还是「引擎的问题」。桥视图跟在后面，供对表。
     jsim::Method simMethod;
     std::string  why;
-    const bool   bridged = jsim_bridge::toSimMethod(*session, found, simMethod, &why);
+    const auto   bridgedResult = jsim::jbcbridge::toSimMethod(*session, found);
+    const bool   bridged       = bridgedResult.isOk();
+    if (bridged) {
+        simMethod = std::move(bridgedResult.value());
+    } else {
+        why = bridgedResult.error().detail;
+    }
     if (options.dump) {
         (void)dumpMethodWithJasm(*bytes, name, desc);
         if (bridged) {

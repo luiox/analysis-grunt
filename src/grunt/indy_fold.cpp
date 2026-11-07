@@ -21,13 +21,13 @@
 #include <vector>
 
 #include "grunt/container.hpp"
-#include "grunt/jsim_bridge.hpp"
 #include "grunt/jsim_executor.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/scan_toolbox.hpp"
 
 #include "jbc/core/attribute.hpp"
 #include "jbc/core/class_file.hpp"
+#include "jbc/core/cp_resolve.hpp"
 #include "jbc/core/writer.hpp"
 #include "jbc/ir/units.hpp"
 
@@ -163,7 +163,7 @@ bool runBsm(Engine& engine, const std::string& hostUri, const Site& site,
             jsim::indy::Target& target, std::string& why)
 {
     std::vector<jsim::ValType> params;
-    if (!jsim_bridge::paramTypesOfDesc(site.bsmDesc, params)) {
+    if (!paramTypesOfDesc(site.bsmDesc, params)) {
         why = "BSM 描述符解析失败";
         return false;
     }
@@ -289,13 +289,14 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
                 }
 
                 const jbc::core::BootstrapMethodsAttr::Entry& bsm = (*bsms)[indy.a];
-                // BSM 句柄：MethodHandle → Methodref。
-                if (cp.valid(bsm.methodRef)) {
-                    const jbc::core::ConstantPool::Entry& mh = cp.at(bsm.methodRef);
-                    if (mh.tag == CpTag::MethodHandle) {
-                        jsim_bridge::detail::memberRefOf(cp, mh.b, site.bsmOwner, site.bsmName,
-                                                         site.bsmDesc);
-                    }
+                // BSM 句柄：MethodHandle → 引用成员三段（libjbc 官方解析原语，
+                // kind 域检 + kind-tag 匹配，损坏池 fail-closed）。
+                jbc::core::HandleSem bsmHandle;
+                if (cp.valid(bsm.methodRef)
+                    && jbc::core::resolveHandleCp(cp, bsm.methodRef, bsmHandle)) {
+                    site.bsmOwner = std::string(bsmHandle.owner);
+                    site.bsmName  = std::string(bsmHandle.name);
+                    site.bsmDesc  = std::string(bsmHandle.desc);
                 }
                 for (ca::u32 argCp : bsm.args) site.args.push_back(readBsmArg(cp, argCp));
 

@@ -1,8 +1,9 @@
 /// @file        sim_probe.hpp
 /// @brief       CLI 探针：对容器里某个真方法跑一遍 libjsim。
 ///
-/// 这是桥（jsim_bridge）的唯一验证入口——不接探针就没法证明「真 CodeUnit
-/// 转出来的方法」和手搭字节码行为一致。探针只读：不改 DOM、不 lower、不写回。
+/// 这是桥（libjsim 官方 jsim/jbc.hpp）的唯一验证入口——不接探针就没法证明
+/// 「真 CodeUnit 转出来的方法」和手搭字节码行为一致。探针只读：不改 DOM、
+/// 不 lower、不写回。
 #pragma once
 
 #include <string>
