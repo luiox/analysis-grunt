@@ -2,7 +2,7 @@
 /// @brief       残留 `gate_processor_fold`：Grunt v3 ControlflowJump 门点
 ///              processor 调用跨方法静态求值 + 恒真门比较折叠。
 ///
-/// ## 形态（artifact 侧；源锚 grunt3@e41e852
+/// ## 形态（artifact 侧；源锚 `grunt3@e41e852`
 ///          OpaquePredicateProcessorRegistry.kt / IntExpression.kt）
 ///
 /// v3 ControlflowJump 的 guard / mangled-gate 块在真分支边上插一道「processor

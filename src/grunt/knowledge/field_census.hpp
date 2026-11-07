@@ -26,7 +26,7 @@ struct FieldAcc
     std::string uri;        ///< 访问者所在类
     ca::usize   methodIndex = 0;
     bool        write       = false;   ///< PUTSTATIC / PUTFIELD
-    bool        inClinit    = false;   ///< 访问者方法是 <clinit>
+    bool        inClinit    = false;   ///< 访问者方法是 `<clinit>`
 };
 
 /// @brief 逐字段访问清单，key = `owner::name`。

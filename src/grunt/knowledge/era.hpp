@@ -29,8 +29,8 @@ namespace grunt::knowledge {
 enum class Era : ca::u8 {
     Unknown = 0,  ///< 判据不足：fail-closed，不做猜测性改写
     Grunt2,       ///< Gruntpocalypse 2.x（判据仍缺，如实挂账——见 probeEra 注）
-    Grunt3,       ///< Grunteon（@Metadata 注解 + Grunt BSM desc 双指纹）
-    Kasumi,       ///< Kasumi Obfuscator（indy 全量改写 + @Metadata + 反 LLM 资源）
+    Grunt3,       ///< Grunteon（`@Metadata` 注解 + Grunt BSM desc 双指纹）
+    Kasumi,       ///< Kasumi Obfuscator（indy 全量改写 + `@Metadata` + 反 LLM 资源）
 };
 
 /// @brief 版本探测（每家族仓固定提供这一个函数）。命中即判：三个 Kasumi
@@ -42,9 +42,9 @@ enum class Era : ca::u8 {
 ///   运行时类必然在场——Main-Class 即在其中，25 类样本全貌见 notes §1）；
 /// - **Kasumi 8 参 BSM 指纹**：任一 BootstrapMethods 条目的 MethodHandle
 ///   方法描述符等于 `kKasumiBootstrapDesc`（Kasumi 的 indy 形态唯一签名）；
-/// - **Kasumi @Metadata 注解**：类/字段/方法任一挂载点带
+/// - **Kasumi `@Metadata` 注解**：类/字段/方法任一挂载点带
 ///   `@Ldev/kasumi/internal/Metadata;`（每类一个，Kasumi 特有）。
-/// - **Grunt3 @Metadata 指纹**：类级可见注解类型等于
+/// - **Grunt3 `@Metadata` 指纹**：类级可见注解类型等于
 ///   `kGrunt3MetadataAnnoDesc`（`Lnet/spartanb312/grunteon/internal/Metadata;`，
 ///   v3 默认 metadataClass——`grunteon` 字样 v2 不产，v2 默认是
 ///   `net/spartanb312/grunt/GruntMetadata`）；
@@ -54,7 +54,7 @@ enum class Era : ca::u8 {
 ///   方法描述符等于 `kGruntSimpleBsmDesc` 或 `kGruntHeavyBsmDesc`
 ///   （v2/v3 两代逐字同源，只证明「Grunt 家族 indy 机器在场」）。
 ///
-/// `Era::Grunt3` = Grunt 家族指纹（BSM desc）**且**（@Metadata 注解或
+/// `Era::Grunt3` = Grunt 家族指纹（BSM desc）**且**（`@Metadata` 注解或
 /// grunteon 命名空间）——双半边钉版本，单一半边不判。
 ///
 /// **Grunt2 判据仍缺，如实挂账**：`U+200E` 尾缀两代同源、调用点模板无稳定

@@ -1,6 +1,6 @@
 /// @file        metadata_strip.hpp
 /// @brief       残留 `metadata_strip`：Kasumi 元数据与水印残留清理三段
-///              （@Metadata 注解三面摘除 + 水印字段删除 + 反 LLM 资源删除）。
+///              （`@Metadata` 注解三面摘除 + 水印字段删除 + 反 LLM 资源删除）。
 ///
 /// ## 三面（对位树版 kasumi_metadata_cleanup_pass）
 ///
@@ -66,11 +66,11 @@ struct ScanInput
     knowledge::Era era = knowledge::Era::Unknown;
 };
 
-/// @brief 一个待清理类：@Metadata 条目数（三面合计）+ 水印字段数。
+/// @brief 一个待清理类：`@Metadata` 条目数（三面合计）+ 水印字段数。
 struct Site
 {
     std::string uri;
-    ca::usize   annos  = 0;   ///< @Metadata 条目数（类/字段/方法三面合计）
+    ca::usize   annos  = 0;   ///< `@Metadata` 条目数（类/字段/方法三面合计）
     ca::usize   fields = 0;   ///< 水印字段数（带注解字段 + ConstantValue 水印字段）
 };
 
@@ -80,7 +80,7 @@ struct ScanResult
     std::vector<Site>        sites;       ///< 待清理类（逐类条目数台账）
     std::vector<std::string> resources;   ///< 待删资源（URI 形状 + 内容探针双证齐）
 
-    ca::usize totalAnnos         = 0;  ///< 三面 @Metadata 总条目数
+    ca::usize totalAnnos         = 0;  ///< 三面 `@Metadata` 总条目数
     ca::usize totalFields        = 0;  ///< 水印字段总数
     ca::usize resourceCandidates = 0;  ///< 资源前缀命中但删除判据不全（树版保留，如实盘点）
     ca::usize annoBlocked        = 0;  ///< 深度预检拦下的注解槽数（fail-closed 不摘）
@@ -95,7 +95,7 @@ struct DirtySet
     std::vector<std::string> removedResources; ///< 被删除的资源清单（逐条 URI）
 
     ca::usize classes = 0;             ///< 清理的类数
-    ca::usize annos   = 0;             ///< 摘除的 @Metadata 条目数（含随水印字段删除的）
+    ca::usize annos   = 0;             ///< 摘除的 `@Metadata` 条目数（含随水印字段删除的）
     ca::usize fields  = 0;             ///< 删除的水印字段数
     ca::usize failed  = 0;             ///< 编码失败未归账的条目数（annos+fields）
     ca::usize annoBlocked = 0;         ///< rewrite 复核预检拦下的条目数（fail-closed 不摘）
@@ -109,7 +109,7 @@ struct ProofResult
 {
     bool                     ok = true;
     std::vector<std::string> failed;          ///< 违例台账（class-count/resource-count/条目 URI）
-    ca::usize                residualAnnos     = 0;  ///< 残留 @Metadata 条目
+    ca::usize                residualAnnos     = 0;  ///< 残留 `@Metadata` 条目
     ca::usize                residualFields    = 0;  ///< 残留水印字段
     ca::usize                residualResources = 0;  ///< 残留待删资源
 };

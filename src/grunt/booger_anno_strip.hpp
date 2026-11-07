@@ -1,5 +1,5 @@
 /// @file        booger_anno_strip.hpp
-/// @brief       残留 `booger_anno_strip`：@Booger 运行时注解剥离。
+/// @brief       残留 `booger_anno_strip`：`@Booger` 运行时注解剥离。
 ///
 /// ## 形态（artifact 侧）
 ///
@@ -39,7 +39,7 @@
 
 namespace grunt::booger_anno_strip {
 
-/// @brief 一个含 @Booger 注解的类。
+/// @brief 一个含 `@Booger` 注解的类。
 struct Site
 {
     std::string uri;

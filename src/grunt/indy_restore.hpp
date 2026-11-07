@@ -2,7 +2,7 @@
 /// @brief       残留 `indy_restore`：Grunt v2/v3 indy 调用点直接解密回填
 ///              （simple/heavy 两形，缺口 #2 闭环）。
 ///
-/// ## 形态（artifact 侧，源锚 grunt3@e41e852 `ReferenceObfuscate.kt` /
+/// ## 形态（artifact 侧，源锚 `grunt3@e41e852` `ReferenceObfuscate.kt` /
 /// grunt2@36c0eef `InvokeDynamicTransformer.kt`，两代逐字同源）
 ///
 /// Grunt 把非 INVOKESPECIAL 的方法调用（INVOKESTATIC / INVOKEVIRTUAL /
@@ -15,12 +15,12 @@
 ///             的 LDC 里，v3 RuntimeMaterial 联动时另有材料通道，见下）；
 ///             owner 是点分名（java.lang.Math），virtual 时 indy desc 首参
 ///             补 Object receiver；
-///     heavy:  encOwner 经 BSM 体内 LDC generalKey 解一层；name<>desc 编在
+///     heavy:  encOwner 经 BSM 体内 LDC generalKey 解一层；name&lt;&gt;desc 编在
 ///             owner 类 @Metadata 注解的 d1/d2 数组里——遍历 d1，第 i 项经
 ///             magic2 解出 data1 整数串，`data1 % 59557 == magic2` 命中即取
-///             d2[i] 经 magic1 解出 `name<>desc`。
+///             d2[i] 经 magic1 解出 `name&lt;&gt;desc`。
 ///
-/// `encrypt` 是逐 UTF-16 码元自逆 XOR（`(code ^ xor).toChar()`），纯算术，
+/// `encrypt` 是逐 UTF-16 码元自逆 XOR（ `(code ^ xor).toChar()` ），纯算术，
 /// C++ 转写直解（无 jsim 面）。
 ///
 /// ## 判据分级（README 残留一览表口径）
@@ -31,7 +31,7 @@
 /// - **S1 语义后果**：解密产物与调用点吻合——simple 三段串解出合法
 ///   owner/name/desc 且与 indy desc 互证（static 全等；virtual 首参
 ///   Object receiver + 其余逐位一致）；heavy 的 `data1 % 59557 == magic2`
-///   完整性自证 + `name<>desc` 拆分 + 同一道 indy desc 互证。isVirtual 只
+///   完整性自证 + `name&lt;&gt;desc` 拆分 + 同一道 indy desc 互证。isVirtual 只
 ///   认 0/1，越界即拒。
 /// - **S3 版本敏感面**：heavy 的 `@Metadata` 数组解释（mv 门 + 59557 模数）
 ///   挂 Era 门（probeEra 判 Grunt3 才激活）；simple 面判据全部结构自证，
