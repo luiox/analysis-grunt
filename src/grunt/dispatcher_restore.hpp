@@ -2,7 +2,7 @@
 /// @brief       残留 `dispatcher_restore`：Grunt v3 InvokeDispatcher 调用点
 ///              反查回填真实 invoke。
 ///
-/// ## 形态（artifact 侧；doc/obf-behaviors/grunt-v3-behaviors.md §3.1）
+/// ## 形态（artifact 侧；doc/obf-behaviors/grunt-v3-behaviors.rst §3.1）
 ///
 /// v3 InvokeDispatcher（`grunt3@e41e852`，`redirect/InvokeDispatcher.kt`）把同
 /// 返回类型的多个方法调用点合并进一个分发器：按返回类型分组（每组 ≥2 个

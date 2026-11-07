@@ -2,8 +2,8 @@
 /// @brief       残留 `string_pool_fold`：Grunt v2 StringEncrypt / v3
 ///              StringArrayedEncrypt 字符串池读点折回 `ldc` 明文。
 ///
-/// ## 形态（artifact 侧；doc/obf-behaviors/grunt-v2-behaviors.md §1.1 /
-///      grunt-v3-behaviors.md §1.1）
+/// ## 形态（artifact 侧；doc/obf-behaviors/grunt-v2-behaviors.rst §1.1 /
+///      grunt-v3-behaviors.rst §1.1）
 ///
 /// Grunt 两代给每类生成同一套字符串池三件套（解密算法两代逐字相同，差别只
 /// 在密文形态配置）：
