@@ -70,7 +70,13 @@ public:
         ca::usize maxResultCache = 8192;
     };
 
-    explicit SimExecutor(const mjbase::model::ResourceContainer& container, Limits limits = {})
+    // 单参委托形：`Limits{}` 放 mem-initializer（完整类上下文）而非默认实参
+    // ——后者在外围类定义内取嵌套类默认成员初始化器，ill-formed（MSVC 放行，
+    // gcc/clang 拒，CI 实锤）。
+    explicit SimExecutor(const mjbase::model::ResourceContainer& container)
+        : SimExecutor(container, Limits{})
+    {}
+    explicit SimExecutor(const mjbase::model::ResourceContainer& container, Limits limits)
         : container_(&container), limits_(limits)
     {
         // 只挂编排钩子，不装任何扩展包（见文件头分层红线）。

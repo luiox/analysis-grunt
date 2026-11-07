@@ -334,15 +334,20 @@ TEST(MetadataStripScan, CountsAnnosOnThreeFacesAndWatermarkFields)
     EXPECT_EQ(result.annoBlocked, 0u);
     EXPECT_FALSE(result.eraBlocked);
 
-    const Site& anno = result.sites.front();
-    EXPECT_EQ(anno.uri, "AnnoHost.class");
-    EXPECT_EQ(anno.annos, 3u);
-    EXPECT_EQ(anno.fields, 1u);   // mark 字段带注解 → 整字段删除
-
-    const Site& wm = result.sites.back();
-    EXPECT_EQ(wm.uri, "WmHost.class");
-    EXPECT_EQ(wm.annos, 0u);
-    EXPECT_EQ(wm.fields, 1u);   // wmField 水印 ConstantValue（okField 不命中）
+    // 站点序随容器 unordered 迭代（mjbase ResourceContainer 契约无序保证），
+    // 按 uri 取面，不按 front/back。
+    const Site* anno = nullptr;
+    const Site* wm   = nullptr;
+    for (const Site& site : result.sites) {
+        if (site.uri == "AnnoHost.class") anno = &site;
+        if (site.uri == "WmHost.class")   wm   = &site;
+    }
+    ASSERT_NE(anno, nullptr);
+    ASSERT_NE(wm, nullptr);
+    EXPECT_EQ(anno->annos, 3u);
+    EXPECT_EQ(anno->fields, 1u);   // mark 字段带注解 → 整字段删除
+    EXPECT_EQ(wm->annos, 0u);
+    EXPECT_EQ(wm->fields, 1u);   // wmField 水印 ConstantValue（okField 不命中）
 }
 
 TEST(MetadataStripScan, KeepsPlainConstantValueField)
