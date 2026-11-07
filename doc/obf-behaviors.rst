@@ -8,7 +8,7 @@ grunt 行为账总表
 1 定位与分工
 ------------
 
-本篇是 analysis-grunt 的 **grunt 混淆行为账总表**：把 Grunt 家族两代（v2 Gruntpocalypse / v3 Grunteon）的每个混淆行为逐个写成「做什么（字节码形态 + 可汇编 jasm 样例）/ 配置面 / 判据分级 / 本仓 residue 现状」，并汇总行为 × 处理状态的总表与闭环缺口清单，供后续还原批次排期。逐行为细节（形态 + 配置面 + jasm 样例）在待迁的两篇分账（§2），本篇承载总表与缺口清单。
+本篇是 analysis-grunt 的 **grunt 混淆行为账总表**：把 Grunt 家族两代（v2 Gruntpocalypse / v3 Grunteon）的每个混淆行为逐个写成「做什么（字节码形态 + 可汇编 jasm 样例）/ 配置面 / 判据分级 / 本仓 residue 现状」，并汇总行为 × 处理状态的总表与闭环缺口清单，供后续还原批次排期。逐行为细节（形态 + 配置面 + jasm 样例）在两篇分账（§2），本篇承载总表与缺口清单。
 
 **与 morpher 仓 obf-forms 的分工**：morpher 仓 ``mjt-deobf/doc_ai/obf-forms/grunt-obfuscation-forms.md`` 是\ **跨家族形态库**\ （artifact 侧形态判据与还原链序，13 个已验证形态样例），本篇是\ **本工具行为账**\ （逐 transformer 行为 + 配置面 + residue 现状 + 缺口闭环）；同面判据以 morpher 为准、不重复定义，行为级现状以本篇为准。
 
@@ -17,8 +17,8 @@ grunt 行为账总表
 2 文档索引
 ----------
 
-- ``doc/obf-behaviors/grunt-v2-behaviors.md``——v2（``grunt2`` 分支 ``36c0eef``，tag 线 2.0.0 ~ 2.4.5）35 个 transformer 行为账 + 16 个已验证 jasm 样例。（待迁）
-- ``doc/obf-behaviors/grunt-v3-behaviors.md``——v3（``grunt3`` 分支 ``e41e852``，Grunteon）39 个 transformer（35 常规 + 4 ``@HiddenTransformer``）+ GlslObfuscator 插件 + NativePipeline 阶段的行为账 + 11 个已验证 jasm 样例 + origin/grunt3 领先 13 提交差异标注。（待迁）
+- :doc:`obf-behaviors/grunt-v2-behaviors`\ ——v2（``grunt2`` 分支 ``36c0eef``，tag 线 2.0.0 ~ 2.4.5）35 个 transformer 行为账 + 16 个已验证 jasm 样例。
+- :doc:`obf-behaviors/grunt-v3-behaviors`\ ——v3（``grunt3`` 分支 ``e41e852``，Grunteon）39 个 transformer（35 常规 + 4 ``@HiddenTransformer``）+ GlslObfuscator 插件 + NativePipeline 阶段的行为账 + 11 个已验证 jasm 样例 + origin/grunt3 领先 13 提交差异标注。
 - jasm 样例验证口径与已知校验器边界（``xaload`` 族误报、\ ``<init>`` 栈帧分析缺陷）见 v2 分账 §0.3：\ **27/27 通过（25 relaxed + 2 off 通道）**。
 - Kasumi 家族专面在 ``doc/kasumi-verify.md``\ （K0~K4），不属本篇。
 - residue 逐面文档（number-fold / proxy-inline / predicate-fold / …）在 ``doc/`` 根目录，本篇的状态列以它们为事实源。

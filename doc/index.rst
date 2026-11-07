@@ -10,11 +10,11 @@ Grunt 家族（v2 Gruntpocalypse / v3 Grunteon）混淆产物静态还原的行�
    :caption: 行为账与规格
 
    obf-behaviors
+   obf-behaviors/grunt-v2-behaviors
+   obf-behaviors/grunt-v3-behaviors
    corpus-ledger
    gate-processor-fold-spec
 
 待迁清单（md 层，后续批迁入本站）：
 
-- ``doc/obf-behaviors/grunt-v2-behaviors.md``——v2（Gruntpocalypse 2.x）35 个 transformer 行为账。
-- ``doc/obf-behaviors/grunt-v3-behaviors.md``——v3（Grunteon）39 个 transformer + GlslObfuscator 插件 + NativePipeline 阶段行为账。
 - 逐面账本族（形态 / 实现笔记两类 markdown 账本，约 30 对），按批转 RST 或并入对应 pass 规格篇。
