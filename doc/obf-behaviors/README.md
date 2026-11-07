@@ -95,3 +95,5 @@
 13. **噪声与检测面清理**：Watermark（两代水印字段/方法）、Crasher/DecompilerCrasher（massive Signature 属性）、AntiLLM 四渠道噪声、HWID 校验调用摘除（删除需 CFG 副作用证明）。
 14. **垃圾类删除面**：v2 ClonedClass/TrashClass + v3 TrashClassGenerator——零引用 + 生成面形状识别，删除需引用普查兜底（反射/资源文本引用）。
 15. **probeEra Grunt2/Grunt3 可靠判据**：Grunt3 半边已闭环（随 indy_restore 落 era.hpp：Grunt BSM desc 指纹 ∧ 类级 `@Metadata` 注解或 `grunteon` 命名空间，双半边钉版本）；Grunt2 半边仍缺——两代 `U+200E` 尾缀同源、indy BSM desc 逐字同源、模板无稳定差异——待语料积累出真正版本敏感的残留形状再补（era.hpp 明文记载）；v2 现场的 heavy 面按保守口径关闭（simple 面全结构自证不挂 Era，不受影响）。
+
+**语料登记（重启批）**：#10 重启条件已满足——罐 A `boar-main-v3-full-nonative`（v3 全链关 native，3074 类，(III)I 直线纯算术体 11453、异常桥站点 13566、native 方法 0，#5-#8 之外的两前提双证转正）；罐 B `boar-main-v2-full`（v2 全链 36c0eef，10486 类）解锁 P2 #5-#8 语料——伴生类面 2516 类/938409 GETSTATIC、AE 恒等面 const-fed IXOR 410536（输出形被 ConstPoolEncrypt 打散）、IAND/LAND 位拼 212222/141868（+GETSTATIC 喂给 25372/32718）、ConstBuilder 0（301 序饿死）；两罐路径 + sha256 + 全量站点量表 + 生成命令见 `doc/corpus-ledger.md`。
