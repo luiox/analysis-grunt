@@ -25,6 +25,7 @@
 #include "grunt/exc_bridge_restore.hpp"
 #include "grunt/field_access_proxy.hpp"
 #include "grunt/flags_strip.hpp"
+#include "grunt/gate_processor_fold.hpp"
 #include "grunt/indy_decode.hpp"
 #include "grunt/indy_fold.hpp"
 #include "grunt/indy_restore.hpp"
@@ -1194,6 +1195,82 @@ mjbase::spi::PreservedAnalyses ExcBridgeRestorePass::run(
                      verdict.residual);
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.ExcBridgeRestore] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses GateProcessorFoldPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+
+    // 无旁证注入面：判据全为容器自证事实（(III)I ActionDesc 指纹 + 前窗逐
+    // 字形 + 恒真裁决），Era 不消费（v3-only 形态，v2 Controlflow 无门点
+    // processor 面）。
+    const gate_processor_fold::ScanResult scanned = gate_processor_fold::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.GateProcessorFold] scan: shape=%zu sites=%zu rejects=%zu"
+                     " (target-outside=%zu not-static=%zu sync=%zu no-code=%zu"
+                     " args=%zu forward=%zu tlr=%zu clinit=%zu eval-bad=%zu step-limit=%zu"
+                     " value-kind=%zu not-true=%zu) skip-classes=%zu\n",
+                     scanned.totalShape, scanned.sites.size(), scanned.rejects.size(),
+                     scanned.targetOutside, scanned.targetNotStatic, scanned.targetSynchronized,
+                     scanned.targetNoCode, scanned.argsNotConstant, scanned.forwardShape,
+                     scanned.tlrWindow, scanned.classInitPresent, scanned.evalBadState,
+                     scanned.evalStepLimit, scanned.valueKindUnsupported, scanned.evalNotTrue,
+                     scanned.classesSkipped);
+        if (std::getenv("GRUNT_GATE_PROCESSOR_FOLD_TRACE") != nullptr) {
+            for (const gate_processor_fold::Site& site : scanned.sites) {
+                std::fprintf(stderr,
+                             "[grunt.GateProcessorFold]   %s#%zu pc=%u %s.%s%s"
+                             " args=%d,%d,%d cmp=%d -> %d\n",
+                             site.uri.c_str(), site.methodIndex, site.callSrcPc,
+                             site.targetOwner.c_str(), site.targetName.c_str(),
+                             site.targetDesc.c_str(),
+                             site.args.size() > 0 ? static_cast<ca::i32>(site.args[0].intBits) : 0,
+                             site.args.size() > 1 ? static_cast<ca::i32>(site.args[1].intBits) : 0,
+                             site.args.size() > 2 ? static_cast<ca::i32>(site.args[2].intBits) : 0,
+                             site.compareValue, site.result);
+            }
+            for (const gate_processor_fold::Reject& rej : scanned.rejects) {
+                static const char* kWhy[] = {
+                    "target-outside", "not-static", "synchronized", "no-code",
+                    "args-not-const", "forward-shape", "tlr-window", "clinit-present",
+                    "eval-bad", "step-limit", "value-kind", "not-true"};
+                const ca::usize idx = static_cast<ca::usize>(rej.reason);
+                std::fprintf(stderr, "[grunt.GateProcessorFold]   reject %s.%s pc=%u: %s\n",
+                             rej.callerOwner.c_str(), rej.callerMethod.c_str(), rej.callSrcPc,
+                             idx < sizeof(kWhy) / sizeof(kWhy[0]) ? kWhy[idx] : "?");
+            }
+        }
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const gate_processor_fold::DirtySet dirty =
+        gate_processor_fold::rewrite(container, scanned);
+    const gate_processor_fold::ProofResult verdict =
+        gate_processor_fold::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.GateProcessorFold] rewrite: classes=%zu sites=%zu/%zu failed=%zu"
+                     " roundtrip-skip=%zu proof=%s residual=%zu\n",
+                     dirty.uris.size(), dirty.sites, dirty.attempted, dirty.failed,
+                     dirty.skippedByRoundTrip, verdict.ok ? "ok" : "FAILED", verdict.residual);
+        static const char* kRwReason[] = {"ok", "branch-not-found", "region-mismatch",
+                                          "verdict-changed", "label-blocked", "erase-fail"};
+        for (ca::usize i = 0; i < dirty.failedByReason.size(); ++i) {
+            if (dirty.failedByReason[i] == 0) continue;
+            const char* name = i < sizeof(kRwReason) / sizeof(kRwReason[0]) ? kRwReason[i] : "?";
+            std::fprintf(stderr, "[grunt.GateProcessorFold]   %-16s %zu\n", name,
+                         dirty.failedByReason[i]);
+        }
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.GateProcessorFold] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

@@ -287,4 +287,15 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
+/// @brief `grunt.GateProcessorFold`：Grunt v3 ControlflowJump 门点 processor
+/// 跨方法静态求值 + 恒真门比较折叠（(III)I 形状钉 + 前窗逐字钉 + jsim 编排
+/// 层跨方法求值 + Integer.rotateLeft 接管；TLR 运行期随机面与 material-key
+/// 桶求值 fail-closed，逐桶记账；Era 不消费，无外部旁证注入面）。
+class GateProcessorFoldPass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
 }   // namespace grunt

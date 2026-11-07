@@ -51,6 +51,10 @@
 | [cff-unflatten.impl.md](cff-unflatten.impl.md) | 本仓的 Scan / Rewrite / Proof，含七相判据、执行序与语料账本 |
 | [material-key-restore.md](material-key-restore.md) | Grunt v3 RuntimeMaterial：材料通道解密器窗口、materialKey() 逐字 9 条、初值链（基 32 parse 面 + poison 走廊）的形态 |
 | [material-key-restore.impl.md](material-key-restore.impl.md) | 本仓的 Scan / Rewrite / Proof，含清洁口径 key 求值、S1 互证与语料账本 |
+| [exc-bridge-restore.md](exc-bridge-restore.md) | Grunt v3 ControlflowJump 异常桥：合成 throw/catch 蹦床改道边、形状钉 + 异常表互证的形态 |
+| [exc-bridge-restore.impl.md](exc-bridge-restore.impl.md) | 本仓的 Scan / Rewrite / Proof，含句柄制改写执行序、锚吸附与语料账本 |
+| [gate-processor-fold.md](gate-processor-fold.md) | Grunt v3 ControlflowJump 门点：三常量喂 (III)I processor、compareValue 常量走廊、恒真自证的形态 |
+| [gate-processor-fold.impl.md](gate-processor-fold.impl.md) | 本仓的 Scan / Rewrite / Proof，含跨方法求值 mock 申报、TAKEN 形折叠与语料账本 |
 | [kasumi-verify.md](kasumi-verify.md) | Kasumi 专链端到端复现记录：五项门逐项数字、与树版口径差异点、通用链取证 |
 
 ## obf 行为账

@@ -35,6 +35,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.DispatcherRestore` | Grunt v3 `InvokeDispatcher` 调用点反查回填：头锚（ILOAD key 槽 + TABLESWITCH default 回跳方法头 + 无异常表）钉分发器、逐 case 直线转发体（载实参 + 唯一 invoke + ret 型 return）重建键 → 目标表，调用点（补位 null 跑 + 常量 key + invokestatic 分发器）**原地**换真实 invoke（srcPc 保留、末段补位/key 擦除，null 跑 ∈ [addNulls, N] 互证）；分发器本体与键表不删，交 DeadCode/DeadMember 回收 | S2（desc 形 `(LObject;*I)R` static 选面 ∧ 头锚钉形 ∧ case 体转发形 ∧ 键表静态编码 ∧ 调用点常量 key 反查回表）；纯常量键表直查不需 jsim，v2 无此 transformer 无 Era 门（正例罐 283 分发器 / 1181 站点回填 1081，residual=49 为宿主方法 Strict 帧重算既有冲突 fail-closed；boar 全链罐头锚缺席由 post-Redirect junk 前缀所致非 CFF——5827 desc 形候选 0 个有已解 CFF 岛，组合链 `CffUnflatten,DispatcherRestore` 零干扰） | S2 |
 | `grunt.MaterialKeyRestore` | Grunt v3 `RuntimeMaterial` 材料通道 key 静态折回：把材料解密器窗口里的 `INVOKESTATIC <self> materialKey()I` 原地换 `LDC <materialKey>`（srcPc 保留，帧链正统写回）——窗口随即变成 indy_restore 已有的 reobf 折叠键形（`LDC K; LDC MK; IXOR; IXOR; I2C`），indy_restore 第二轮按既有 Plain 通道折回全部 materialLane 站点；`materialKey()` 本体/材料字段/守卫支路不删（折回后零引用交下游 DeadMember/DeadCode 回收） | S2 结构事实（解密器窗口形（与 indy_restore 同一窗口回溯）∧ `materialKey()` 体 9 条逐字 + 材料字段 private static ∧ 写者普查：唯一初值写 + 其余写全为扰动窗口形 + 扰动写所在方法带守卫指纹 ∧ 初值跨度逐条钉形 Contiguous 无合并点）→ S1 定案（`materialKey = fold(keyField 初值) ^ poison 初值`，`parseUnsignedLong`/`fold`/XOR 走廊固定 JVM 语义 C++ 直解不需 jsim；互证 = 名字族路由（BSM 名 B[2,len-1) == 解密器名）+ 体跟随的全部 indy 站点按候选 key 解出合法目标且 desc 互证全过）；还原口径 = **清洁运行环境语义**（clean 扰动只碰 shareA/shareB、canonical 不变是生成面源钉事实，反调试扰动路径不在还原范围），无 Era 门（类级 BSM desc 指纹家族锚）；任一环缺席整类 fail-closed 逐桶记账（初值链断含池读未折回报链序缺 `grunt.StringPoolFold` / 多写冲突 / 字段外写 / 守卫缺席 / mk 体 native 化）（boar 语料 r1 供给链 656 材料类折回 586（528 类 37168 站点 S1 全过 keyRefuted=0，58 类窗口无路由站点结构成立），70 native 余量如实挂账；组合链 `grunt.IndyRestore,grunt.StringPoolFold,grunt.MaterialKeyRestore,grunt.IndyRestore` 上 materialLane 42228 → 5060（余 5060 = native 类站点静态天花板）、类数 3065 不增、`-Xverify:all` 零新增、双跑一致） | S1 |
 | `grunt.ExcBridgeRestore` | Grunt v3 `ControlflowJump` 异常桥还原（`exceptionBridgeChance > 0` 的 `FlowExceptionBridgeInserter` 面，skidfuscator 同源）：形状钉（trap 四条逐字 `NEW RTE; DUP; INVOKESPECIAL <init>()V; ATHROW` + 保护区恰罩四条 + handler 恰 `POP; GOTO` + catchType 恰 RuntimeException）钉合成蹦床，异常表互证门（其他表项不罩 trap 头/handler 头、他人 handler 不锚本桥块、handler goto 与非头受害者无字段引用、桥目标 X 可解析且不落任何候选桥受害者集）反误伤，然后 `replaceAllUses` 把原边全体前驱直连真实目标 + 位置落入 GOTO 钉（生成面 goto 省略形）+ 本桥异常表项删除（三标签销毁）+ 存活表项锚前移吸附 + 六受害者单批 eraseBatch，Strict 帧链整体重算；真实 `catch (RuntimeException)` 的用户代码段/`ASTORE` handler 形状钉天然拒绝（反误伤实证：r3 复扫反误伤 0） | S2 结构事实（形状逐字 + 异常表互证，无 Era 门、无旁证注入、无 jsim 面）；判据缺席整方法 fail-closed 逐桶记账（boar 对照罐 sites=0 no-op 类条目 CRC 逐条全等；罐 A 13566 站点还原 13442、residual=0、独立 census 复扫 bridge=0、`-Xverify:all` 失败集与输入全等、双跑 CRC 全等；链序实证 `…ConstantCall,ExcBridgeRestore,CffUnflatten` 岛还原 1281→1543） | S2 |
+| `grunt.GateProcessorFold` | Grunt v3 `ControlflowJump` 门点 processor 折叠（guard/mangled-gate 块）：三常量实参（left/right/salt）喂 `invokestatic (III)I` 门点 processor（ActionDesc 逐字指纹，与门点同类，从不被 indy 包装——ReferenceObfuscate 跳过 `@GENERATED_METHOD`）、compareValue 常量走廊（`[INT; (INT; IMUL|IAND|IOR|IXOR)*]` 栈机折叠）、`IF_ICMP` 真臂分支；跨方法求值 proc 体（jsim 编排层递归穿透 `__grt$indy$` 转发器 + `Integer.rotateLeft(II)I` 接管——PredicateStep 盐旋转步生成面，jsim 无 JDK 数学面）+ 生成面 `require` 恒真自证门（判非 taken 即拒），折叠落 PredicateFold TAKEN 形 `[ICONST_0, IFEQ→真臂]`（锚原地改写保 srcPc、其余操作数单批擦除、junk 臂留死码交下游）；TLR 运行期随机面（窗口变体 `tlrWindow` 桶 + 体引用 `EvalBadState` 桶）与 material 类蹬床体（indy 未还原）fail-closed 逐桶记账 | S1 语义后果（生成面 `require(comparison.test(result, compareValue.value))` 恒真保证 + 实参全常量 + proc 体封闭纯算术——求值成功即分支走向唯一确定）+ S2 形状钉（(III)I ActionDesc + 前窗走廊逐字形，CFF key processor `(II)I` 不同构不进面）（boar 全 native 对照罐 sites=0 no-op 类条目 CRC 逐条全等；罐 A 原罐单跑 7643/7643 折叠 residual=0；组合链上 4282/4282 折叠且四上游 pass 锚点与 CffUnflatten islands 1543 逐项不动、`-Xverify:all` 失败集与输入全等、双跑 CRC 全等；census 对拍 4282/verdict-true 逐项同源） | S1 |
 
 `S1` = 语义后果：混淆器为了保持功能必须如此，改了自己就坏。`S2` = 结构性清理：判据成立即安全，但混淆器换代可能换形态。`S3` = 面向未来形态的预留面：当前语料无站点，判据按形态写、按换代样本验收。判据不依赖方法名、签名形状、所在类或注入模板，所以 Grunt 换代不需要改这一行。
 
@@ -112,7 +113,9 @@ census-blind 整轮零删除；通用链 × 专链组合与通用链单跑复验
 静默），v3 全链罐上先值还原（`IndyRestore`/`NumberFold`，桥 span 求值与
 processor 键的解锁面）再 `ExcBridgeRestore`（异常桥摘除——桥插在已摊平
 代码上，摘除后 CFF 的 state span goto 恢复整块形，罐 A 实证岛还原
-1281→1543）再 `CffUnflatten` 最后 `DispatcherRestore`。`CffUnflatten` 对
+1281→1543）再 `GateProcessorFold`（ControlflowJump 门点 processor 跨方法
+求值 + 恒真门折叠，挂在 `ConstantCall` 之后——上游数字与 CffUnflatten
+islands 逐项不动）再 `CffUnflatten` 最后 `DispatcherRestore`。`CffUnflatten` 对
 DispatcherRestore 的分发器原生头是反误伤面（alias 缺席整岛拒，wave2c
 正例罐 290 候选全数此桶、产物逐条目 CRC 全等），组合链零干扰；
 boar 全链罐上 DispatcherRestore 的头锚缺席由 post-Redirect junk 前缀
@@ -213,6 +216,8 @@ xmake build grunt_cli && ./test/corpus-regress.sh
 - [doc/indy-decode.md](doc/indy-decode.md) / [.impl.md](doc/indy-decode.impl.md)：Kasumi indy 静态还原。
 - [doc/string-cache-fold.md](doc/string-cache-fold.md) / [.impl.md](doc/string-cache-fold.impl.md)：Kasumi 字符串缓存回填。
 - [doc/metadata-strip.md](doc/metadata-strip.md) / [.impl.md](doc/metadata-strip.impl.md)：Kasumi 元数据与水印清理。
+- [doc/exc-bridge-restore.md](doc/exc-bridge-restore.md) / [.impl.md](doc/exc-bridge-restore.impl.md)：ControlflowJump 异常桥。
+- [doc/gate-processor-fold.md](doc/gate-processor-fold.md) / [.impl.md](doc/gate-processor-fold.impl.md)：ControlflowJump 门点 processor 折叠。
 - [doc/kasumi-verify.md](doc/kasumi-verify.md)：Kasumi 专链端到端复现记录（五项门逐项数字、与树版口径差异点、通用链取证）。
 
 口径分工：`doc/` 只写**通用技术形态**与实现；具体样本的取证过程（jar、类名、指令偏移、折叠期望值）记在仓外研究笔记，不进本仓。

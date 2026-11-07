@@ -296,6 +296,23 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.ExcBridgeRestore"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.GateProcessorFold",
+            [] { return makeFailClosed<GateProcessorFoldPass>("grunt.GateProcessorFold"); },
+            "Fold Grunt v3 ControlflowJump processor gates (guard/mangled-gate"
+            " blocks: three constant feeds into an invokestatic (III)I processor"
+            " followed by a constant compareValue and an if_icmp branch whose"
+            " taken arm is the real one): evaluate the processor cross-method"
+            " (through restored __grt$indy$ forwarders into the pure-arithmetic"
+            " bodies) with an Integer.rotateLeft mock for the salt-rotate"
+            " predicate steps, require the generator-guaranteed always-true"
+            " verdict, then collapse the gate into an [ICONST_0, IFEQ to real"
+            " target] conditional in place (PredicateFold taken form)."
+            " ThreadLocalRandom bodies (runtime random) and material-key"
+            " trampolines stay fail-closed per bucket.");
+        r.is_err()) {
+        return Err(std::string("grunt.GateProcessorFold"));
+    }
     return Ok();
 }
 
