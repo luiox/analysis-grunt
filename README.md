@@ -34,6 +34,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.CffUnflatten` | Grunt v3 `ControlflowFlattening` 反摊平：state 槽摊平岛（`[ILOAD s; TABLESWITCH]`，键窗连续乱序、default 落岛首真块 = alias face）+ 常量供给桥（inline Add/Sub/Xor/Mul/Div/Math.max 闭链）三件套还原块序——桥 span 静态求值回查键表后前驱 goto 直连真实块（出表键一律剪到 default：直连 default 与原「经岛分发落 default」逐位等价，语义安全下限恒等）、岛与纯形桥整擦、scramble 假桥剪枝、入口真块 moveRange 归位（异常保护区内/junk 前缀退蹦床不移动）、异常 handler 桥重绑；位置边单独守卫（`usersOf` 只看字段引用——已归类条件载体紧邻岛头补 GOTO 钉住落空臂，其余位置落入整岛拒）；processor 桥（键在 `__grt$indy$` proc 体）与 SSA exp 变体 fail-closed 挂账（缺口 #4 余量） | S2 结构事实（state 槽全方法读写 confined ∧ 岛形两条块 ∧ span 常量闭链可解 ∧ alias face ∈ case 目标）；任一环缺席整岛逐位不动；InvokeDispatcher 原生头是天然反误伤面（default 回指岛头 + alias 缺席 → 形状拒）（boar 全链罐 9880 岛还原 1481/类 653，failed=41 fail-closed 如实计 residual；wave2c 正例罐 290 候选全数反误伤、产物逐条目 CRC 与输入全等；组合链 `CffUnflatten,DispatcherRestore` 上 DispatcherRestore 正例面 1181 站点台账零干扰；`-Xverify:all` 基线同挂零新增、类数 3065 不增、双跑一致） | S2 |
 | `grunt.DispatcherRestore` | Grunt v3 `InvokeDispatcher` 调用点反查回填：头锚（ILOAD key 槽 + TABLESWITCH default 回跳方法头 + 无异常表）钉分发器、逐 case 直线转发体（载实参 + 唯一 invoke + ret 型 return）重建键 → 目标表，调用点（补位 null 跑 + 常量 key + invokestatic 分发器）**原地**换真实 invoke（srcPc 保留、末段补位/key 擦除，null 跑 ∈ [addNulls, N] 互证）；分发器本体与键表不删，交 DeadCode/DeadMember 回收 | S2（desc 形 `(LObject;*I)R` static 选面 ∧ 头锚钉形 ∧ case 体转发形 ∧ 键表静态编码 ∧ 调用点常量 key 反查回表）；纯常量键表直查不需 jsim，v2 无此 transformer 无 Era 门（正例罐 283 分发器 / 1181 站点回填 1081，residual=49 为宿主方法 Strict 帧重算既有冲突 fail-closed；boar 全链罐头锚缺席由 post-Redirect junk 前缀所致非 CFF——5827 desc 形候选 0 个有已解 CFF 岛，组合链 `CffUnflatten,DispatcherRestore` 零干扰） | S2 |
 | `grunt.MaterialKeyRestore` | Grunt v3 `RuntimeMaterial` 材料通道 key 静态折回：把材料解密器窗口里的 `INVOKESTATIC <self> materialKey()I` 原地换 `LDC <materialKey>`（srcPc 保留，帧链正统写回）——窗口随即变成 indy_restore 已有的 reobf 折叠键形（`LDC K; LDC MK; IXOR; IXOR; I2C`），indy_restore 第二轮按既有 Plain 通道折回全部 materialLane 站点；`materialKey()` 本体/材料字段/守卫支路不删（折回后零引用交下游 DeadMember/DeadCode 回收） | S2 结构事实（解密器窗口形（与 indy_restore 同一窗口回溯）∧ `materialKey()` 体 9 条逐字 + 材料字段 private static ∧ 写者普查：唯一初值写 + 其余写全为扰动窗口形 + 扰动写所在方法带守卫指纹 ∧ 初值跨度逐条钉形 Contiguous 无合并点）→ S1 定案（`materialKey = fold(keyField 初值) ^ poison 初值`，`parseUnsignedLong`/`fold`/XOR 走廊固定 JVM 语义 C++ 直解不需 jsim；互证 = 名字族路由（BSM 名 B[2,len-1) == 解密器名）+ 体跟随的全部 indy 站点按候选 key 解出合法目标且 desc 互证全过）；还原口径 = **清洁运行环境语义**（clean 扰动只碰 shareA/shareB、canonical 不变是生成面源钉事实，反调试扰动路径不在还原范围），无 Era 门（类级 BSM desc 指纹家族锚）；任一环缺席整类 fail-closed 逐桶记账（初值链断含池读未折回报链序缺 `grunt.StringPoolFold` / 多写冲突 / 字段外写 / 守卫缺席 / mk 体 native 化）（boar 语料 r1 供给链 656 材料类折回 586（528 类 37168 站点 S1 全过 keyRefuted=0，58 类窗口无路由站点结构成立），70 native 余量如实挂账；组合链 `grunt.IndyRestore,grunt.StringPoolFold,grunt.MaterialKeyRestore,grunt.IndyRestore` 上 materialLane 42228 → 5060（余 5060 = native 类站点静态天花板）、类数 3065 不增、`-Xverify:all` 零新增、双跑一致） | S1 |
+| `grunt.ExcBridgeRestore` | Grunt v3 `ControlflowJump` 异常桥还原（`exceptionBridgeChance > 0` 的 `FlowExceptionBridgeInserter` 面，skidfuscator 同源）：形状钉（trap 四条逐字 `NEW RTE; DUP; INVOKESPECIAL <init>()V; ATHROW` + 保护区恰罩四条 + handler 恰 `POP; GOTO` + catchType 恰 RuntimeException）钉合成蹦床，异常表互证门（其他表项不罩 trap 头/handler 头、他人 handler 不锚本桥块、handler goto 与非头受害者无字段引用、桥目标 X 可解析且不落任何候选桥受害者集）反误伤，然后 `replaceAllUses` 把原边全体前驱直连真实目标 + 位置落入 GOTO 钉（生成面 goto 省略形）+ 本桥异常表项删除（三标签销毁）+ 存活表项锚前移吸附 + 六受害者单批 eraseBatch，Strict 帧链整体重算；真实 `catch (RuntimeException)` 的用户代码段/`ASTORE` handler 形状钉天然拒绝（反误伤实证：r3 复扫反误伤 0） | S2 结构事实（形状逐字 + 异常表互证，无 Era 门、无旁证注入、无 jsim 面）；判据缺席整方法 fail-closed 逐桶记账（boar 对照罐 sites=0 no-op 类条目 CRC 逐条全等；罐 A 13566 站点还原 13442、residual=0、独立 census 复扫 bridge=0、`-Xverify:all` 失败集与输入全等、双跑 CRC 全等；链序实证 `…ConstantCall,ExcBridgeRestore,CffUnflatten` 岛还原 1281→1543） | S2 |
 
 `S1` = 语义后果：混淆器为了保持功能必须如此，改了自己就坏。`S2` = 结构性清理：判据成立即安全，但混淆器换代可能换形态。`S3` = 面向未来形态的预留面：当前语料无站点，判据按形态写、按换代样本验收。判据不依赖方法名、签名形状、所在类或注入模板，所以 Grunt 换代不需要改这一行。
 
@@ -106,10 +107,12 @@ census-blind 整轮零删除；通用链 × 专链组合与通用链单跑复验
 数字与 JVM 实调证据见 kasumi-verify.md §3。
 
 **Grunt v3 摊平反演面（v3 全链罐专用，不入 BoogerV2 主线）**：
-`CffUnflatten` + `DispatcherRestore` 是 v3 语料的块序/调用点还原对——
-BoogerV2 语料无此二形态（主线 15 pass 判据对其天然静默），v3 全链罐上
-先值还原（`IndyRestore`/`NumberFold`，桥 span 求值与 processor 键的解锁
-面）再 `CffUnflatten` 最后 `DispatcherRestore`。`CffUnflatten` 对
+`CffUnflatten` + `ExcBridgeRestore` + `DispatcherRestore` 是 v3 语料的
+块序/调用点还原对——BoogerV2 语料无此三形态（主线 15 pass 判据对其天然
+静默），v3 全链罐上先值还原（`IndyRestore`/`NumberFold`，桥 span 求值与
+processor 键的解锁面）再 `ExcBridgeRestore`（异常桥摘除——桥插在已摊平
+代码上，摘除后 CFF 的 state span goto 恢复整块形，罐 A 实证岛还原
+1281→1543）再 `CffUnflatten` 最后 `DispatcherRestore`。`CffUnflatten` 对
 DispatcherRestore 的分发器原生头是反误伤面（alias 缺席整岛拒，wave2c
 正例罐 290 候选全数此桶、产物逐条目 CRC 全等），组合链零干扰；
 boar 全链罐上 DispatcherRestore 的头锚缺席由 post-Redirect junk 前缀

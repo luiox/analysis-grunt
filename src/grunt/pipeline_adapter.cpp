@@ -22,6 +22,7 @@
 #include "grunt/dead_member.hpp"
 #include "grunt/cff_unflatten.hpp"
 #include "grunt/dispatcher_restore.hpp"
+#include "grunt/exc_bridge_restore.hpp"
 #include "grunt/field_access_proxy.hpp"
 #include "grunt/flags_strip.hpp"
 #include "grunt/indy_decode.hpp"
@@ -1153,6 +1154,46 @@ mjbase::spi::PreservedAnalyses MaterialKeyRestorePass::run(
                      verdict.ok ? "ok" : "FAILED", verdict.residual);
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.MaterialKeyRestore] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses ExcBridgeRestorePass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+
+    // 无旁证注入面：判据全为容器自证事实（trap/handler 逐字形状钉 + 异常
+    // 表互证门），Era 不消费——v3-only 形态（v2 Controlflow 无异常桥面）。
+    const exc_bridge_restore::ScanResult scanned = exc_bridge_restore::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.ExcBridgeRestore] scan: sites=%zu classes=%zu"
+                     " rejects=%zu (shape=%zu covered=%zu handler-collide=%zu"
+                     " x-invalid=%zu rebind=%zu) skip-classes=%zu\n",
+                     scanned.sites.size(), scanned.bridgeClasses, scanned.rejects.size(),
+                     scanned.shapeMiss, scanned.covered, scanned.handlerCollide,
+                     scanned.xInvalid, scanned.rebindBlocked, scanned.classesSkipped);
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const exc_bridge_restore::DirtySet dirty =
+        exc_bridge_restore::rewrite(container, scanned);
+    const exc_bridge_restore::ProofResult verdict =
+        exc_bridge_restore::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.ExcBridgeRestore] rewrite: classes=%zu methods=%zu"
+                     " bridges=%zu pins=%zu insns=%zu failed=%zu proof=%s residual=%zu\n",
+                     dirty.uris.size(), dirty.methods, dirty.bridges, dirty.pins,
+                     dirty.insns, dirty.failed, verdict.ok ? "ok" : "FAILED",
+                     verdict.residual);
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.ExcBridgeRestore] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

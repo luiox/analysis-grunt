@@ -272,6 +272,30 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.MaterialKeyRestore"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.ExcBridgeRestore",
+            [] { return makeFailClosed<ExcBridgeRestorePass>("grunt.ExcBridgeRestore"); },
+            "Restore Grunt v3 ControlflowJump exception bridges (FlowExceptionBridge"
+            " trampolines): pin the synthetic trap block verbatim (new"
+            " java/lang/RuntimeException; dup; invokespecial <init>()V; athrow,"
+            " protected range covering exactly those four insns, handler being"
+            " pop; goto with no inbound field reference), cross-check the"
+            " exception table (no other entry covers the trap head or handler,"
+            " no other handler anchored on the bridge blocks, bridge target"
+            " resolvable and outside every candidate victim set), then rewire"
+            " every inbound edge straight to the real target (replaceAllUses plus"
+            " a positional fall-through GOTO pin when the layout predecessor can"
+            " fall into the trap head), delete the bridge exception entry, snap"
+            " surviving entries' start/end anchors off the erased blocks, erase"
+            " the six victim insns in one all-or-nothing batch and recompute"
+            " frames Strictly. Chain before grunt.CffUnflatten: bridges sit on"
+            " top of CFF islands, and removing them restores whole-form span"
+            " gotos. Real catch (RuntimeException) regions never match the pin"
+            " (user code shape, handler with exception-slot store) and any"
+            " unresolved collision keeps the whole method untouched.");
+        r.is_err()) {
+        return Err(std::string("grunt.ExcBridgeRestore"));
+    }
     return Ok();
 }
 

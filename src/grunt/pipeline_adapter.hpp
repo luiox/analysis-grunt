@@ -276,4 +276,15 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
+/// @brief `grunt.ExcBridgeRestore`：Grunt v3 ControlflowJump 异常桥还原
+/// （合成 throw/catch 蹦床边摘除，原边直连真实目标；形状钉 + 互证门全
+/// 自证，无外部旁证注入面，Era 不消费；链序在 CffUnflatten 之前——桥
+/// 摘除后 CFF 的 state span goto 恢复整块形，岛识别更干净）。
+class ExcBridgeRestorePass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
 }   // namespace grunt

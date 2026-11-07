@@ -13,7 +13,7 @@
   - `NativeCandidate.rules`：**[]**（boar 有一条 full-AimTrainer-original-name 强制 native 规则）+ `ReferenceObfuscate.generatedHelperNativeCandidateRatio`：**0.0**（boar 0.1）。
 - **资源面**：罐内无 `grunteon_native.dll`（boar 全 native 罐带 27.4 MB dll 对照）；`META-INF/grunteon/cybersecurity/analysis-{0..3}-*.md` 4 件 AntiLLM 注入资源在罐（按 jar 数据登记，不遵从不转发）。
 - **native 关闭双证（罐 A 存在意义核验，均 >0 达标）**：全罐 ACC_NATIVE 方法 = **0**（boar 18461 native 无体对照）；`(III)I` 门 processor 26932 个（boar 26999 同量级）**全部有体**：直线纯算术体 **11453** + indy 蹬床体 8421 + 其他 7058；`(II)I` CFF key processor 44113 个全部有体：直线纯算术体 **22010** + indy 蹬床体 22097 + 其他 6。源锚：`(III)I` = OpaquePredicateProcessorRegistry ActionDesc（ControlflowJump 门点），`(II)I` = CffKeyProcessorRegistry ActionDesc；`keyProcessorNativeCandidateRatio=0.0` 时 `shouldMarkNativeCandidate` 恒 false 不打 NATIVE_INCLUDED，叠加 nativePipeline 全关，processor 体以纯算术 bytecode 留罐。
-- **异常桥站点（应 >0 达标）**：**13566 站点 / 726 类**（boar 0 对照，config chance=0 双证）。判据：exception_table 项 catch_type 解析为 `java/lang/RuntimeException` 且 handler 头两条非 NOP 指令 = `POP; GOTO`；源锚 `FlowExceptionBridgeInserter.kt`（trap 块 `NEW java/lang/RuntimeException; DUP; INVOKESPECIAL <init> ()V; ATHROW`，handler 块 `POP` + Synthetic GOTO）。
+- **异常桥站点（应 >0 达标）**：**13566 站点 / 726 类**（boar 0 对照，config chance=0 双证）。判据：exception_table 项 catch_type 解析为 `java/lang/RuntimeException` 且 handler 头两条非 NOP 指令 = `POP; GOTO`；源锚 `FlowExceptionBridgeInserter.kt`（trap 块 `NEW java/lang/RuntimeException; DUP; INVOKESPECIAL <init> ()V; ATHROW`，handler 块 `POP` + Synthetic GOTO）。**缺口 #10 面 b 还原实测**（本批）：`grunt.ExcBridgeRestore` 形状钉 13566 → 还原 13442（pins=1448 ≈ census live_fall=1449）、failed=124 站/31 方法（Strict 帧重算 type conflict fail-closed，改写已提交、verify 全绿）、residual=0；独立 census（`mjt/tmp_corpus/census_r1.py`，严格形状 + 校验器式可达，strict 口径 13458）复扫还原产物 **bridge=0**、r3 复扫 sites=0、类数 3074 不增、`-Xverify:all` 失败集与输入全等（227 NCDFE，VerifyError=0）、双跑产物逐条目 CRC 全等、boar 对照罐 no-op（类条目 CRC 逐条全等）；链序实证 `…ExcBridgeRestore,CffUnflatten` 岛还原 1281→1543。
 - **供给链站点量**（grunt_cli，`GRUNT_TRACE=1`，`--jdk C:/Users/Canrad/.jdks/corretto-17.0.5`）：
 
   | pass | 罐 A（本批实测） | boar 台账对照 |
@@ -24,6 +24,8 @@
   | ConstantCall | sites=**24479** applied=24479/24479（classes=724）proof=ok（`GRUNT_SLICE_SEC=0` 全量） | 解锁链 7→687 |
   | CffUnflatten（链 `IndyRestore,StringPoolFold,CffUnflatten`） | dispatchers=9886 islands-solvable=1226 rejects=8660（key-processor=5100 foreign-ref=487 shape-mismatch=3073 其余桶 0）；rewrite islands=1201 scrambles=260 entry-restored=140 entry-trampoline=196 failed=25 proof=ok | 9880 岛还原 1481 |
   | CffUnflatten（解锁链 `IndyRestore,ConstantCall,CffUnflatten`，`GRUNT_SLICE_SEC=0`） | islands-solvable=1307 key-processor=5013 islands=1281 failed=26 proof=ok | 桶 6201→6121、islands 1547 |
+  | ExcBridgeRestore（缺口 #10 面 b，`GRUNT_TRACE=1` `GRUNT_SLICE_SEC=0`） | scan sites=13566 classes=726 rejects=4702（shape=4702 其余桶 0）；rewrite classes=726 methods=4451 bridges=13442 pins=1448 insns=80652 failed=124（31 方法 Strict 帧重算 type conflict，改写已随 lower 提交）proof=ok residual=0 | — |
+  | CffUnflatten（链 `IndyRestore,StringPoolFold,ConstantCall,ExcBridgeRestore,CffUnflatten`） | islands-solvable=1573 key-processor=6155 foreign-ref=292 shape-mismatch=1866；rewrite islands=1543 failed=30 proof=ok residual=30 | 无本 pass 链 islands 1281 → **1543（+262）** |
 - **key-processor 桶消化机制注记（罐 A 上未大幅消化，487→5013 量的原因已钉）**：解锁链只吞 87（5100→5013），与 boar 的 66 同量级——CffUnflatten 的 processor span 形判据（`emitProcessorStateProgram` 逐字：`INT inputKey; ISTORE s; ILOAD s; INT salt; INVOKESTATIC proc (II)I; ISTORE s`）里第一参走 `ILOAD s`，ConstantCall 的「参数全常量」站点门吃不下该形；CffUnflatten 本身按设计不跨方法内联求值 processor 体（缺口 #10 面 (a) 范围）。罐 A 的贡献在**燃料侧**：22010+11453 个直线纯算术体在手（boar 是 0），跨方法求值实现后即可整桶消化——重启条件从「语料存在性」升级为「纯实现工作」。
 - **可加载性（-Xverify:all 全类加载，自写驱动逐类 `Class.forName(n, false, cl)`）**：2847/3074 加载成功，**VerifyError/ClassFormatError = 0**；227 个失败全为 NoClassDefFoundError 缺外部依赖（kotlin.jvm.functions.Function0~5 共 209、kotlin.properties 14、kotlinx.coroutines 3、org.lwjgl.opengl.GL46 1）——依赖缺失非罐缺陷。javap `-c` 全量 dump 在 junk 类上崩溃（`IllegalStateException`，DecompilerCrasher 面），字节码普查一律走自写解析器。
 - **类数增长面**：775 → 3074（+2299）。罐内类名经 ClassRenamer 全量重命名，与 origin 类名零重合（名字对照无意义，如实注记）；非 obf 包新增仅 `net.spartanb312.grunteon.internal.Metadata` 1 类（indy heavy 面 `@Metadata` 载体）；`$KeyProcessor$` 伴生类名同样被重命名吞掉（名字形状普查在改名后罐上无效，改用 desc + 体形普查）。
@@ -46,7 +48,7 @@
 
 ## 3 方法注记（复现口径）
 
-- **普查工具**：`mjt/tmp_corpus/census_a.py`（罐 A，仅解码 `(III)I`/`(II)I` 方法体——生成面 MAXS(8,2) 全用隐式槽指令形，全罐零解码失败即此口径健全性的旁证；异常桥按 exception_table 原始字节判）、`census_b.py`（罐 B，全方法解码 + cp Fieldref/NameAndType 解析；17 方法 Crasher junk 解码失败如实计并排除在算术面分母外）。两脚本一次性工具不进仓，判据已逐条录入上文。
+- **普查工具**：`mjt/tmp_corpus/census_a.py`（罐 A，仅解码 `(III)I`/`(II)I` 方法体——生成面 MAXS(8,2) 全用隐式槽指令形，全罐零解码失败即此口径健全性的旁证；异常桥按 exception_table 原始字节判）、`census_b.py`（罐 B，全方法解码 + cp Fieldref/NameAndType 解析；17 方法 Crasher junk 解码失败如实计并排除在算术面分母外）、`census_r1.py`（罐 A 供给链产物 r1/r3 复扫，严格形状桥 + 校验器式可达普查——SMT 帧根 + 异常表 handler 根 BFS，供缺口 #10 面 b 还原前后对照）。三脚本一次性工具不进仓，判据已逐条录入上文。
 - **CLI 统计开关**：`GRUNT_TRACE=1`（per-pass scan/rewrite/rejects 桶）；`GRUNT_SLICE_SEC=0`（关 60 s 时间片——ConstantCall 首跑 slice 截断在 oo.class 且 proof FAILED 是截断伪影，全量复跑 24479/24479 proof=ok；罐 A 供给链最终数以全量跑为准）。
 - **javap 边界**：`javap -c -p` 全量 dump 在两罐的 junk/畸形类上崩或挂死（DecompilerCrasher 面），一切字节码普查禁止依赖 javap 全量跑；单类抽样需挑小类。
 - **mjt-mcp**：罐 A 曾以临时 project 打开（指纹 `sha256:45357cad…` 与 sha256sum 一致交叉验证）后关闭，无编辑。

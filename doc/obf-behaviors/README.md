@@ -47,7 +47,7 @@
 | InvokeProxy | S2 | 已处理 | ProxyInline |
 | FieldAccessProxy | S2 | 已处理 | FieldAccessProxy |
 | FakeSyntheticBridge | S2 | 已处理 | FlagsStrip |
-| ControlflowJump | S1/S2 | 部分 | TrampolineSqueeze / PredicateFold / NumberFold / DeadCode（缺 processor 调用门与异常桥 → 缺口 #10） |
+| ControlflowJump | S1/S2 | 部分（异常桥已闭环） | TrampolineSqueeze / PredicateFold / NumberFold / DeadCode / ExcBridgeRestore（缺 processor 调用门 → 缺口 #10 面 a 余量） |
 | ReferenceObfuscate | S1 | 部分 | IndyRestore（缺口 #2 闭环：simple 直接解密回填 + heavy `@Metadata` 互证回填，`Era::Grunt3` 门；RuntimeMaterial 联动的材料通道由 MaterialKeyRestore 折回 key 后第二轮本 pass 消化）+ IndyFold（S3 兜底） |
 | StringArrayedEncrypt | S1 | 已处理 | StringPoolFold（arrayed 形折叠；供给链被 indy 藏面时依赖上游还原，见 doc/string-pool-fold.impl.md 语料账本） |
 | InvokeDispatcher | S2 | 已处理 | DispatcherRestore（头锚 + 键表 + 调用点 key 反查回填；分发器本体与键表交 DeadCode/DeadMember 回收。宿主方法被 CFF 摊平或调用点被 ReferenceObfuscate indy 化时依赖链序/上游还原，见 doc/dispatcher-restore.impl.md 语料账本） |
@@ -86,7 +86,7 @@
 7. **ArithmeticEncrypt/ArithmeticSubstitute 恒等简化**：封闭 int 算术恒等式简化链（IXOR/IAND/IOR/INEG 替换族 + 三元组整体替换）。
 8. **NumberEncrypt v2 IAND/LAND 位拼模板扩面**：`first & second = v` 对（int/long）进 NumberFold 词汇表；v3 无此形态，仅 v2 语料需要。
 9. **MethodExtractor 还原**：透传桩与伴生方法体合并、owner 类 accessor-getter/setter 内联、伴生类删除（面大价值中）。
-10. **ControlflowJump processor 门与异常桥**：`INVOKESTATIC (III)I` processor 返回值参与的门需跨方法读 processor 体静态求值；合成 try + `POP; GOTO handler` 异常桥的 CFG 边还原。**boar 语料停报（取证批字节级双证，未写代码）**：面 (a) 门点形态成立且量大（26 866 站/709 类）但 processor 体 100% 随 NativePipeline 出 jar（26 999 个 `(III)I` 方法 = 18 461 native 无体 + 8 538 indy 蹬床链终到 native，纯算术可求值体 = 0；罐内 `grunteon_native.dll` 27.4 MB 实证），可行动站点 0——写了即全量 fail-closed 的 no-op，违反「没有消费方的模块不进仓」；面 (b) 异常桥站点 0（config `exceptionBridgeChance=0.0` 与 jar 字节双证）。**重启条件**：语料换用 `exceptionBridgeChance>0` 或 `nativeCandidateRatio<1.0` 的罐即可按源锚形态重启（ControlflowJump.kt 门点/BitAction/PredicateStep 全集已录取证报告，processor 体求值可复用 ConstantCall 纯算术先例）——自产全链罐（关 native + 全 transformer 开）即同时满足。另注：boar 站点普查须按 StackMapTable 帧根做校验器式可达遍历（罐内 DecompilerCrasher junk 区会骗线性扫描漏掉过半站点）。
+10. **ControlflowJump processor 门与异常桥**：~~异常桥还原~~（面 b 已闭环）：`grunt.ExcBridgeRestore` 承载——形状钉（trap 四条逐字 + 保护区恰罩四条 + handler 恰 `POP; GOTO` + catchType 恰 RuntimeException）钉合成蹦床、异常表互证门反误伤，`replaceAllUses` 原边直连真实目标 + 位置落入 GOTO 钉 + 表项删除/锚吸附 + 六受害者单批擦除 + Strict 帧链重算（判据与语料实证见 `doc/exc-bridge-restore.md`；boar 对照罐 no-op、罐 A 13566 站还原 13442 residual=0、独立 census 复扫 bridge=0、`-Xverify:all` 失败集与输入全等、双跑 CRC 全等；链序在 `CffUnflatten` 之前——岛还原 1281→1543）。**重启条件兑现**：罐 A（`exceptionBridgeChance=1.0`）按源锚形态重启，14 测新增（jasm 夹具：跳转边/位置落入/真实区共存+锚吸附/相邻双 trap/覆盖门/X 互撞门拒绝面 + JVM `-Xverify:all` 实跑）。**面 (a) processor 门维持停报**：罐 A 复测门点 6259 站全数 const-fed（slot-fed 0），目标链分类 3387 indy_body + 2872 impure + 0 pure——全数需跨方法读 processor 体静态求值（`ConstantCall` 纯算术先例可复用），跨方法求值落地前写了即全量 fail-closed 的 no-op；boar 原停报双证（processor 体 100% 随 NativePipeline 出 jar）与「boar 站点普查须按 StackMapTable 帧根做校验器式可达遍历」注记仍有效。
 
 **P3——清理、检测与基线面**：
 
