@@ -101,45 +101,16 @@ void bumpReject(ScanResult& result, std::string_view owner, std::string_view met
 // ==== SCAN ==================================================================
 // ============================================================================
 
-struct MethodLoc
+/// 容器方法索引构建：scan_tools::buildMethodIndex 收口（constant_call 同源
+/// 口径），本 pass 只钉两件口径——重名类撞键取后到（insert_or_assign 原形
+/// = KeepLast）、stderr 前缀走本 pass 的 scanGuard。
+void buildIndex(const mjbase::model::ResourceContainer& container,
+                scan_tools::MethodIndex& index)
 {
-    std::string owner;
-    ca::usize   index  = 0;
-    ca::u32     access = 0;
-};
-
-/// 容器方法索引：owner\nname\ndesc -> 声明位置（constant_call 同源口径）。
-using MethodIndex = std::unordered_map<std::string, MethodLoc>;
-
-std::string keyOf(std::string_view owner, std::string_view name, std::string_view desc)
-{
-    std::string k;
-    k.reserve(owner.size() + name.size() + desc.size() + 2);
-    k.append(owner);
-    k.push_back('\n');
-    k.append(name);
-    k.push_back('\n');
-    k.append(desc);
-    return k;
-}
-
-void buildIndex(const mjbase::model::ResourceContainer& container, MethodIndex& index)
-{
-    forEachClass(container, [&](const ClassEntry& entry) {
-        scanGuard("index", entry.uri, [&] {
-            auto session = openSession(*entry.bytes);
-            if (!session) return;
-            const ir::ClassUnit&   unit = session->unit();
-            const std::string_view self = session->backing().thisName();
-            for (ca::usize i = 0; i < unit.methods.size(); ++i) {
-                const ir::MethodUnit&  mu   = unit.methods[i];
-                const std::string_view name = unit.symbols().str(mu.name);
-                const std::string_view desc = unit.symbols().str(mu.desc);
-                index.insert_or_assign(keyOf(self, name, desc),
-                                       MethodLoc{std::string(self), i, mu.access});
-            }
-        });
-    });
+    auto guard = [](std::string_view stage, std::string_view uri, auto&& fn) {
+        return scanGuard(stage, uri, fn);
+    };
+    scan_tools::buildMethodIndex(container, index, scan_tools::IndexDup::KeepLast, guard);
 }
 
 /// @brief 前窗成员判定（rewrite 逆向定位调用用，宽松形——权威复核在正向
@@ -263,7 +234,8 @@ WindowVerdict parseForwardWindow(ir::ClassSession& s, const ir::CodeDom& dom,
 /// @brief 形状钉：门点调用锚（INVOKESTATIC (III)I）逆向三常量 + 前窗
 ///        「i32 常量 → IF_ICMP*」逐字。命中产出 Site（未求值）。
 void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& uri,
-                std::string_view self, const MethodIndex& index, ScanResult& result)
+                std::string_view self, const scan_tools::MethodIndex& index,
+                ScanResult& result)
 {
     if (!ir::hasCode(s, methodIndex)) return;
     auto promoted = ir::promoteMethod(s, methodIndex);
@@ -324,12 +296,12 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
         ++result.totalShape;
 
         // 目标解析：容器内 static 有码（(III)I 恒有返回值，无需 void 桶）。
-        const auto it = index.find(keyOf(enc.owner, enc.name, enc.desc));
+        const auto it = index.find(scan_tools::keyOf(enc.owner, enc.name, enc.desc));
         if (it == index.end()) {
             reject(RejectReason::TargetOutside);
             continue;
         }
-        const MethodLoc& loc = it->second;
+        const scan_tools::MethodLoc& loc = it->second;
         if ((loc.access & kAccStatic) == 0) {
             reject(RejectReason::TargetNotStatic);
             continue;
@@ -509,7 +481,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
 {
     ScanResult result;
 
-    MethodIndex index;
+    scan_tools::MethodIndex index;
     buildIndex(container, index);
 
     forEachClass(container, [&](const ClassEntry& entry) {
@@ -829,7 +801,7 @@ ProofResult proof(const mjbase::model::ResourceContainer& container, const Dirty
         const pass_clock::Suspend suspend;
         const std::set<std::string> dirtySet(dirty.uris.begin(), dirty.uris.end());
 
-        MethodIndex index;
+        scan_tools::MethodIndex index;
         buildIndex(container, index);
 
         ScanResult rescan;

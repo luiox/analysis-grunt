@@ -22,6 +22,7 @@
 #include "grunt/knowledge/runtime_names.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/rewrite_toolbox.hpp"
+#include "grunt/scan_toolbox.hpp"
 
 namespace grunt::const_method {
 
@@ -219,20 +220,9 @@ ProducerOutcome decodeProducer(ir::ClassSession& session, const ir::Insn& in, Co
     }
 }
 
-/// @brief 容器内全部「单常量方法」定义表：owner\nname\ndesc -> 值。
+/// @brief 容器内全部「单常量方法」定义表：owner\nname\ndesc -> 值
+///        （键复合收口在 scan_toolbox::keyOf）。
 using ConstMethodIndex = std::unordered_map<std::string, ConstValue>;
-
-std::string keyOf(std::string_view owner, std::string_view name, std::string_view desc)
-{
-    std::string k;
-    k.reserve(owner.size() + name.size() + desc.size() + 2);
-    k.append(owner);
-    k.push_back('\n');
-    k.append(name);
-    k.push_back('\n');
-    k.append(desc);
-    return k;
-}
 
 /// @brief 形状是否值得进拒绝面：方法体以 ireturn/areturn 结尾的两指令方法。
 ///        沾边但不成立的才记拒绝（trace 有用）；其余静默跳过，不刷屏。
@@ -298,7 +288,7 @@ void buildDefs(const mjbase::model::ResourceContainer& container, ConstMethodInd
                 reject(RejectReason::OwnerClassInitImpure);
                 continue;
             }
-            defs.emplace(keyOf(s.backing().thisName(), name, desc), value);
+            defs.emplace(scan_tools::keyOf(s.backing().thisName(), name, desc), value);
         }
     });
 }
@@ -428,7 +418,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
                 if (!s.memberOf(*in, enc)) continue;
                 if (enc.kind != ir::ClassSession::MemberSem::Kind::Method) continue;
 
-                const auto it = defs.find(keyOf(enc.owner, enc.name, enc.desc));
+                const auto it = defs.find(scan_tools::keyOf(enc.owner, enc.name, enc.desc));
                 if (it == defs.end()) continue;
 
                 Site site;

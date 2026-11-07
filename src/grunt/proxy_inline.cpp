@@ -162,21 +162,9 @@ Op returnOpOf(char kind)
     }
 }
 
-/// owner\nname\ndesc 复合键。
-std::string keyOf(std::string_view owner, std::string_view name, std::string_view desc)
-{
-    std::string k;
-    k.reserve(owner.size() + name.size() + desc.size() + 2);
-    k.append(owner);
-    k.push_back('\n');
-    k.append(name);
-    k.push_back('\n');
-    k.append(desc);
-    return k;
-}
-
-/// owner 类 `<clinit>` 中性判定收口在 scan_toolbox（classInitNeutral），
-/// 与 constant_call 的类初始化门同源。
+/// owner\nname\ndesc 复合键收口在 scan_toolbox（keyOf），与 constant_call /
+/// gate_processor_fold 的方法索引及 field_access_proxy / const_method 的定义
+/// 表同源。
 
 /// 代理定义：体形成立时记下转发目标。
 struct ProxyDef
@@ -339,7 +327,7 @@ void buildDefs(const mjbase::model::ResourceContainer& container, ProxyIndex& de
                 reject(why);
                 continue;
             }
-            defs.emplace(keyOf(s.backing().thisName(), name, desc), def);
+            defs.emplace(scan_tools::keyOf(s.backing().thisName(), name, desc), def);
             ++found;
         }
     });
@@ -383,7 +371,7 @@ void collectSites(const mjbase::model::ResourceContainer& container, const Proxy
                 if (!s.memberOf(*in, enc)) continue;
                 if (enc.kind != ir::ClassSession::MemberSem::Kind::Method) continue;
 
-                const auto it = defs.find(keyOf(enc.owner, enc.name, enc.desc));
+                const auto it = defs.find(scan_tools::keyOf(enc.owner, enc.name, enc.desc));
                 if (it == defs.end()) continue;
                 const ProxyDef& def = it->second;
 
@@ -402,7 +390,7 @@ void collectSites(const mjbase::model::ResourceContainer& container, const Proxy
                 site.targetDesc        = def.targetDesc;
                 site.virtualTarget     = def.virtualTarget;
 
-                SiteGroup& group = groups[keyOf(enc.owner, enc.name, enc.desc)];
+                SiteGroup& group = groups[scan_tools::keyOf(enc.owner, enc.name, enc.desc)];
                 group.externalCaller = group.externalCaller || self != enc.owner;
                 group.sites.push_back(std::move(site));
             }
@@ -529,7 +517,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     std::unordered_set<std::string>                           touchedProxies;
     for (const Site& s : result.sites) {
         byUri[s.callerUri].push_back(&s);
-        touchedProxies.insert(keyOf(s.proxyOwner, s.proxyName, s.proxyDesc));
+        touchedProxies.insert(scan_tools::keyOf(s.proxyOwner, s.proxyName, s.proxyDesc));
     }
 
     // 两遍式：先收动作清单，再逐类「开会话 → 改写 → lower → 立即回写」，
