@@ -1,7 +1,7 @@
 /// @file        cff_unflatten.hpp
 /// @brief       残留 `cff_unflatten`：Grunt v3 ControlflowFlattening 反摊平。
 ///
-/// ## 形态（artifact 侧；doc/obf-behaviors/grunt-v3-behaviors.md §2.2）
+/// ## 形态（artifact 侧；doc/obf-behaviors/grunt-v3-behaviors.rst §2.2）
 ///
 /// v3 ControlflowFlattening（`grunt3@e41e852`，FlowControlFlowFlattener 逐行，
 /// jbc jasm 样例 boar-main.jar `net/spartanb312/obf/AD.a` 互证）把 maximal

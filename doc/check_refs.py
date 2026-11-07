@@ -156,13 +156,16 @@ def check(root: Path):
     labels, rst_files, dup = collect_labels(doc_dir)
     problems += dup
     in_tree = toctree_entries(doc_dir / "index.rst")
+    # 子目录 toctree 条目（Sphinx 相对 index 所在目录解析，如 obf-behaviors/<stem>）
+    # 按末段 stem 归一比对——孤儿判定只看「挂进 toctree 与否」，不看层级。
+    in_tree_stems = in_tree | {entry.rsplit("/", 1)[-1] for entry in in_tree}
     groups, headers = micro_targets(root / "src")
 
     # RST 侧：文档内链必须指向在册文件/已声明 label，匿名 md/rst 链接一律禁止。
     for p in sorted(doc_dir.rglob("*.rst")):
         if p.name == "index.rst":
             continue
-        if p.stem not in in_tree:
+        if p.stem not in in_tree_stems:
             problems.append(f"{p.name}: 未挂进 index.rst 的 toctree（Sphinx -W 会报 orphan）")
     for p in sorted(doc_dir.rglob("*.rst")):
         for lineno, line in iter_lines(p):
