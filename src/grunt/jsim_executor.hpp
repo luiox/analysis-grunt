@@ -35,11 +35,39 @@
 #include <vector>
 
 #include "grunt/container.hpp"
-#include "grunt/jsim_bridge.hpp"
+
+#include "jbc/type/descriptor.hpp"
 
 #include "jsim/engine.hpp"
+#include "jsim/jbc.hpp"
 
 namespace grunt {
+
+/// @brief 方法描述符 → 参数值类型序列（引用类型含数组一律折 Ref）。
+///
+/// 解析用 libjbc 官方描述符解析器（jbc::type，JVMS 4.3 语法真源）打底，这里
+/// 只做 TypeDesc → jsim::ValType 的映射——自建的逐字符解析已随 jsim_bridge
+/// 退役。解析失败返回 false，不产出半份序列。
+inline bool paramTypesOfDesc(std::string_view desc, std::vector<jsim::ValType>& out)
+{
+    auto parsed = jbc::type::parseMethodDescriptor(desc);
+    if (parsed.is_err()) return false;
+    out.clear();
+    out.reserve(parsed.unwrap().params.size());
+    for (const jbc::type::TypeDesc& t : parsed.unwrap().params) {
+        if (t.kind == jbc::type::TypeDesc::Kind::Class || t.array_dims > 0) {
+            out.push_back(jsim::ValType::Ref);
+            continue;
+        }
+        switch (t.primitive) {
+        case jbc::type::BaseType::Long:   out.push_back(jsim::ValType::I64); break;
+        case jbc::type::BaseType::Float:  out.push_back(jsim::ValType::F32); break;
+        case jbc::type::BaseType::Double: out.push_back(jsim::ValType::F64); break;
+        default:                          out.push_back(jsim::ValType::I32); break;
+        }
+    }
+    return true;
+}
 
 /// @brief 一次执行的结局。
 struct SimOutcome
@@ -165,6 +193,11 @@ private:
     }
 
     /// @brief 取（或建）一个方法的模拟视图。方法体自持字符串，会话可随即释放。
+    ///
+    /// 桥口径 = libjsim 官方（jsim::jbcbridge::toSimMethod）：含 invokedynamic /
+    /// athrow / jsr/ret 的方法整方法不桥（UnsupportedOp）——此前自建桥对 indy
+    /// 是占位 CallRef、对 athrow 原样搬运，都要等运行期触达才拒；官方口径把
+    /// 拒绝提前到桥面，仍是失败即失败，只是失败得更早、原因更显式。
     const jsim::Method* buildMethod(jbc::ir::ClassSession& s, ca::usize index)
     {
         const jbc::ir::ClassUnit&  unit = s.unit();
@@ -178,9 +211,13 @@ private:
             return it->second.ok ? &it->second.method : nullptr;
         }
         Slot slot;
-        std::string why;
-        slot.ok = jsim_bridge::toSimMethod(s, index, slot.method, &why);
-        slot.why = std::move(why);
+        auto bridged = jsim::jbcbridge::toSimMethod(s, index);
+        slot.ok = bridged.isOk();
+        if (!slot.ok) {
+            slot.why = bridged.error().detail;
+        } else {
+            slot.method = std::move(bridged.value());
+        }
         auto inserted = methods_.emplace(key, std::move(slot)).first;
         return inserted->second.ok ? &inserted->second.method : nullptr;
     }
@@ -205,9 +242,13 @@ private:
         if (index == jbc::ir::kNoMethod) return nullptr;
 
         Slot slot;
-        std::string why;
-        slot.ok = jsim_bridge::toSimMethod(*s, index, slot.method, &why);
-        slot.why = std::move(why);
+        auto bridged = jsim::jbcbridge::toSimMethod(*s, index);
+        slot.ok = bridged.isOk();
+        if (!slot.ok) {
+            slot.why = bridged.error().detail;
+        } else {
+            slot.method = std::move(bridged.value());
+        }
         auto inserted = methods_.emplace(key, std::move(slot)).first;
         return inserted->second.ok ? &inserted->second.method : nullptr;
     }
@@ -236,7 +277,7 @@ private:
         }
 
         std::vector<jsim::ValType> params;
-        if (!paramTypes(callee.desc, params)) {
+        if (!paramTypesOfDesc(callee.desc, params)) {
             mocks_.emplace(key, std::nullopt);
             return nullptr;
         }
@@ -263,37 +304,6 @@ private:
         };
         auto inserted = mocks_.emplace(key, std::move(mock)).first;
         return inserted->second ? &inserted->second.value() : nullptr;
-    }
-
-    /// @brief 描述符 → 参数类型序列（含 `[`/`L...;` 两种引用形态）。
-    static bool paramTypes(const std::string& desc, std::vector<jsim::ValType>& out)
-    {
-        std::size_t i = desc.find('(');
-        if (i == std::string::npos) return false;
-        ++i;
-        while (i < desc.size() && desc[i] != ')') {
-            const char c = desc[i];
-            if (c == '[') {
-                while (i < desc.size() && desc[i] == '[') ++i;
-                if (i < desc.size() && desc[i] == 'L') {
-                    while (i < desc.size() && desc[i] != ';') ++i;
-                }
-                ++i;
-                out.push_back(jsim::ValType::Ref);
-                continue;
-            }
-            if (c == 'L') {
-                while (i < desc.size() && desc[i] != ';') ++i;
-                ++i;
-                out.push_back(jsim::ValType::Ref);
-                continue;
-            }
-            jsim::ValType t = jsim::ValType::I32;
-            if (!jsim_bridge::valTypeOfDescChar(c, t)) return false;
-            out.push_back(t);
-            ++i;
-        }
-        return i < desc.size();
     }
 
     // ── 执行 ───────────────────────────────────────────────────────────────
