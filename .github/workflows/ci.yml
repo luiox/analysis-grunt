@@ -6,8 +6,7 @@
 # 依赖：luiox-repo git 直连包（mjbase/libjbc/libca 等）——root xmake.lua 内
 # add_repositories 已指向 GitHub 远端，CI 无需显式注册（同 mjbase 口径）；
 # gtest 走 xrepo。
-# libjsim：源码级 header-only（xmake.lua 默认找兄弟目录 ../libjsim，CI 以
-# LIBSIM_DIR 指向随仓检出的 commit 锁副本，升级随 libjsim main 显式改 ref）。
+# libjsim：luiox-repo 包消费（0.0.1），CI 与本地同一条包消费路径。
 # 注意 set_defaultplat("windows")：Linux 配置必须显式 -p linux。
 #
 # 与家族 base 仓（libjbc/mjbase）docs 门禁的差异：本仓 doc/ 是纯 markdown
@@ -26,9 +25,6 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  LIBSIM_DIR: ${{ github.workspace }}/libjsim
-
 jobs:
   build-and-test-linux:
     name: build & test (linux)
@@ -36,13 +32,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
-      - name: Checkout libjsim (header-only, commit 锁)
-        uses: actions/checkout@v4
-        with:
-          repository: luiox/libjsim
-          ref: 65ff62f156805b656c184e5312b5cb0230edb7b8
-          path: libjsim
 
       - name: Setup JDK (JVM 实跑验证门)
         uses: actions/setup-java@v5
@@ -83,13 +72,6 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-
-      - name: Checkout libjsim (header-only, commit 锁)
-        uses: actions/checkout@v4
-        with:
-          repository: luiox/libjsim
-          ref: 65ff62f156805b656c184e5312b5cb0230edb7b8
-          path: libjsim
 
       - name: Setup JDK (JVM 实跑验证门)
         uses: actions/setup-java@v5
