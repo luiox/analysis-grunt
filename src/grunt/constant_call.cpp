@@ -78,46 +78,16 @@ char returnChar(std::string_view desc)
     return desc[rp + 1];
 }
 
-struct MethodLoc
+/// 容器方法索引构建：scan_tools::buildMethodIndex 收口，本 pass 只钉两件
+/// 口径——重名类撞键取先到（emplace 原形 = KeepFirst）、stderr 前缀走本
+/// pass 的 scanGuard。
+void buildIndex(const mjbase::model::ResourceContainer& container,
+                scan_tools::MethodIndex& index)
 {
-    std::string owner;
-    std::string desc;
-    ca::usize   index  = 0;
-    ca::u32     access = 0;
-};
-
-/// 容器方法索引：owner\nname\ndesc -> 声明位置。
-using MethodIndex = std::unordered_map<std::string, MethodLoc>;
-
-std::string keyOf(std::string_view owner, std::string_view name, std::string_view desc)
-{
-    std::string k;
-    k.reserve(owner.size() + name.size() + desc.size() + 2);
-    k.append(owner);
-    k.push_back('\n');
-    k.append(name);
-    k.push_back('\n');
-    k.append(desc);
-    return k;
-}
-
-void buildIndex(const mjbase::model::ResourceContainer& container, MethodIndex& index)
-{
-    forEachClass(container, [&](const ClassEntry& entry) {
-        scanGuard("index", entry.uri, [&] {
-            auto session = openSession(*entry.bytes);
-            if (!session) return;
-            const ir::ClassUnit&   unit = session->unit();
-            const std::string_view self = session->backing().thisName();
-            for (ca::usize i = 0; i < unit.methods.size(); ++i) {
-                const ir::MethodUnit&  mu   = unit.methods[i];
-                const std::string_view name = unit.symbols().str(mu.name);
-                const std::string_view desc = unit.symbols().str(mu.desc);
-                index.emplace(keyOf(self, name, desc),
-                              MethodLoc{std::string(self), std::string(desc), i, mu.access});
-            }
-        });
-    });
+    auto guard = [](std::string_view stage, std::string_view uri, auto&& fn) {
+        return scanGuard(stage, uri, fn);
+    };
+    scan_tools::buildMethodIndex(container, index, scan_tools::IndexDup::KeepFirst, guard);
 }
 
 /// 求值段：装好扩展包的 jsim 执行器逐站点跑目标方法；通过者写回 `value`，
@@ -446,7 +416,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
 {
     ScanResult result;
 
-    MethodIndex index;
+    scan_tools::MethodIndex index;
     buildIndex(container, index);
 
     forEachClass(container, [&](const ClassEntry& entry) {
@@ -476,9 +446,9 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
                     if (!s.memberOf(*in, enc)) continue;
                     if (enc.kind != ir::ClassSession::MemberSem::Kind::Method) continue;
 
-                    const auto it = index.find(keyOf(enc.owner, enc.name, enc.desc));
+                    const auto it = index.find(scan_tools::keyOf(enc.owner, enc.name, enc.desc));
                     if (it == index.end()) continue;   // 容器外目标：不构成候选
-                    const MethodLoc& loc = it->second;
+                    const scan_tools::MethodLoc& loc = it->second;
 
                     const auto reject = [&](RejectReason r) {
                         result.rejects.push_back(RejectedSite{

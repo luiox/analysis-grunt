@@ -25,6 +25,7 @@
 #include "jbc/ir/units.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/knowledge/const_args.hpp"
 #include "grunt/knowledge/kasumi_names.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/rewrite_toolbox.hpp"
@@ -122,34 +123,8 @@ bool utf8ToMutf8(std::string_view in, std::string& out)
 }
 
 // ============================================================================
-// ==== 形状钉面（S2）=========================================================
+// ==== 形状钉面（S2；常量装载读数走 const_args）==============================
 // ============================================================================
-
-/// @brief 一条 int 常量装载（ICONST_M1..5 / BIPUSH / SIPUSH / LDC(LDC_W) Integer）。
-bool constIntAt(const ir::ClassSession& s, const ir::Insn& in, ca::i32& out)
-{
-    switch (in.op) {
-    case Op::ICONST_M1: out = -1; return true;
-    case Op::ICONST_0:  out = 0; return true;
-    case Op::ICONST_1:  out = 1; return true;
-    case Op::ICONST_2:  out = 2; return true;
-    case Op::ICONST_3:  out = 3; return true;
-    case Op::ICONST_4:  out = 4; return true;
-    case Op::ICONST_5:  out = 5; return true;
-    case Op::BIPUSH:
-    case Op::SIPUSH:    out = in.a; return true;
-    case Op::LDC:
-    case Op::LDC_W: {
-        const jbc::core::ConstantPool& cp = s.backing().cp;
-        if (!cp.valid(in.cp)) return false;
-        const jbc::core::ConstantPool::Entry& e = cp.at(in.cp);
-        if (e.tag != CpTag::Integer) return false;
-        out = e.ival;
-        return true;
-    }
-    default: return false;
-    }
-}
 
 /// @brief 跨度内部标签门：锚点之后到尾条之间任何指令带标签 = 合并点，整站
 ///        放弃（外部到达路径的栈形状不可知，不猜）。与 number_fold 同口径。
@@ -198,7 +173,7 @@ bool tryMatchAt(ir::ClassSession& s, const ir::CodeDom& dom,
     }
 
     ca::i32 idx = 0;
-    if (seq.size() < 2 || !constIntAt(s, *seq[0], idx) || seq[1]->op != Op::AALOAD) {
+    if (seq.size() < 2 || !const_args::decodeConstInt(s, *seq[0], idx) || seq[1]->op != Op::AALOAD) {
         return false;
     }
     if (form == Form::CacheRead) {
@@ -217,7 +192,7 @@ bool tryMatchAt(ir::ClassSession& s, const ir::CodeDom& dom,
     if (seq.size() < 6) return false;
     if (seq[2]->op != Op::DUP || seq[3]->op != Op::ARRAYLENGTH) return false;
     ca::i32 off = 0;
-    if (!constIntAt(s, *seq[4], off)) return false;
+    if (!const_args::decodeConstInt(s, *seq[4], off)) return false;
     const ir::Insn* invoke = seq[5];
     if (invoke->op != Op::INVOKESTATIC) return false;
     ir::ClassSession::MemberSem msem;

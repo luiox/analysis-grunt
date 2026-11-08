@@ -21,6 +21,7 @@
 #include "jbc/type/descriptor.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/knowledge/const_args.hpp"
 #include "grunt/knowledge/grunt_names.hpp"
 #include "grunt/pass_clock.hpp"
 #include "grunt/proof_toolbox.hpp"
@@ -42,52 +43,8 @@ constexpr ca::u32   kAccPrivate = 0x0002;
 constexpr ca::u32   kAccStatic  = 0x0008;
 
 // ============================================================================
-// ==== 形状钉面辅助（与 string_pool_fold / indy_restore 同形独立实现）========
+// ==== 形状钉面辅助（常量装载读数走 const_args，槽装载仍就地钉形）============
 // ============================================================================
-
-/// @brief 一条 int 常量装载（ICONST_M1..5 / BIPUSH / SIPUSH / LDC(LDC_W) Integer）。
-bool constIntAt(const ir::ClassSession& s, const ir::Insn& in, ca::i32& out)
-{
-    switch (in.op) {
-    case Op::ICONST_M1: out = -1; return true;
-    case Op::ICONST_0:  out = 0; return true;
-    case Op::ICONST_1:  out = 1; return true;
-    case Op::ICONST_2:  out = 2; return true;
-    case Op::ICONST_3:  out = 3; return true;
-    case Op::ICONST_4:  out = 4; return true;
-    case Op::ICONST_5:  out = 5; return true;
-    case Op::BIPUSH:
-    case Op::SIPUSH:    out = in.a; return true;
-    case Op::LDC:
-    case Op::LDC_W: {
-        const jbc::core::ConstantPool& cp = s.backing().cp;
-        if (!cp.valid(in.cp)) return false;
-        const jbc::core::ConstantPool::Entry& e = cp.at(in.cp);
-        if (e.tag != CpTag::Integer) return false;
-        out = e.ival;
-        return true;
-    }
-    default: return false;
-    }
-}
-
-/// @brief 一条 long 常量装载（LCONST_0/1 / LDC2_W Long）。
-bool constLongAt(const ir::ClassSession& s, const ir::Insn& in, ca::i64& out)
-{
-    switch (in.op) {
-    case Op::LCONST_0: out = 0; return true;
-    case Op::LCONST_1: out = 1; return true;
-    case Op::LDC2_W: {
-        const jbc::core::ConstantPool& cp = s.backing().cp;
-        if (!cp.valid(in.cp)) return false;
-        const jbc::core::ConstantPool::Entry& e = cp.at(in.cp);
-        if (e.tag != CpTag::Long) return false;
-        out = e.lval;
-        return true;
-    }
-    default: return false;
-    }
-}
 
 /// @brief int 槽装载（ILOAD a==slot 或 ILOAD_0..3 快捷形）。
 bool intLoadAt(const ir::Insn& in, ca::u32 slot)
@@ -152,65 +109,9 @@ ca::usize findMethodSlot(const ir::ClassUnit& unit, std::string_view name,
     return kNoSlot;
 }
 
-/// @brief MUTF-8 → UTF-16 码元（与 string_pool_fold 同形独立实现：密文/明文
-///        都按码元面处理，孤立代理合法承载）。
-bool mutf8ToUnits(std::string_view in, std::vector<ca::u16>& out)
-{
-    out.clear();
-    ca::usize i = 0;
-    while (i < in.size()) {
-        const ca::u8 b0 = static_cast<ca::u8>(in[i]);
-        if (b0 < 0x80) {
-            out.push_back(static_cast<ca::u16>(b0));
-            ++i;
-            continue;
-        }
-        if ((b0 & 0xE0) == 0xC0) {
-            if (i + 1 >= in.size()) return false;
-            const ca::u8 b1 = static_cast<ca::u8>(in[i + 1]);
-            if ((b1 & 0xC0) != 0x80) return false;
-            out.push_back(static_cast<ca::u16>(((b0 & 0x1F) << 6) | (b1 & 0x3F)));
-            i += 2;
-            continue;
-        }
-        if ((b0 & 0xF0) == 0xE0) {
-            if (i + 2 >= in.size()) return false;
-            const ca::u8 b1 = static_cast<ca::u8>(in[i + 1]);
-            const ca::u8 b2 = static_cast<ca::u8>(in[i + 2]);
-            if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return false;
-            out.push_back(static_cast<ca::u16>(((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6)
-                                               | (b2 & 0x3F)));
-            i += 3;
-            continue;
-        }
-        return false;
-    }
-    return true;
-}
-
-/// @brief 对齐 Grunt encrypt 语义的逐码元自逆 XOR（S1 互证用；与 indy_restore
-///        同形独立实现）。@return false = MUTF-8 解码失败。
-bool decryptXor(std::string_view encrypted, ca::i32 key, std::string& out)
-{
-    std::vector<ca::u16> units;
-    if (!mutf8ToUnits(encrypted, units)) return false;
-    const ca::u16 lo = static_cast<ca::u16>(key);
-    out.clear();
-    for (ca::u16& u : units) {
-        u = static_cast<ca::u16>(u ^ lo);
-        if (u < 0x80) {
-            out.push_back(static_cast<char>(u));
-        } else if (u < 0x800) {
-            out.push_back(static_cast<char>(0xC0 | (u >> 6)));
-            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        } else {
-            out.push_back(static_cast<char>(0xE0 | (u >> 12)));
-            out.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        }
-    }
-    return true;
-}
+// ============================================================================
+// ==== 码元面编解码走 scan_toolbox（mutf8ToUnits / decryptXor）================
+// ============================================================================
 
 /// @brief `Long.foldToInt`（ReferenceObfuscate 源面逐字）：
 ///        `(seed ^ (seed ushr 32)).toInt()`。
@@ -349,7 +250,7 @@ std::vector<MaterialWindow> findMaterialWindows(
             }
             if (sem.desc != "()I" || sem.owner != self) continue;
             ca::i32 raw = 0;
-            if (!constIntAt(s, *seq[p - 4], raw)) continue;
+            if (!const_args::decodeConstInt(s, *seq[p - 4], raw)) continue;
             MaterialWindow w;
             w.decryptorIndex = mi;
             w.decryptorName  = std::string(unit.symbols().str(unit.methods[mi].name));
@@ -408,7 +309,7 @@ std::optional<MaterialKeyBody> matchMaterialKeyBody(
         return std::nullopt;
     }
     ca::i32 shift = 0;
-    if (seq[1]->op != Op::DUP2 || !constIntAt(s, *seq[2], shift)
+    if (seq[1]->op != Op::DUP2 || !const_args::decodeConstInt(s, *seq[2], shift)
         || shift != static_cast<ca::i32>(knowledge::kGruntMaterialKeySlotShift)
         || seq[3]->op != Op::LUSHR || seq[4]->op != Op::LXOR || seq[5]->op != Op::L2I) {
         return std::nullopt;
@@ -607,7 +508,7 @@ bool evalKeyInit(ir::ClassSession& s, std::unordered_map<ca::usize, MethodView>&
     // ---- Form A：单条 long 常量装载 ----
     if (q >= 1) {
         ca::i64 v = 0;
-        if (constLongAt(s, *seq[q - 1], v)) {
+        if (const_args::decodeConstLong(s, *seq[q - 1], v)) {
             out = v;
             return true;
         }
@@ -616,7 +517,7 @@ bool evalKeyInit(ir::ClassSession& s, std::unordered_map<ca::usize, MethodView>&
     // ---- Form B：`ldc 明文; INT(32); INVOKESTATIC parse; ldc2_w C; lxor` ----
     if (q >= 5 && seq[q - 1]->op == Op::LXOR) {
         ca::i64 cxor = 0;
-        if (constLongAt(s, *seq[q - 2], cxor) && seq[q - 3]->op == Op::INVOKESTATIC) {
+        if (const_args::decodeConstLong(s, *seq[q - 2], cxor) && seq[q - 3]->op == Op::INVOKESTATIC) {
             ir::ClassSession::MemberSem psem;
             const bool parseDirect =
                 memberOf(s, *seq[q - 3], ir::ClassSession::MemberSem::Kind::Method, psem)
@@ -630,7 +531,7 @@ bool evalKeyInit(ir::ClassSession& s, std::unordered_map<ca::usize, MethodView>&
                                     && psem.desc == knowledge::kGruntMaterialParseDesc
                                     && parseTrampolineShape(s, views, std::string(psem.name));
             ca::i32 radix = 0;
-            if ((parseDirect || parseTramp) && constIntAt(s, *seq[q - 4], radix)
+            if ((parseDirect || parseTramp) && const_args::decodeConstInt(s, *seq[q - 4], radix)
                 && radix == knowledge::kGruntMaterialParseRadix
                 && (seq[q - 5]->op == Op::LDC || seq[q - 5]->op == Op::LDC_W)
                 && !interiorLabeled(q - 5, q)) {
@@ -640,7 +541,7 @@ bool evalKeyInit(ir::ClassSession& s, std::unordered_map<ca::usize, MethodView>&
                     return false;
                 }
                 std::vector<ca::u16> units;
-                if (!mutf8ToUnits(cs.str, units)) {
+                if (!scan_tools::mutf8ToUnits(cs.str, units)) {
                     blockedWhy = "Form B 明文 MUTF-8 解码失败";
                     return false;
                 }
@@ -1100,8 +1001,9 @@ std::optional<Site> analyzeClass(ir::ClassSession& s, const std::string& uri, Sc
                 std::string decOwner;
                 std::string decName;
                 std::string decDesc;
-                if (!decryptXor(enc[0], effectiveKey, decOwner) || !decryptXor(enc[1], effectiveKey, decName)
-                    || !decryptXor(enc[2], effectiveKey, decDesc)) {
+                if (!scan_tools::decryptXor(enc[0], effectiveKey, decOwner)
+                    || !scan_tools::decryptXor(enc[1], effectiveKey, decName)
+                    || !scan_tools::decryptXor(enc[2], effectiveKey, decDesc)) {
                     return reject(5, "候选 key 解密失败（MUTF-8 断链）");
                 }
                 if (decOwner.empty() || decName.empty() || decDesc.empty()) {
@@ -1227,7 +1129,7 @@ bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
     const ir::Insn* next3 = cu.dom.peek(order[pos + 3]);
     ca::i32         raw   = 0;
     if (prev == nullptr || next1 == nullptr || next2 == nullptr || next3 == nullptr
-        || !constIntAt(s, *prev, raw) || raw != site.decryptorRawKey
+        || !const_args::decodeConstInt(s, *prev, raw) || raw != site.decryptorRawKey
         || next1->op != Op::IXOR || next2->op != Op::IXOR || next3->op != Op::I2C) {
         return false;
     }
