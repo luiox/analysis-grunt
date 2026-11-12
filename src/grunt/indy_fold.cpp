@@ -4,6 +4,33 @@
 /// 三段（SCAN / REWRITE / PROOF）与其余残留同一副骨架：scan 只读、rewrite 只写、
 /// proof 只判。差别在于 scan 里多了一步**模拟执行**——目标不是从字节码模式里
 /// 推出来的，是把引导方法真跑一遍算出来的。
+///
+/// BSM 模拟骑的 jsim 桥已迁官方 `jsim/jbc.hpp`（jsim::jbcbridge::toSimMethod，
+/// 自建桥退役）；含 indy 的方法官方桥面整方法拒绝（UnsupportedOp），没有占
+/// 位兜底。模拟时 BSM 前三个形参（Lookup/name/MethodType）灌 Unknown——
+/// 「不知道」比「编一个」安全；静态参数灌实值，跑到底后读返回 CallSite 载
+/// 荷里的 MethodHandle 与其 reference_kind。模拟失败（跑不动 / 不是
+/// ConstantCallSite / 读不出句柄）计 bsmFailed。
+///
+/// Site.insnPc 是 DOM order 下标而不是原始 pc——rewrite 按 order[insnPc]
+/// 定位后复核 op 仍是 INVOKEDYNAMIC 再动（同方法前站改写不位移 DOM 下标，
+/// 复核是防御性的）。scan 产出全部调用点并给不可折叠的记 why，便于观测失
+/// 败面；折叠三条件见头文件，任一不成立记 why 不猜。
+///
+/// REWRITE 就地换指令（invokestatic/invokevirtual + setMember 换目标方法引
+/// 用，CP 只追加 intern），换不动把 op 还原——失败不留半截指令。无删除无
+/// 插入，pc 布局不变，调试属性与栈帧无需重定位；lowerMethod 失败整类放弃
+/// 回写。不压缩常量池：BootstrapMethods 仍引用 BSM 句柄与密文参数，压缩会
+/// 把活条目当死数据搬走；清属性是另一个 pass 的事。
+///
+/// 已知边界：Special/Interface 句柄不折（换指令要动 this 槽栈语义，收益配
+/// 不上风险）；非 ConstantCallSite（可变调用点）不折——目标可能被运行期
+/// 换掉，静态改写不安全。BSM 引用容器内解密方法时，先跑整链前序
+/// （ConstantCall 折解密体）不改变本残留结论——BSM 模拟自带 str/num/
+/// reflect/indy 扩展，解密在模拟里直接算出来，不依赖调用点侧折叠。单轮不
+/// 迭代：改写产出的普通 invoke 若又被混淆器包 indy（不存在此生成面），靠
+/// 整链重复。判据面向换代样本：现有语料 BSM 形态不在纯目标子集内时折叠
+/// 计数为 0 是预期结果，验收方式是构造正例单测 + 语料不新增失败。
 
 #include "grunt/indy_fold.hpp"
 

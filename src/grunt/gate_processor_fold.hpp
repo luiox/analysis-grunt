@@ -78,7 +78,7 @@
 ///   密器（key = decryptKey ^ materialKey()，运行期材料），IndyRestore
 ///   keyMissing 未还原，蹬床体内仍是 INVOKEDYNAMIC，求值 EvalBadState 拒绝
 ///   ——解锁属 material_key_restore / indy_restore 本体（禁碰面），链序实验
-///   已证罐 A 上不可达（见 doc/gate-processor-fold.impl.md 语料账本）。
+///   已证罐 A 上不可达。
 /// - 判非恒真 / 求值未知值 / 步数熔断 / 形状走样逐桶记账，字节不动。
 #pragma once
 

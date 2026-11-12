@@ -1,5 +1,57 @@
 /// @file        gate_processor_fold.cpp
 /// @brief       残留 `gate_processor_fold` 的三段实现：SCAN / REWRITE / PROOF。
+///
+/// 形态、判据与改写契约见头文件（PredicateFold TAKEN 形同款）。本文件补扫
+/// 描两段与求值环境的实现口径。
+///
+/// ## SCAN（形状钉 → 求值，两段）
+///
+/// 形状钉逐方法：INVOKESTATIC 描述符恰 `(III)I`（生成面 ActionDesc 指纹，
+/// 其余 desc 静默跳过不记账）→ 逆向三实参 const_args::collectArgs（NOP 跳
+/// 过，全 known i32）→ 前窗 parseForwardWindow：走廊 `[INT; (INT;
+/// IMUL|IAND|IOR|IXOR)*]` 按 JVM 栈语义折叠（交换律 + 结合律下左折即真
+/// 值），NOP 跳过；终点恰为 IF_ICMPEQ..IF_ICMPLE 且折叠栈恰剩 1 个 i32 =
+/// compareValue。停点具名识别：引用 ThreadLocalRandom 的窗口变体单独入
+/// tlrWindow 桶（运行期随机排除），其余停点 → forwardShape。目标解析（容
+/// 器方法索引，constant_call 同源 keyOf）：容器外 / 非 static /
+/// synchronized 逐桶；**目标有码检查在求值段做**——loc.index 是目标类下
+/// 标而 scan 会话开在调用者类上，两套下标空间错位，在 scan 段查是单测钉
+/// 过的缺陷面。
+///
+/// 求值按目标 owner 分组：目标类会话上 classInitNeutral 门（非中性时只留
+/// 同类调用——JVMS 5.5 同类豁免，constant_call 同源）→ SimExecutor.invoke
+/// 跨方法求值（编排层递归穿透 `__grt$indy$` 转发器；结果缓存 + 深度 6 +
+/// 步数预算）→ known i32 出值 → gateVerdict(op, R, compareValue) 必须
+/// taken（生成面恒真自证门；判非 taken = 求值与生成面脱钩，fail-closed）。
+///
+/// **mock 面（最小申报）**：只接管 `java/lang/Integer.rotateLeft(II)I`
+/// （PredicateStep 盐旋转步生成面；jsim 核心/num 包无 JDK 数学面，缺它整
+/// 桶 EvalBadState）。JVM 语义 = ishl/iushr 位移掩码 5 位
+/// `(i << d) | (i >>> (32 - d))`（d &= 31，d=0 恒等）；unknown 按未知口径
+/// 传播不编值。**刻意不装 str/num/reflect/indy 扩展包**：TLR / material /
+/// indy 蹬床面必须在这里 fail-closed 显形——装包会把它们误放进折叠面。
+///
+/// ## REWRITE（TAKEN 形）
+///
+/// 按类聚类 → 方法级 roundTripSafe 前置门 → promote 一次 → DOM 改写 →
+/// lower 全部候选方法（任一失败整类放弃，半改写态不外泄）。逐站：分支按
+/// branchSrcPc + branchOp 重定位后做操作数区复核——逆向越过前窗找到门点
+/// 调用并全等比对成员与三实参，再**正向重跑前窗解析**，终点分支与
+/// compareValue 必须与 scan 全等（权威复核）；裁决复核仍 taken（纯函数下
+/// 恒成立，防御面）。标签门：操作数区中段（right/salt/调用/窗内指令）或
+/// 分支本体带标签（合并点）整站放弃；区域首条（left 锚）的标签安全。改
+/// 写：锚（left 常量装载）原地改 ICONST_0（保 srcPc），分支本体原地换
+/// IFEQ（目标 = 原分支目标，保 srcPc），其余受害者（right/salt/调用/窗内
+/// 走廊）单批 eraseBatch（kRejectIfUsed——异常表/帧锚占用即拒收，整站回
+/// 滚 anchor 与分支，不留半改写态）。不新增合并点、不插无条件 GOTO
+/// （HotSpot 线性走查帧约束，predicate_fold 同款）；junk 臂原地保留成不可
+/// 达码交下游 DeadCode。
+///
+/// ## PROOF
+///
+/// 类数不增 + 脏类可重解析 + residual 复扫（脏类集上重跑全判据——形状 +
+/// 求值 + 恒真裁决）。改写 fail-closed 放弃的站点如实计入 residual，求值
+/// 失败面从未进改写面不计入。
 #include "grunt/gate_processor_fold.hpp"
 
 #include <cstdio>

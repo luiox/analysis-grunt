@@ -14,7 +14,10 @@
 ///  2. state 槽 confinement：s 的每次 ILOAD 必须在岛头或 processor 夹心内、
 ///     每次 ISTORE s 必须落在可解 span 尾（inline 闭链或 processor 形）、
 ///     禁 IINC 与其余读写——s 是 CFF fresh 槽，原代码不可触碰，任何越界
-///     读写 = 槽污染，整槽岛全拒（fail-closed）；
+///     读写 = 槽污染，整槽岛全拒（fail-closed）。分桶按面：DivZero span
+///     （除 0、`INT_MIN / -1`——守卫看累计运行值 v，IMUL/IADD 回绕可把 v
+///     推到 INT_MIN）→ spanUnsolvable（README 口径「/0」）；其余越界读写
+///     → statePolluted；
 ///  3. 岛形门：alias face（default ∈ case 目标，生成面 default 落岛首真块）
 ///     + ≥1 桥引用 + case 目标不回指岛头——InvokeDispatcher 方法头
 ///     （`[ILOAD key; TABLESWITCH default→方法头]`、零分支引用、default 非
@@ -24,7 +27,24 @@
 ///     `INVOKESTATIC (II)I`（键在 `__grt$indy$` 蹦床后，静态不可解 →
 ///     keyProcessor 整岛保留）、无状态 junk 门（ControlflowJump 边包裹，
 ///     唯一常量供给前驱传递 state → 边载体，臂字段重指）、其余 →
-///     foreignRef 整岛拒。
+///     foreignRef 整岛拒。边载体候选限「终结限单目标 GOTO/条件分支」：
+///     switch 终结拒入——TableSwitch 的 setTarget 改的是 default 字段，与
+///     臂重指语义面不同。
+///
+/// 入口桥认领与回滚：blocks[0] 直连岛头直接认领，否则解析为 state-setter
+/// 后顺终结链追岛/载体；入口桥多岛认领冲突全拒。入口真块头落异常保护区
+/// 严格内含 → 退蹦床（range 起点即目标块头不算交叠：start 标签随
+/// moveRange 的 kHeadFollows 平移）。改写失败在干净会话重放；重放开不了
+/// 会话整类放弃——半落会话无帧 = VerifyError 面，绝不落盘。
+///
+/// 修复面存证（unittest 回归钉住）：邻接谓词 layoutAdjacent =
+/// `prev.orderPos + prev.insns.size() == blk.orderPos`（orderPos 是块入口
+/// dom 序位置，`+1` 只对单指令前驱成立）——相 3 顺序落入 / 相 4 载体前驱
+/// / 相 7 落空臂 / 步 4 前驱四处同用，误用 `+1` 是历史缺陷面；插入前定靶
+/// ——fallPins / 入口归位补 GOTO 一律先 `g.target = lbl` 再插，kNoLabel
+/// 靶过不了 DOM 插入的句柄校验（InvalidHandle），三处插入路径同病，此前
+/// 无测试踩到；junk 前缀 scramble 桥保留块体的 keep 判据 = 条件形 ||
+/// span 起点 > 0。
 ///
 /// 改写语义安全论证：桥对 state 的供给是常量封闭求值（inline span）；求值
 /// 出表 ≡ switch default（表只覆盖 [lo, lo+n)，default 是唯一出表去向），

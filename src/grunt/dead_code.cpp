@@ -1,5 +1,48 @@
 /// @file        dead_code.cpp
 /// @brief       残留 `dead_code` 的三段实现：SCAN / REWRITE / PROOF。
+///
+/// ## 数据流与定位
+///
+/// `Site{uri, methodIndex, victimCount}` → `DirtySet{uris, methods, insns,
+/// attempted}`。SCAN 独立成段、管线里放最后：不依赖其他残留的脏标记，把
+/// 全部上游改写产生的死块一次收走。可达性 BFS 需要 `InsnId → order 下标`
+/// 映射，用 `mjbase::asm_cfg::InsnIdHash`（mjbase 公开头，本仓不自带哈希）。
+///
+/// ## 异常表收敛（擦除之前）
+///
+/// `rewriteMethod` 先扫一遍 `cu->exc`：
+///
+/// - 区间内无存活指令 → 丢表项，start/end/handler 三枚标签记入孤儿集；
+/// - start 不在存活指令上 → `bindLabel` 搬移旧 Boundary 标签（句柄身份
+///   不变，表项引用不动）；
+/// - end 不在存活指令上 → 吸附到其后第一条存活指令，找不到就 `bindLabel`
+///   无参末哨兵形态。
+///
+/// 任一端点解析失败（`sBgn == kNo || sEnd == kNo || sEnd <= sBgn`）整方法
+/// 放弃，不做半截改写。`excChanged` 但 `victims` 为空时也写回 `cu->exc`
+/// ——异常表本身就是改动。孤儿标签销毁前清点：句柄无效（含 kNoLabel）
+/// 跳过、孤儿集内重复句柄只销毁一次、被存活表项共享的保留——按 `cu->exc`
+/// 向量序线性清点，无集合遍历，双跑产物不引入遍历序依赖。受害者内部互指
+/// （死块内 goto）的 ControlFlow 标签不保护锚点；若收敛逻辑漏处置某枚
+/// Boundary 标签，`eraseBatch` 按锚定保护契约返回 Err，本 pass 保守放弃
+/// ——fail-closed 兜底即断言。
+///
+/// 端点吸附必须**搬移**旧标签而不是造新标签：旧 Boundary 标签仍锚在被擦
+/// 指令上时，`eraseBatch` 的锚定保护会整批拒绝，改写整体不可达（历史教训，
+/// 单测 kEndAnchorDeadSource 族存证）。
+///
+/// ## JSR/RET
+///
+/// `JSR` 的后继 = 目标 + 顺序下一条（返回地址压栈）；`RET` 无静态后继
+/// （目标在局部变量里）——按终止符处理，保守不越。Strict 帧重算对 jsr/ret
+/// 抛异常，`mutateMethodWithFrames` 收敛为 false（整方法放弃）。
+///
+/// ## 与 HotSpot 线性 walk 的关系
+///
+/// HotSpot 校验器对死代码并非「跳过」：线性 walk 走遍全部帧，且每个分支
+/// 目标 / 异常 handler 都必须有帧。所以死区必须在导出前物理消失，而不是
+/// 留 NOP 或留帧——本残留擦掉死区，帧由 `rewireFramesAfterLower` 的 Strict
+/// 求解从代码真值整体重算，不存在「锚在被擦指令上的孤儿帧」。
 #include "grunt/dead_code.hpp"
 
 #include <set>

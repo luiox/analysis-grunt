@@ -3,11 +3,61 @@
 ///              arrayInit 块序列 + 解密器三窗口，S2）→ 调用点三元组折回
 ///              `ldc` 明文（S1）→ residual + 类数 + 重解析验收。
 ///
-/// 判据分级与锚保留/槽位面设计见头文件；骨架对齐 string_cache_fold（读点
-/// 折叠）：scan 只读、rewrite 只写（mutateMethodWithFrames 正统帧链写回）、
-/// proof 只判（类数不增 + 脏类可重解析 + residual 统计）。解密算法是家族
-/// 知识转写（grunt2@36c0eef / grunt3@e41e852，源锚点见各函数头注与
-/// doc/string-pool-fold.impl.md 摘录）。
+/// 形态、判据分级与锚保留/槽位面设计见头文件；骨架对齐 string_cache_fold
+/// （读点折叠）：scan 只读、rewrite 只写（mutateMethodWithFrames 正统帧链
+/// 写回）、proof 只判（类数不增 + 脏类可重解析 + residual 统计）。解密算
+/// 法是家族知识转写（grunt2@36c0eef / grunt3@e41e852 逐行同源，源锚点见各
+/// 函数头注与 knowledge/grunt_names.hpp）。
+///
+/// ## SCAN
+///
+/// 池链三件套钉形（buildPoolChain）：clinit 内全量滑窗扫「<int poolLen>;
+/// ANEWARRAY java/lang/String; PUTSTATIC <self String[] static>;
+/// INVOKESTATIC <self> ()V」前导四连，多个不同解 fail-closed（多个池分配
+/// 前导）；池字段必须在场且 static。前导引用的 ()V 允许是直线静态蹦床（体
+/// 恰 `INVOKESTATIC <self> ()V; RETURN`，深度封 2、目标异于自身防环）——
+/// Grunteon 全链把 arrayInit 调用藏进 indy 机器，上游 IndyDecode/IndyFold
+/// 还原后即此形；`[INVOKEDYNAMIC; RETURN]` 形态报独立拒绝原因（arrayInit
+/// 调用被 indy 蹦床隐藏），不评 BSM。parseArrayInit 钉整段直线（无标签/无
+/// 异常表/无分支）的逐块 store 序列，块数与前导池长互证；形态判别按常量
+/// KIND：密文位是 String 常量 → literal（钉 toCharArray 形），int 常量 →
+/// arrayed（len 经 iconst/bipush/ldc 任意装载，NEWARRAY T_CHAR 钉 a==5，
+/// 码元组 `DUP; <int e>; <int code>; CASTORE` 下标乱序即拒）。解密器三窗
+/// 口（核窗口 52 条逐字 + init 窗口 + 循环头窗口）：核窗口唯一命中才放
+/// 行，槽位 state/counter 自捕获互证；旋转掩码钉常量值 255 而不是 opcode
+/// ——汇编码归一后 `sipush 255` 可能成 `ldc 255`，钉 opcode 会失配。
+///
+/// 读取点三元组：全类方法扫 `GETSTATIC <池>; <int idx>; AALOAD`。跨度内
+/// NOP 跳过（squeeze 遗留落点不驻栈，number_fold 同口径）；含标签（合并
+/// 点）即 fail-closed；下标非常量 = 非本家三元组静默跳过（idxMissing）；
+/// 池链失败的类整类记账，无前导的 String[] 字段类（Kasumi 缓存同形）静默
+/// 跳过——家族门由池链结构自证：Kasumi 同形三元组不带 Grunt 池分配前导与
+/// `([CJI)` 填池链，结构上不可命中。
+///
+/// ## REWRITE
+///
+/// 按 uri 聚类 + roundTripSafe 前置门。锚点（getstatic）原地换 ldc 明文
+/// （CodeEditor::loadConst 按索引选 LDC/LDC_W，srcPc 保留，pcmap/调试行落
+/// 点不变）。明文落池先 findUtf8 / 线性扫 String 复用，miss 才 addUtf8 /
+/// addString（先 intern 后动 DOM）。池字段 / arrayInit / 解密器不在此删：
+/// 供给链仍被 clinit 前导引用而存活（运行期空转填池，无读方），整体摘除
+/// 属压池面的后续批次。失败粒度 = 类：帧链/编码失败整类放弃。
+///
+/// ## PROOF
+///
+/// pass_clock::Suspend + 类数不增 + 脏类可重新解析 + residual：改写后容器
+/// 里池链仍成立且读取点仍为三元组的站点数（scan 同判据 countOnly 重算）。
+/// 语料单罐门要求 residual = 0。
+///
+/// ## 已知边界
+///
+/// Grunteon 全链罐上全量池类的 arrayInit 调用被 indy 蹦床隐藏，本 pass 单
+/// 跑整体 fail-closed 是正确行为不是缺陷：判据要求供给链静态在场，调用目
+/// 标藏在加密 BSM 里时证据链不完整，不猜；上游 IndyRestore/IndyDecode 还
+/// 原蹦床后直线跟随即可接通（单测 FoldsThroughStaticTrampoline 实证该形可
+/// 折）。经局部变量/方法调用间接取下标的形态不在面内（Grunt 生成面不产此
+/// 形）。interface 池类（PUBLIC+FINAL 字段变体）未钉 access 差异——desc/
+/// owner/static 已足够定案，access 面留待有样本时再收窄。
 
 #include "grunt/string_pool_fold.hpp"
 

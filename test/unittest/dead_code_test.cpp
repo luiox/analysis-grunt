@@ -392,8 +392,8 @@ TEST(DeadCodeRewrite, HandlerSurvivesExcEdgeInMidRegionDeadBlock)
 /// 但从不销毁旧标签，旧标签仍锚在待擦指令上，eraseBatch 按「批内成员被
 /// 存活 Boundary 标签锚定 → Err 且整批不删」契约拒绝，整方法 fail-closed
 /// 空转。修法 = 端点吸附改 `bindLabel` 搬移旧标签（句柄身份不变，表项引
-/// 用不动）+ 删表项的孤儿端点/handler 标签销毁（存证细节见
-/// doc/dead-code.impl.md 修复记录段）。
+/// 用不动）+ 删表项的孤儿端点/handler 标签销毁（实现契约见
+/// src/grunt/dead_code.cpp 文件头注释）。
 
 TEST(DeadCodeRewrite, EndAnchorOnDeadInsnSnapsForward)
 {

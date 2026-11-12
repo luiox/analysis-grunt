@@ -2,10 +2,61 @@
 /// @brief       残留 `string_cache_fold` 三段实现：形状钉面（S2）→ Era 门 +
 ///              TSV 旁证（S3/S1）→ 两形态改写（锚点原地换 ldc + 跨度擦除）。
 ///
-/// 判据分级与锚保留/槽位面设计见头文件；骨架对齐 number_fold（跨度折叠）与
-/// indy_decode（Era 分支内消费旁证）：scan 只读、rewrite 只写
+/// 形态、判据分级与锚保留/槽位面设计见头文件；骨架对齐 number_fold（跨度
+/// 折叠）与 indy_decode（Era 分支内消费旁证）：scan 只读、rewrite 只写
 /// （mutateMethodWithFrames 正统帧链写回）、proof 只判（类数不增 + 脏类可
 /// 重解析 + residual 统计）。
+///
+/// ## TSV 注入面
+///
+/// 文件读取收敛在 scan 之前：CLI `--tsv` 传路径，adapter 在 probeEra 判为
+/// Kasumi 时才读文件；parseTsv 是纯函数（点分 owner → slash，转义反转义），
+/// 残留本体零文件系统副作用。TSV 内容不进仓——文档只记来源形态
+/// （KasumiStringDumper 四列），不记样本明文。
+///
+/// ## SCAN
+///
+/// 粗找 = GETSTATIC 全量起锚，细查 = tryMatchAt：memberOf 解析字段语义，
+/// desc 钉 `[Ljava/lang/String;`（形态 1）/ `[[B`（形态 2）（knowledge
+/// 表），后继非 NOP 指令逐条钉形（int 常量装载族、AALOAD、DUP、
+/// ARRAYLENGTH、INVOKESTATIC desc `([BII)Ljava/lang/String;`）。跨度是**前
+/// 缀钉面**——形态 1 到 aaload、形态 2 到 invokestatic 为止，后继与本站无
+/// 关。NOP 跳过（squeeze 遗留落点不驻栈，number_fold 同口径）；锚点之后
+/// 到尾条之间任何带标签指令 = 合并点，整站放弃。三级分工：S2 形状钉面 →
+/// S3 Era 门（Era::Kasumi 未判整站拒绝——TSV 是换代表面，Era 分支唯一合
+/// 法落点）→ 旁证降级门（TSV 未装载整站拒绝：Absent = CLI 未注入，
+/// Unreadable = 文件缺失/不可读）→ S1 明文表互证（(owner, fieldKey, idx)
+/// 精确命中 = 定案；无命中 = noPlaintext——dumper 只导出运行期缓存非空的
+/// 槽位，覆盖是部分的，缺席不是异常，树版同样静默跳过）。S1 无旁证不可定
+/// 案是数据流事实（明文本身就是要回填的内容）；本仓把无旁证显式记账进
+/// rejects，改写面语义与树版逐位一致。
+///
+/// ## REWRITE
+///
+/// 按 uri 聚类 + roundTripSafe 前置门。锚点原地换 ldc（srcPc 保留），跨度
+/// 其余非 NOP 指令 eraseBatch（kRejectIfUsed：受害者被异常表引用即拒收，
+/// 回滚锚点整站放弃，不留半改写态）；NOP 遗留落点不动，DeadCode 收尾。
+/// CP 先 intern（Utf8 findUtf8 → miss 才 addUtf8；String 包装先线性扫复用
+/// → miss 才 addString，0 = 失败哨兵）再动 DOM。明文 MUTF-8 转码失败（过
+/// 短编码/挂续字节）整站拒绝——旁证是外部注入，不猜。失败粒度 = 类：帧
+/// 链/编码失败整方法放弃，形态分列计数只在类写回成功后归账。
+///
+/// ## PROOF
+///
+/// pass_clock::Suspend + 类数不增 + 脏类可重新解析 + residual：改写后容器
+/// 里仍「全形 + 明文表命中」的站点数（countResidual 与 scan 同判据重钉）。
+/// 旁证缺席的形状命中不进 residual——那是覆盖面事实（运行期缓存为空的槽
+/// 位 dumper 导不出来），不是还原缺陷。语料单罐门要求 residual = 0。
+///
+/// ## 已知边界
+///
+/// char[][] 密文载体（`a([CII)` 解密器）不在面内——树版同样只处理
+/// byte[][] 形态 2 与 String[] 形态 1，样本未见 char 站点。明文表是运行期
+/// 快照：缓存槽为 null 的下标旁证缺席，树版语义 = 跳过，本仓 = noPlaintext
+/// 计数。换代面（TSV 列格式 / `byte:` 前缀 / 两形态描述符都钉自当前
+/// Kasumi 版本）由 Era 门整站拒绝兜底。形态 2 的解密方法 owner 不与本站
+/// getstatic owner 互钉（树版同口径）——数据流由栈形锁定，表键只认
+/// getstatic 侧 owner/field/idx。
 
 #include "grunt/string_cache_fold.hpp"
 

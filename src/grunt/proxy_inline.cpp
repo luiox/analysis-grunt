@@ -1,5 +1,43 @@
 /// @file        proxy_inline.cpp
 /// @brief       残留 `proxy_inline` 的三段实现：SCAN / REWRITE / PROOF。
+///
+/// ## 数据流与扫描
+///
+/// `Site{caller 三元组, callerMethodIndex, callSrcPc, proxy 三元组, target
+/// 三元组, virtualTarget}` → `DirtySet{uris, attempted, applied,
+/// failedByReason, skippedByRoundTrip, proxies}`。`callSrcPc` 是原始字节
+/// 布局下的 pc（跨会话稳定）。Scan 两遍：定义侧 `buildDefs` 逐方法
+/// promote，`shapePlausible` 粗筛（沾形状才进拒绝面，其余静默跳过不刷屏）
+/// 后 `decodeProxyBody` 精查；调用点普查 `collectSites` 全容器逐
+/// `INVOKESTATIC` 查定义表，命中即站点。
+///
+/// 初始化暴露门：按代理分组后，存在 owner 外调用点的代理，owner
+/// `<clinit>` 必须中性（缺失或只剩 NOP/RETURN，与 constant_call 同口径，
+/// 收口在 `scan_toolbox::classInitNeutral`，owner 级缓存）；非中性**整组
+/// 放弃**（只放一半调用点会把初始化时机劈成两半），记 `OwnerInitExposed`。
+/// 零引用代理不产站点、不刷拒绝（死码归 DeadMember）。
+///
+/// ## 改写
+///
+/// 按 uri → methodIndex 两级聚合；前置门 `roundTripSafe`。`rewriteSite`
+/// 按 `srcPc+op` 定位调用指令，复核成员引用仍是该代理（防同方法前站改写
+/// 串位）后原地换：op 按 `virtualTarget` 换 `INVOKESTATIC`/`INVOKEVIRTUAL`，
+/// `setMember` 换成目标方法引用（CP intern 去重只追加），`srcPc` 保——锚
+/// 在调用指令上的标签/调试行不动。`setMember` 失败整条指令还原。栈效应
+/// 不变（恒等转发弹栈/压栈集合一致），栈帧无需修补；lower 失败粒度 = 类，
+/// 整类放弃回写。
+///
+/// **不动代理本体**：内联后代理变零引用死码，交给下游 DeadMember/DeadCode
+/// ——链序上本残留排在其前，同一轮就能清掉。
+///
+/// ## 已知边界
+///
+/// - 套娃代理单轮只折一跳：rewrite 只消费 ScanResult，转发目标若也是代理，
+///   下一轮整链重复时再折。
+/// - 伪 `bridge`/`synthetic` 标志不摘（flags_strip 的业务）；摘干净后
+///   DeadMember 的 ACC_BRIDGE 豁免不再误保这些死代理体。
+/// - 转发目标可解析性不在本残留验：目标可以是容器外方法（JDK / 依赖库），
+///   改写只动调用点的方法引用，解析交给加载期。
 #include "grunt/proxy_inline.hpp"
 
 #include <cstdio>

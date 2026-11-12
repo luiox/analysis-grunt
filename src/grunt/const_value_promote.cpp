@@ -1,5 +1,25 @@
 /// @file        const_value_promote.cpp
 /// @brief       残留 `const_value_promote` 的三段实现：SCAN / REWRITE / PROOF。
+///
+/// ## 数据流
+///
+/// `Site{uri, clinitIndex, fieldName, fieldDesc, putSrcPc, ValueLoad}` →
+/// `DirtySet{uris, promoted, attempted, failed}`。
+///
+/// ## 值面解码与回填通道
+///
+/// `const_args::decodeValueLoad`（工具箱）：与栈值面 `decodePush` 是两个
+/// 事实——接受 ldc String，拒绝 aconst_null。返回
+/// `ValueLoad{kind, bits, str, slots}`，ev::Value 装不下字符串所以独立成
+/// 结构。回填三通道：`internInteger`（i32，会话侧 intern）、
+/// `cp.addLong/addFloatBits/addDoubleBits`（u2 域检查，LDC2_W 是 CP2）、
+/// `addString(addUtf8(...))`。
+///
+/// ## 复核纪律
+///
+/// rewrite 按 uri + 字段名 + 描述重定位字段、按 putSrcPc + memberOf 重定位
+/// 写入点，**值重新解码并与 ScanResult 携带值按位比对**（kind + bits +
+/// str）。scan 之后同方法其他字段可能已改写，不盲改。
 #include "grunt/const_value_promote.hpp"
 
 #include <cstring>

@@ -1,5 +1,99 @@
 /// @file        constant_call.cpp
 /// @brief       残留 `constant_call` 的三段实现：SCAN / REWRITE / PROOF。
+///
+/// ## 判据（三条同时成立才进 sites）
+///
+/// 粗找 = 全容器扫 INVOKESTATIC 且目标在容器内（不判实参、不判纯度，只保
+/// 证不漏）。细找三条：
+///
+/// 1. **目标可折**：ACC_STATIC 置位；非 ACC_SYNCHRONIZED（监视器获取是可
+///    观测行为，删调用就变了）；名字不以 `<` 开头（排除 <init>/<clinit>）；
+///    返回类型非 void（无值可折）；在容器内有方法体。
+/// 2. **实参定值**：从调用点向前逐条走，每条都是纯常量装载，累计槽数恰好
+///    等于描述符参数槽数（long/double 双槽）；中途遇到任何非常量装载
+///    （iload、getstatic、dup 等）即拒绝。ldc 经会话常量池解析：数值常量
+///    接受，String/Class/MethodHandle 等一律拒绝（不猜内容）。
+/// 3. **求值成功**：mjbase 的 asm_evaluator 在常量实参下跑目标方法。求值
+///    子集只含数值运算、栈整形、分支与返回——不含字段访问、数组访问、方
+///    法调用、对象分配、显式抛出，因此「跑出值」等价于「这条执行路径无堆
+///    副作用」。
+///
+/// ## 类初始化门与同类豁免
+///
+/// 被调类的 <clinit> 必须缺失或只剩 NOP/RETURN 且无异常表：invokestatic 是
+/// 类的主动使用，删掉调用会改变类初始化时机。同类调用豁免（JVMS 5.5）：本
+/// 类方法开始执行时类已在初始化中/已完成，同类 INVOKESTATIC 不触发初始化，
+/// 删调用不移时机。豁免只作用于初始化时机这一个门，纯性、常量实参、求值
+/// 三条判据对同类站点照收不误。
+///
+/// ## 求值环境接管：java/lang/Math.max(II)I
+///
+/// IndyRestore 还原 `__grt$indy$` 蹬床体内的 indy 后，CFF inline 桥的
+/// MaxConst 站点（grunt3 `StateOp.MaxConst.emitTo` 逐字）从「蹬床调用」变
+/// 成「蹬床体内 invokestatic java/lang/Math.max(II)I」，求值蹬床体必然踩到
+/// 这条 JDK 调用；而 jsim 核心/num 包没有 JDK 数学面，缺接管时整条面在
+/// EvalBadState 拒。求值会话按签名注册 Math.max 接管：弹双参、全序取大；
+/// unknown 按未知口径传播（结果落 ValueKindUnsupported），不编值。max 是
+/// 全序纯函数，双常量实参下值唯一确定，接管不引入猜测面。
+///
+/// ## 为什么求值放在 scan 里
+///
+/// 三段的状态需求本来就不对称，只有 scan 需要跨站点的昂贵缓存。求值是判
+/// 定的一部分（「这个调用是不是常量」），不是改写的一部分；放进 scan 才能
+/// 让 rewrite 只消费结果、不回头找站点。
+///
+/// ## REWRITE（每站六步，任一步失败整类放弃）
+///
+/// 按 调用类 → 调用方法 → 站点 分组。改写前先过一道**往返自检**：在未改
+/// 动的独立会话上把方法 promote → lower 走一遍，走不完的整方法跳过
+/// （skippedByRoundTrip）。理由：lower 不是 promote 的恒等逆（编码器对少数
+/// 布局/属性组合明确拒绝），这类方法与改写无关，但一旦被改写就会把整个类
+/// 拖下水，表现为「改写有 bug」；先探一遍，失败面就只剩真正的改写缺陷。
+///
+/// 每站六步：按 callSrcPc 在重新 promote 的 DOM 里找回调用指令（InsnId 是
+/// 会话内句柄不能跨会话带出，所以站点用原始 pc 定位）；校验成员引用与
+/// ScanResult 一致；用与 scan 相同的规则重新收集实参并逐值比对（防 scan
+/// 与 rewrite 之间 DOM 语义漂移，不一致放弃该站点）；造常量装载
+/// （iconst/bipush/sipush 优先，放不下才落池，池索引一律经
+/// CodeEditor::loadConst 选形态——LDC 操作数域只有 u1，超界编码器直接
+/// Unencodable）；把首个实参装载**原地改写**成常量装载，eraseBatch 擦掉
+/// 其余实参装载 + 调用；失败把首条写回原样，DOM 保持原样。
+///
+/// ### 为什么是「原地改写首条」而不是「插一条 + 删首条」
+///
+/// 不是风格选择，是唯一能走通的路：CodeDom::insertAt 把新指令的 srcPc 硬
+/// 清成 kNoPc（合成指令没有旧位置，DOM 不变量），而 lowerMethod 的属性重
+/// 定位全靠 pcmap——LineNumberTable 每行、LocalVariableTable 起止、
+/// StackMapTable 每帧都要精确命中一个旧 pc，命中不了就 RelocationBadTarget
+/// 整体失败。删掉首条会让锚在区间起点的行全部失去落点，整个方法连同类一
+/// 起作废（注入的实参装载继承被替换指令的行号/帧位，样本里几乎必然）。
+/// 原地改写保住首条的 srcPc：锚在它上面的行照常重定位，锚在它上面的标签
+/// 不必迁移。区间其余指令的旧 pc 随之消失，因此额外要求这些指令上没有标
+/// 签——有标签说明分支/switch/异常范围从区间中段进入，删掉会让目标悬垂
+/// （LabelBlocked 整站放弃）；首条不受此限。
+///
+/// 栈形不变：原序列 n 条装载（合计 s 槽）+ invokestatic（弹 s 压 r，
+/// r ∈ {1,2}），新序列 1 条装载（压 r 槽），调用前后栈深相同——
+/// StackMapTable 按新布局重算即可，maxStack 沿用原值（新峰值 base+1 不超
+/// 原峰值 base+s）。
+///
+/// ## PROOF
+///
+/// 两道门：类数不增；每个脏类重新开会话可解析（抓「写出的字节自己都读不
+/// 回来」这类错误）。帧与校验器层面的验收在语料回归里做
+/// （test/tools/VerifyJar.java 逐类过校验器——需要 JDK，不进单元测试）。
+///
+/// ## 已知边界
+///
+/// 不做跨方法常量传播：目标读字段或调别的纯方法时求值器 Unsupported，站
+/// 点被拒。不做 <clinit> 常量传播：getstatic + iaload 的字段池化数字不在
+/// 面内。不折引用结果：返回 String/对象的方法即使纯也不折——引用身份不
+/// 可静态构造。processor 键解锁链是静态天花板：CFF 桥 key processor 形
+/// （五条窗口 [INT; ISTORE; ILOAD; INT; INVOKESTATIC proc]）的 proc 恢复目
+/// 标全部落在 native 摘除的 action 壳上（算术已随 native pipeline 出
+/// jar），实参又是 ILOAD 夹心形非紧邻常量——两道静态墙叠加，这部分永远
+/// 不可静态折，属 CffUnflatten key-processor 桶的永久余量；可折的只有
+/// Math.max 蹬床面。
 #include "grunt/constant_call.hpp"
 
 #include <algorithm>

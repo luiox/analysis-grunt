@@ -20,7 +20,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.DeadCode` | 清掉不可达指令，并收敛因此失效的异常表项 | CFG 可达性之外的指令；可达性**含异常边**——保护区间内任一可达指令都可能抛进 handler，故 handler 以「区间∩可达集」为根迭代到不动点。全死区间删表项，端点锚在死指令上时向前吸附到存活指令 | S2 |
 | `grunt.ConstValuePromote` | 把 `clinit` 里对该字段的单条常量 `putstatic` 回填成字段 `ConstantValue` 属性（并补 `ACC_FINAL`） | 字段在 `clinit` 里恰有一次常量写 ∧ 全容器无其他写（读不限——回填值与原常量恒等，读侧无感）∧ 类型与常量种类吻合 | S1 |
 | `grunt.SeedStrip` | 拆掉 `clinit` 里的 `int[]` 种子建表跨度（首条 NOP 保锚，其余擦除） | `NEWARRAY` + `PUTSTATIC` 头 + `GETSTATIC`/`IASTORE` 组的固定形状 ∧ 跨度内运算只含整长算术与转换（除法族排除，可能抛异常）；中段有标签放弃 | S2 |
-| `grunt.DeadMember` | 删零引用方法、零引用私有/孤儿数组字段、空 `<clinit>`；先压池再算引用闭包 | 引用普查为零（先 `compact` 常量池，否则池常量虚撑引用）；普查按全容器对外引用全集口径——压缩失败的类照常入普查（原始字节枚举，超集宁误留），骨架都解不开的类 census-blind 整轮零删除；方法面另有纯算术 / `synthetic+bridge` / 私有门三道保守门；容器有未收敛 BSM 时 public `synthetic+bridge` 候选整档宁留（indy 目标无 CP 明文引用，dead_member.impl.md 有取证结论） | S2 |
+| `grunt.DeadMember` | 删零引用方法、零引用私有/孤儿数组字段、空 `<clinit>`；先压池再算引用闭包 | 引用普查为零（先 `compact` 常量池，否则池常量虚撑引用）；普查按全容器对外引用全集口径——压缩失败的类照常入普查（原始字节枚举，超集宁误留），骨架都解不开的类 census-blind 整轮零删除；方法面另有纯算术 / `synthetic+bridge` / 私有门三道保守门；容器有未收敛 BSM 时 public `synthetic+bridge` 候选整档宁留（indy 目标无 CP 明文引用，取证结论见 `src/grunt/dead_member.cpp` 文件头注释） | S2 |
 | `grunt.BoogerAnnoStrip` | 容器里已无类引用 Booger 解密类后，摘掉残留的 `@Booger` 运行时注解条目 | 全容器无 `Booger` 类引用（解密体已被 `ConstantCall` 折成常量；引用普查有类打不开时按引用在册关死）∧ 注解描述符指向 `@Booger` | S2 |
 | `grunt.IndyFold` | 把 `invokedynamic` 调用点还原成真实 `invoke`：在 libjsim 里跑 bootstrap 方法，读出 `CallSite` 的 `MethodHandle` 静态目标后改写调用点 | BSM 在常量实参下可模拟执行 ∧ 产出的 `MethodHandle` 解析为 `invokeStatic`/`invokeVirtual` 形态 ∧ 目标可解析；BoogerV2 语料实测 foldable=0（BSM 形态不在纯目标子集内），判据面向换代样本 | S3 |
 | `grunt.NumberFold` | 把藏形数值常量跨度折回单条常量装载：XOR 隐匿 int 走廊（`I2L..LXOR..L2I` / `L2I..IXOR`）、基 32 `Long.parseUnsignedLong` long 跨度、`intBitsToFloat`/`longBitsToDouble` 位形包装 | 跨度逐条吻合 ∧ 操作数全为紧邻纯常量装载（基 32 键严格解析、radix 恒 32）∧ 包装引用三元组与实参类型精确吻合 ∧ 跨度中段无标签（合并点放弃） | S2 |
@@ -66,17 +66,16 @@ grunt.BoogerAnnoStrip
 收集；判据自证（池链三件套 + 解密器窗口），无前置依赖，三元组内 NOP
 跳过兼容 squeeze 遗留。indy 藏面（Grunteon 全链产物）在其上游
 `grunt.IndyRestore` 把 indy 还原成直线静态蹦床后接通（boar 语料实证：
-单跑 0 折叠 → 链上 19244 折叠，见 [doc/string-pool-fold.impl.md](doc/string-pool-fold.impl.md)
-与 [doc/indy-restore.impl.md](doc/indy-restore.impl.md) 语料账本）；
+单跑 0 折叠 → 链上 19244 折叠，数字见 doc/corpus-ledger.rst）；
 `MaterialKeyRestore` 挂在这条供给链之后、`IndyRestore` 第二轮之前——材料
 初值跨度依赖 StringPoolFold 折回的池明文 ldc（池读未折回的类
 `initBlocked` 报链序缺位），折回的 `LDC <materialKey>` 让 indy_restore
 第二轮按既有 Plain 通道消化 materialLane 桶（boar 语料：42228 → 5060，
-见 [doc/material-key-restore.impl.md](doc/material-key-restore.impl.md)
-语料账本）。Grunteon 现场的 Grunt 面专链为
+见 doc/obf-behaviors.rst）。Grunteon 现场的 Grunt 面专链为
 `grunt.IndyRestore,grunt.StringPoolFold,grunt.MaterialKeyRestore,grunt.IndyRestore`。
 
-形状纪律（`PredicateFold` 写回契约的前提，见 doc/predicate-fold.impl.md）：
+形状纪律（`PredicateFold` 写回契约的前提，判据见 src/grunt/predicate_fold.cpp
+文件头注释）：
 改写不得引入无条件跳转、不得新增合并点——HotSpot 线性走查要求无条件跳转
 之后的段首带帧，本 pass 不再生 SMT。TAKEN 的 `IFEQ` 目标是原分支目标（本
 来就有帧），NOT-TAKEN 留下的死块带原帧，中间态合法；`DeadCode` 紧随清理
@@ -118,7 +117,7 @@ processor 键的解锁面）再 `ExcBridgeRestore`（异常桥摘除——桥插
 islands 逐项不动）再 `CffUnflatten` 最后 `DispatcherRestore`。`CffUnflatten` 对
 DispatcherRestore 的分发器原生头是反误伤面（alias 缺席整岛拒，wave2c
 正例罐 290 候选全数此桶、产物逐条目 CRC 全等），组合链零干扰；
-boar 全链罐上 DispatcherRestore 的头锚缺席经二轮归因修正为 desc 形状与 `__grt$indy$` indy 蹬床/数值走廊方法碰撞（anti-候选；非 post-Redirect junk 前缀，jar 内 `[iload N; tableswitch]` 头形=0，`doc/dispatcher-restore.impl.md` / `doc/cff-unflatten.impl.md` 有归因量化）；缺口 #4 余量现口径为 processor 键 native 天花板 + SSA exp 变体。
+boar 全链罐上 DispatcherRestore 的头锚缺席经二轮归因修正为 desc 形状与 `__grt$indy$` indy 蹬床/数值走廊方法碰撞（anti-候选；非 post-Redirect junk 前缀，jar 内 `[iload N; tableswitch]` 头形=0，归因量化见 `src/grunt/dispatcher_restore.cpp` 与 `src/grunt/cff_unflatten.cpp` 文件头注释）；缺口 #4 余量现口径为 processor 键 native 天花板 + SSA exp 变体。
 
 
 ## 全局不变量
@@ -130,7 +129,7 @@ boar 全链罐上 DispatcherRestore 的头锚缺席经二轮归因修正为 desc
 - **fail-closed**：判据不全整站点跳过，不做猜测性改写；拒绝原因进 `rejects` 供 trace。
 - **引用普查全容器口径**：跨类引用普查是删动词的前置证据面，静默跳过的类就是蒸发的引用证据——解不开的类按原始字节照常入普查（超集宁误留），连骨架都解不开则整轮改写放弃（DeadMember census-blind / SeedStrip 与 ConstValuePromote 普查不完整整轮放弃 / BoogerAnnoStrip 引用门按引用在册关死）。
 - **改写粒度 = 类**：一个类内任一方法 `lower` 失败，整类放弃回写。
-- **擦除要给旧位置留落点**：`lower` 的属性重定位按旧 pc 精确命中 `pcmap`，命中不了就整体失败。所以「能原地改写一条指令」就绝不用「插一条 + 删一条」——插入路径会把 `srcPc` 清成 `kNoPc`，锚在被删位置的调试行/栈帧全部失去落点。详见 [doc/constant-call.impl.md](doc/constant-call.impl.md) 的 Rewrite 章。
+- **擦除要给旧位置留落点**：`lower` 的属性重定位按旧 pc 精确命中 `pcmap`，命中不了就整体失败。所以「能原地改写一条指令」就绝不用「插一条 + 删一条」——插入路径会把 `srcPc` 清成 `kNoPc`，锚在被删位置的调试行/栈帧全部失去落点。论证详见 `src/grunt/constant_call.cpp` 文件头注释。
 - **改前先往返**：`lower` 不是 `promote` 的恒等逆。改写任何方法前，先在未改动的独立会话上跑一遍 `promote → lower`；跑不完的方法整方法跳过，别把它的编码边界算成改写缺陷。
 
 ## Build
@@ -198,24 +197,24 @@ xmake build grunt_cli && ./test/corpus-regress.sh
 - [doc/obf-behaviors.rst](doc/obf-behaviors.rst)：grunt 行为账总表（行为 × residue 状态）与遗留缺口清单（P1/P2/P3）。
 - [doc/obf-behaviors/grunt-v2-behaviors.rst](doc/obf-behaviors/grunt-v2-behaviors.rst)：v2（Gruntpocalypse 2.x）35 个 transformer 逐行为描述 + 16 个已验证 jasm 样例。
 - [doc/obf-behaviors/grunt-v3-behaviors.rst](doc/obf-behaviors/grunt-v3-behaviors.rst)：v3（Grunteon）39 个 transformer + GlslObfuscator 插件 + NativePipeline 阶段逐行为描述 + 11 个已验证 jasm 样例 + 产物面全局配置登记（corruptCRC32 / corruptHeaders）。
-- [doc/constant-call.md](doc/constant-call.md) / [.impl.md](doc/constant-call.impl.md)：常量调用。
-- [doc/flags-strip.md](doc/flags-strip.md) / [.impl.md](doc/flags-strip.impl.md)：伪 `synthetic`/`bridge` 标志。
-- [doc/const-method.md](doc/const-method.md) / [.impl.md](doc/const-method.impl.md)：常量方法。
-- [doc/trampoline-squeeze.md](doc/trampoline-squeeze.md) / [.impl.md](doc/trampoline-squeeze.impl.md)：蹦床 `goto`。
-- [doc/predicate-fold.md](doc/predicate-fold.md) / [.impl.md](doc/predicate-fold.impl.md)：常量谓词裁决。
-- [doc/dead-code.md](doc/dead-code.md) / [.impl.md](doc/dead-code.impl.md)：死码与异常表可达性。
-- [doc/const-value-promote.md](doc/const-value-promote.md) / [.impl.md](doc/const-value-promote.impl.md)：常量字段回填。
-- [doc/seed-strip.md](doc/seed-strip.md) / [.impl.md](doc/seed-strip.impl.md)：种子建表跨度。
-- [doc/dead-member.md](doc/dead-member.md) / [.impl.md](doc/dead-member.impl.md)：死成员与引用闭包。
-- [doc/booger-anno-strip.md](doc/booger-anno-strip.md) / [.impl.md](doc/booger-anno-strip.impl.md)：残留 `@Booger` 注解。
-- [doc/number-fold.md](doc/number-fold.md) / [.impl.md](doc/number-fold.impl.md)：藏形数值常量跨度。
-- [doc/indy-fold.md](doc/indy-fold.md) / [.impl.md](doc/indy-fold.impl.md)：indy 解密调用点。
-- [doc/proxy-inline.md](doc/proxy-inline.md) / [.impl.md](doc/proxy-inline.impl.md)：代理方法内联。
-- [doc/indy-decode.md](doc/indy-decode.md) / [.impl.md](doc/indy-decode.impl.md)：Kasumi indy 静态还原。
-- [doc/string-cache-fold.md](doc/string-cache-fold.md) / [.impl.md](doc/string-cache-fold.impl.md)：Kasumi 字符串缓存回填。
-- [doc/metadata-strip.md](doc/metadata-strip.md) / [.impl.md](doc/metadata-strip.impl.md)：Kasumi 元数据与水印清理。
-- [doc/exc-bridge-restore.md](doc/exc-bridge-restore.md) / [.impl.md](doc/exc-bridge-restore.impl.md)：ControlflowJump 异常桥。
-- [doc/gate-processor-fold.md](doc/gate-processor-fold.md) / [.impl.md](doc/gate-processor-fold.impl.md)：ControlflowJump 门点 processor 折叠。
+- [doc/constant-call.md](doc/constant-call.md)：常量调用。
+- [doc/flags-strip.md](doc/flags-strip.md)：伪 `synthetic`/`bridge` 标志。
+- [doc/const-method.md](doc/const-method.md)：常量方法。
+- [doc/trampoline-squeeze.md](doc/trampoline-squeeze.md)：蹦床 `goto`。
+- [doc/predicate-fold.md](doc/predicate-fold.md)：常量谓词裁决。
+- [doc/dead-code.md](doc/dead-code.md)：死码与异常表可达性。
+- [doc/const-value-promote.md](doc/const-value-promote.md)：常量字段回填。
+- [doc/seed-strip.md](doc/seed-strip.md)：种子建表跨度。
+- [doc/dead-member.md](doc/dead-member.md)：死成员与引用闭包。
+- [doc/booger-anno-strip.md](doc/booger-anno-strip.md)：残留 `@Booger` 注解。
+- [doc/number-fold.md](doc/number-fold.md)：藏形数值常量跨度。
+- [doc/indy-fold.md](doc/indy-fold.md)：indy 解密调用点。
+- [doc/proxy-inline.md](doc/proxy-inline.md)：代理方法内联。
+- [doc/indy-decode.md](doc/indy-decode.md)：Kasumi indy 静态还原。
+- [doc/string-cache-fold.md](doc/string-cache-fold.md)：Kasumi 字符串缓存回填。
+- [doc/metadata-strip.md](doc/metadata-strip.md)：Kasumi 元数据与水印清理。
+- [doc/exc-bridge-restore.md](doc/exc-bridge-restore.md)：ControlflowJump 异常桥。
+- [doc/gate-processor-fold.md](doc/gate-processor-fold.md)：ControlflowJump 门点 processor 折叠。
 - [doc/kasumi-verify.md](doc/kasumi-verify.md)：Kasumi 专链端到端复现记录（五项门逐项数字、与树版口径差异点、通用链取证）。
 
-口径分工：`doc/` 只写**通用技术形态**与实现；具体样本的取证过程（jar、类名、指令偏移、折叠期望值）记在仓外研究笔记，不进本仓。
+口径分工：`doc/` 只写**通用技术形态**；各 pass 的实现说明（Scan / Rewrite / Proof 判据、改写契约与已知边界）在 `src/grunt/` 各 pass 源码文件头注释；具体样本的取证过程（jar、类名、指令偏移、折叠期望值）记在仓外研究笔记，不进本仓。

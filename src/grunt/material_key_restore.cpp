@@ -1,6 +1,58 @@
 /// @file        material_key_restore.cpp
 /// @brief       残留 `material_key_restore`：RuntimeMaterial 材料通道 key 静态
 ///              折回（scan / rewrite / proof 三段，见 .hpp 形态与口径）。
+///
+/// SCAN 单类 fail-closed 整类拒，逐门：
+///
+/// 1. **家族锚**：类级 Grunt BSM desc 指纹（simple 7 参）在册才进面；
+/// 2. **promoteAllInto**：全类方法提升为 MethodView（fill-missing），任一
+///    失败整类连坐拒；
+/// 3. **窗口定位** findMaterialWindows：`charAt; LDC K; INVOKESTATIC <self>
+///    ()I; IXOR; IXOR; I2C` 回溯；多窗口或 `materialKey()` 多调用点 =
+///    decryptorAmbiguous；
+/// 4. **mk 体钉形** matchMaterialKeyBody：9 条逐字（GETSTATIC kf J; DUP2;
+///    INT 32; LUSHR; LXOR; L2I; GETSTATIC po I; IXOR; IRETURN）+ 字段
+///    private static；native 或形异 = keyBodyMismatch（native 化是硬余量，
+///    算术已随 native pipeline 出 jar）；
+/// 5. **调用点普查**：`materialKey()` 全容器引用恰为 1（材料解密器窗口）；
+/// 6. **clinit 定位 + 字段普查**：keyField / poison 各恰一初值写且在
+///    clinit（多写或写不在 clinit = initConflict）；其余写全为扰动窗口形
+///    （头 GETSTATIC 允许带标签——CFF 摊平块头标签落窗口头是 boar 实证
+///    形；窗口中段标签/分支/同字段写 = writerShape；窗口尾 LXOR|IOR）；
+/// 7. **守卫指纹** guardFingerprint：扰动写所在方法带
+///    `INVOKESTATIC <self> ()I; DUP; IFEQ` 连续三条，缺 = writerUnguarded；
+/// 8. **初值求值**：keyField 走 Form A（`ldc2_w` 直连）或 Form B（
+///    `ldc <基32>; bipush 32; INVOKESTATIC parse|蹦床 (String;I)J; ldc2_w
+///    C; LXOR` 五跨）——radix 恒 32 严格解析，parseUnsignedLong 语义 C++
+///    直解（与 NumberFold 基 32 面同口径）；池读在场 = initBlocked（why
+///    报链序缺 grunt.StringPoolFold）。poison 走受限迷你栈机（常量装载/
+///    转换/整长算术白名单，try-all-starts 窗 24，唯一值 + 顶型 I 才放
+///    行）；单方法字面走廊 C++ 直解不骑 jsim——求值子集不含堆访问/调用/
+///    分配，「跑不出值」即 fail-closed，两态语义等价。
+/// 9. **候选 key 与 S1 互证**：materialKey = fold(keyInit) ^ poisonInit
+///    （fold(K) = (int)(K ^ K >>> 32)，源锚 Long.foldToInt）。BSM 名字族
+///    路由（BSM 名 B[2, len-1) == 解密器名）+ 体跟随兜底（BSM 体内
+///    INVOKESTATIC 解密器）；全部路由 indy 站点按
+///    effectiveKey = rawKey ^ materialKey 解密 encOwner/encName/encDesc
+///    （自逆 XOR）+ desc 交叉互证（static 参数段全等 / virtual 首参
+///    Object + 其余逐位一致）。有站点全过 = sitesVerified 记数；任一失败
+///    = keyRefuted 整类拒（错 key 解出垃圾必死在互证——S1 咬合）；窗口无
+///    路由站点 = 结构 S2 成立（sitesVerified=0 如实在账）。
+///
+/// REWRITE 只消费 ScanResult：按 invokeSrcPc 重定位（新布局 pc 与 srcPc
+/// 对表），复核 pos 界内且 order[pos] 恰为 INVOKESTATIC mk，原地换
+/// `LDC <materialKey>`（srcPc 保留）；FrameContext 帧链正统重算 +
+/// roundTripSafe 往返门 + mutateMethodWithFrames 写回。拒绝面字节逐位不
+/// 动（单测以容器 memcmp 全等钉住）。
+///
+/// PROOF：类数不增 + 脏类可重新解析 + residual（改写后容器里仍带材料解
+/// 密器窗口形的类数；语料单罐门要求 0）。
+///
+/// 已知边界：native `materialKey()` 类静态不可还原，永久 residual；守卫
+/// 命中路径的 keyField/poison 扰动保留原样（还原口径 = 清洁运行环境语义，
+/// 见头文件）；`materialKey()` 本体/材料字段/守卫支路不删（折回后零引
+/// 用，交 DeadMember/DeadCode 回收）；非 Form A/B 的初值跨度（其他算术
+/// 走廊）fail-closed，等语料命中再扩。
 #include "grunt/material_key_restore.hpp"
 
 #include <limits>
@@ -574,9 +626,9 @@ bool evalKeyInit(ir::ClassSession& s, std::unordered_map<ca::usize, MethodView>&
 
 /// @brief poison 初值求值：纯常量走廊小栈机（int/long 双域、JVM 回绕与移位
 ///        掩码语义；词表 = 常量装载 + I2L/L2I + 位运算/加减/移位/取负族）。
-///        评法裁定见 doc/material-key-restore.impl.md：单方法字面走廊 C++ 直
-///        解，不骑 jsim——求值子集不含堆访问/调用/分配，「跑不出值」即
-///        fail-closed，两态语义等价；走廊过重（>24 条）同拒。
+///        评法裁定：单方法字面走廊 C++ 直解，不骑 jsim——求值子集不含堆访
+///        问/调用/分配，「跑不出值」即 fail-closed，两态语义等价；走廊过重
+///        （>24 条）同拒。
 /// @return true = 求值成功（int 位型进 out；顶型必须 I——PUTSTATIC I 的栈形）。
 bool evalPoisonInit(ir::ClassSession& s, const MethodView& clinit, ca::usize q, ca::i32& out)
 {

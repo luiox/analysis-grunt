@@ -20,6 +20,10 @@
 ///   effective key（源锚 RuntimeMaterial.kt perturbation：可疑路径才写
 ///   keyField/poison；清洁 delta 只碰 shareA/shareB，不进 materialKey）。
 ///
+/// jasm 汇编坑（存证）：`ldc2_w` 长字面量必须带 `L` 后缀——裸十进制被按
+/// int 解析，`lxor` 求值即 stack underflow（帧分析报错点位在初值跨度，极
+/// 难归因；本文件所有 `ldc2_w` 均带后缀）。
+///
 /// 覆盖分工：
 /// - SCAN（真值）：链求值 → 候选 key = fold(keyInit) ^ poisonInit → S1 互证
 ///   （BSM 族路由的全部 indy 站点按候选 key 解密 + desc 互证）→ 站点成立；

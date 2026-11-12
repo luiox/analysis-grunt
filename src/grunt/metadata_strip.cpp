@@ -6,6 +6,49 @@
 /// 判据分级与资源动词见头文件；骨架对齐 booger_anno_strip（注解槽 decodeAttr
 /// 直调位 + 深度预检 + 压池收尾）与 K2 string_cache_fold（Era 门在 scan、
 /// proof 挂起全量）。
+///
+/// ## SCAN 三面与判据谓词
+///
+/// 判据谓词三段共用单源（树版逐字对齐）。S3 Era 门在 scan 开头：
+/// era != Kasumi 整面关闭（eraBlocked，fail-closed）——未判时一个字节都不
+/// 看内容判据（非 Kasumi 罐挂同前缀资源时 scan 空手而归，产物资源逐字节
+/// 原样）。注解面走 decodeAttr 直调位（booger_anno_strip 同一通路）普查
+/// 类/字段/方法三张挂载面的 @Metadata 条目；深度预检（attrSafeToDecode）
+/// 拦下的槽计 annoBlocked——解不开的 fail-closed 不摘、不猜条目数。水印
+/// 字段面：字段带 @Metadata 或 ConstantValue 为水印串都计入；ConstantValue
+/// 双形态都收——jbc 原生 ConstantValueAttr 解码产物与 RawAttr 2 字节载荷
+/// （const_value_promote 新建形态）。资源面 visitResources 全量走一遍，
+/// 只看 UnknownResource 载荷（树版同口径），URI 前缀 + `.md` + 内容探针
+/// 三证齐才进删除清单；形状命中而证据不全 → resourceCandidates 盘点不删
+/// （前缀面可能有合法文档，删的是内容坐实的注入物）。
+///
+/// ## REWRITE
+///
+/// 资源先删（树版序）：只消费 scan 清单，删除时刻复核同判据（scan 之后字
+/// 节可能已变，不盲删）；复核不齐计 resourceCandidates。类清理与
+/// booger_anno_strip 同骨架：类面/方法面只摘条目（摘空属性槽整槽移除）；
+/// 字段面摘条目后按「摘到过条目 ∨ ConstantValue 水印」整字段删除（注解
+/// 字段与水印字段都是混淆器署名位，树版直接删，不做引用普查——病态引用
+/// 形态由类加载校验兜底）。方法体不碰。压池收尾：classAnnoDepthSafe 预检
+/// + compactConstantPool 带走死条目；预检拒绝或压缩失败就跳过压缩，清理
+/// 过的字节照常落盘——CP 不压缩只是少带走死条目。条目数在类写回成功后归
+/// 账；编码失败计 failed。
+///
+/// ## PROOF
+///
+/// pass_clock::Suspend 挂起全量，三道门：类数门（classesIntact）；资源对
+/// 账门（resourcesShrunk：资源数只减 + 删除清单逐条不在场，虚报删减即
+/// FAILED）；三面 residual（与 scan 同判据重钉，语料单罐门要求全 0）。深
+/// 度预检拦下的敌意槽不在 residual 视野内——不可解面不是清理缺陷，
+/// annoBlocked 已记账。
+///
+/// ## 已知边界
+///
+/// 水印串清理只到字段面：方法体内的水印常量（`PROTECTED BY Kasumi` 字面
+/// 量与 `kasumi_` 前缀会话 key）是 indy 链路运行时数据，树版不触方法体，
+/// 本仓对齐；全链收口后由 DeadMember 压池/死码面自然带走解引用的死串。
+/// 换代面（注解描述符 / 水印三判据 / 资源前缀与五探针都钉自当前 Kasumi
+/// 版本）由 Era 门整面拒绝兜底。
 
 #include "grunt/metadata_strip.hpp"
 
