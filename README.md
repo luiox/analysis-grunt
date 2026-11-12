@@ -6,7 +6,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 
 代码组织遵循 [CONVENTION.md](CONVENTION.md)：以「一种残留（residue）」为单位，每种残留 = 家族知识 + 三段恒定动作（scan / rewrite / proof）。
 
-混淆行为侧：Grunt 两代（v2 / v3）每个 obf 行为的形态描述、jasm 样例与 residue 映射见 [doc/obf-behaviors.rst](doc/obf-behaviors.rst)（行为 × residue 总表与遗留缺口清单）与两代分账 [doc/obf-behaviors/](doc/obf-behaviors/)（`grunt-v2-behaviors.rst` / `grunt-v3-behaviors.rst`）；与 morpher 仓 `mjt-deobf/doc_ai/obf-forms/` 的分工——那边是跨家族形态库（artifact 侧形态判据与还原链序），本仓 `doc/obf-behaviors/` 是本工具行为账（逐 transformer 行为 + 配置面 + residue 现状 + 遗留缺口清单）。
+混淆行为侧：Grunt 两代（v2 / v3）每个 obf 行为的形态描述、jasm 样例与 residue 映射见 [doc/obf-behaviors.rst](doc/obf-behaviors.rst)（行为 × residue 总表与遗留缺口清单）与两代分账 [doc/obf-behaviors/](doc/obf-behaviors/)（`grunt-v2-behaviors.rst` / `grunt-v3-behaviors.rst`）；与 morpher 仓 `mjt-deobf/doc_ai/obf-forms/` 的分工——那边是跨家族形态库（artifact 侧形态判据与还原链序），本仓 `doc/obf-behaviors/` 是本工具的逐行为现状记录（逐 transformer 行为 + 配置面 + residue 现状 + 遗留缺口清单）。
 
 ## 残留一览
 
@@ -39,6 +39,19 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 
 `S1` = 语义后果：混淆器为了保持功能必须如此，改了自己就坏。`S2` = 结构性清理：判据成立即安全，但混淆器换代可能换形态。`S3` = 面向未来形态的预留面：当前语料无站点，判据按形态写、按换代样本验收。判据不依赖方法名、签名形状、所在类或注入模板，所以 Grunt 换代不需要改这一行。
 
+## 覆盖现状
+
+不是全部，主链可用。行为 × 处理状态总表与缺口清单以 [doc/obf-behaviors.rst](doc/obf-behaviors.rst) 为准，当前快照：
+
+- **v3（Grunteon）主链已处理完**：字符串池、indy 调用点（simple/heavy + RuntimeMaterial 材料通道联动）、InvokeDispatcher、控制流摊平主面、异常桥、门点 processor——这些高频面都有对应 pass 且在 v3 全链语料罐上整链验证。剩余三类：
+  - **processor 键 native 天花板**：`keyProcessorNativeCandidateRatio=1.0` 一类配置把门点算术随 native 管线移出 jar，恢复目标是无方法体的 native 壳——没有 native 库时静态面上无解，这是信息边界不是工具缺口；
+  - **SSA exp 摊平变体**（LookupSwitch + per-case stub 形，与主形不同构）；
+  - **运行期随机门**（ThreadLocalRandom 一类）：静态裁决原则上不碰。
+- **v2（Gruntpocalypse）高频面已处理**（NumberEncrypt 主形、StringEncrypt、Controlflow 静态可裁决子集、SyntheticBridge、Field/MethodScramble、InvokeDynamic simple 形），中频面还有一批未处理：indy heavy 形（缺可靠的 Grunt2 版本判据，见缺口 #15）、ConstPoolEncrypt 调用点回填（#5）、ConstBuilder（#6）、ArithmeticEncrypt 恒等简化（#7）、MethodExtractor（#9）、StringEqualsRedirect（#11）、垃圾类（#14）、Controlflow 假跳转/陷进环（#16）、NumberEncrypt arrayed 池（#17）。
+- **改名还原不在面内**：Class/Method/Field Rename 走 mapping 旁证，是外部工具职责。
+- **Kasumi 专链端到端全通**（doc/kasumi-verify.md，五项门逐项数字）。
+- 产物面破坏开关（corruptCRC32 / corruptHeaders）与检测类面（HWID 等）不做还原处理。
+
 ## 链序
 
 主线（15 pass，BoogerV2 语料整链验收；链序清单含 FieldAccessProxy）：
@@ -52,79 +65,44 @@ grunt.BoogerAnnoStrip
 
 三条硬约束：
 
-- **`TrampolineSqueeze` 排在实参收集面之前**：它把蹦床 `goto` 置 NOP 并保
-  `srcPc`，`NumberFold` / `ConstantCall` / `PredicateFold` 的紧邻常量收集
-  才能看穿被压住的操作数区。
-- **`NumberFold` 排在实参收集面之前**：它把藏形数值跨度折成纯常量装载，
-  `ConstantCall` / `PredicateFold` / `ConstMethod` 的实参收集只认纯常量
-  装载——藏形跨度夹在实参区里，下游整站失明。
-- **`ConstantCall` 排在折叠/清死之前**：它把调用点变成常量字面量，下游的
-  `PredicateFold` / `ConstValuePromote` / 死码删除才有东西可折可清。
+- **`TrampolineSqueeze` 排在实参收集面之前**：它把蹦床 `goto` 置 NOP 并保 `srcPc`，`NumberFold` / `ConstantCall` / `PredicateFold` 的紧邻常量收集才能看穿被压住的操作数区。
+- **`NumberFold` 排在实参收集面之前**：它把藏形数值跨度折成纯常量装载，`ConstantCall` / `PredicateFold` / `ConstMethod` 的实参收集只认纯常量装载——藏形跨度夹在实参区里，下游整站失明。
+- **`ConstantCall` 排在折叠/清死之前**：它把调用点变成常量字面量，下游的 `PredicateFold` / `ConstValuePromote` / 死码删除才有东西可折可清。
 
-`StringPoolFold` 与 `NumberFold` 同组（值还原面），排在实参收集面之前：
-折出的 `ldc <明文>` 可继续喂 `ConstantCall` / `PredicateFold` 的常量实参
-收集；判据自证（池链三件套 + 解密器窗口），无前置依赖，三元组内 NOP
-跳过兼容 squeeze 遗留。indy 藏面（Grunteon 全链产物）在其上游
-`grunt.IndyRestore` 把 indy 还原成直线静态蹦床后接通（boar 语料实证：
-单跑 0 折叠 → 链上 19244 折叠，数字见 doc/corpus-ledger.rst）；
-`MaterialKeyRestore` 挂在这条供给链之后、`IndyRestore` 第二轮之前——材料
-初值跨度依赖 StringPoolFold 折回的池明文 ldc（池读未折回的类
-`initBlocked` 报链序缺位），折回的 `LDC <materialKey>` 让 indy_restore
-第二轮按既有 Plain 通道消化 materialLane 桶（boar 语料：42228 → 5060，
-见 doc/obf-behaviors.rst）。Grunteon 现场的 Grunt 面专链为
-`grunt.IndyRestore,grunt.StringPoolFold,grunt.MaterialKeyRestore,grunt.IndyRestore`。
+`StringPoolFold` 与 `NumberFold` 同组（值还原面），排在实参收集面之前：折出的 `ldc <明文>` 可继续喂 `ConstantCall` / `PredicateFold` 的常量实参收集；判据自证（池链三件套 + 解密器窗口），无前置依赖，三元组内 NOP 跳过兼容 squeeze 遗留。indy 藏面（Grunteon 全链产物）在其上游 `grunt.IndyRestore` 把 indy 还原成直线静态蹦床后接通（boar 语料实证：单跑 0 折叠 → 链上 19244 折叠，数字见 doc/corpus-ledger.rst）；`MaterialKeyRestore` 挂在这条供给链之后、`IndyRestore` 第二轮之前——材料初值跨度依赖 StringPoolFold 折回的池明文 ldc（池读未折回的类 `initBlocked` 报链序缺位），折回的 `LDC <materialKey>` 让 indy_restore 第二轮按既有 Plain 通道消化 materialLane 桶（boar 语料：42228 → 5060，见 doc/obf-behaviors.rst）。Grunteon 现场的完整供给链见下文「Grunt v3 摊平反演面」。
 
-形状纪律（`PredicateFold` 写回契约的前提，判据见 src/grunt/predicate_fold.cpp
-文件头注释）：
-改写不得引入无条件跳转、不得新增合并点——HotSpot 线性走查要求无条件跳转
-之后的段首带帧，本 pass 不再生 SMT。TAKEN 的 `IFEQ` 目标是原分支目标（本
-来就有帧），NOT-TAKEN 留下的死块带原帧，中间态合法；`DeadCode` 紧随清理
-是推荐序而非性质约束。
+形状纪律（`PredicateFold` 写回契约的前提，判据见 src/grunt/predicate_fold.cpp 文件头注释）：改写不得引入无条件跳转、不得新增合并点——HotSpot 线性走查要求无条件跳转之后的段首带帧，本 pass 不再生 SMT。TAKEN 的 `IFEQ` 目标是原分支目标（本来就有帧），NOT-TAKEN 留下的死块带原帧，中间态合法；`DeadCode` 紧随清理是推荐序而非性质约束。
 
-单轮跑到收敛要重复整条链：`DeadCode` 擦除缩短布局后，原本跨过死区的
-`goto` 会变成「跳到顺序后继」的新蹦床（grunt2 第二轮实测 4193 处），
-`ConstValuePromote` 回填 `ConstantValue` 后 `clinit` 变空，也会解锁新的
-`DeadMember` 删除面。判据是 `PredicateFold` 站点归零。
+单轮跑到收敛要重复整条链：`DeadCode` 擦除缩短布局后，原本跨过死区的 `goto` 会变成「跳到顺序后继」的新蹦床（grunt2 第二轮实测 4193 处），`ConstValuePromote` 回填 `ConstantValue` 后 `clinit` 变空，也会解锁新的 `DeadMember` 删除面。判据是 `PredicateFold` 站点归零。
 
-**Kasumi 专面不入主线，走专链**：`grunt.IndyDecode`、`grunt.StringCacheFold` 与
-`grunt.MetadataStrip` 由 `probeEra` 判家（`Era::Kasumi` 才激活），与 BoogerV2
-主线互不重叠——Kasumi BSM 的 8 参签名 + find* 分派不在 `IndyFold` 的纯目标子
-集内，同一 jar 上两者不争站点。专链三 pass、链序固定（先还原再清理，
-`MetadataStrip` 收尾）：
+**Kasumi 专面不入主线，走专链**：`grunt.IndyDecode`、`grunt.StringCacheFold` 与 `grunt.MetadataStrip` 由 `probeEra` 判家（`Era::Kasumi` 才激活），与 BoogerV2 主线互不重叠——Kasumi BSM 的 8 参签名 + find* 分派不在 `IndyFold` 的纯目标子集内，同一 jar 上两者不争站点。专链三 pass、链序固定（先还原再清理，`MetadataStrip` 收尾）：
 
 ```
 grunt.IndyDecode,grunt.StringCacheFold,grunt.MetadataStrip
 ```
 
-`--jdk`（接口旁证）与 `--tsv`（明文旁证，内容不进仓）见 [Run](#run) 与
-[doc/kasumi-verify.md](doc/kasumi-verify.md)（端到端五项门逐项数字与和树版
-口径的差异点）。**通用主线可叠加在专链产物上**（前置条件已解除）：K4 曾取证
-`DeadMember` 引用普查漏计压缩失败类（cp_compact 封闭集拒绝的 Raw 属性类，
-Kasumi 改写产物 16/25 类）的对外引用，专链产物上误删（语料 `t` 类 93 → 0
-方法，运行期 `NoSuchMethodError`）。普查已按「全容器对外引用全集」口径修复：
-压缩失败的类按原始字节照常入普查（枚举超集宁误留），连骨架都解不开的类
-census-blind 整轮零删除；通用链 × 专链组合与通用链单跑复验通过，修复前后
-数字与 JVM 实调证据见 kasumi-verify.md §3。
+`--jdk`（接口旁证）与 `--tsv`（明文旁证，内容不进仓）见 [Run](#run) 与 [doc/kasumi-verify.md](doc/kasumi-verify.md)（端到端五项门逐项数字与和树版口径的差异点）。**通用主线可叠加在专链产物上**（前置条件已解除）：K4 曾取证 `DeadMember` 引用普查漏计压缩失败类（cp_compact 封闭集拒绝的 Raw 属性类，Kasumi 改写产物 16/25 类）的对外引用，专链产物上误删（语料 `t` 类 93 → 0 方法，运行期 `NoSuchMethodError`）。普查已按「全容器对外引用全集」口径修复：压缩失败的类按原始字节照常入普查（枚举超集宁误留），连骨架都解不开的类 census-blind 整轮零删除；通用链 × 专链组合与通用链单跑复验通过，修复前后数字与 JVM 实调证据见 kasumi-verify.md §3。
 
-**Grunt v3 摊平反演面（v3 全链罐专用，不入 BoogerV2 主线）**：
-`CffUnflatten` + `ExcBridgeRestore` + `DispatcherRestore` 是 v3 语料的
-块序/调用点还原对——BoogerV2 语料无此三形态（主线 15 pass 判据对其天然
-静默），v3 全链罐上先值还原（`IndyRestore`/`NumberFold`，桥 span 求值与
-processor 键的解锁面）再 `ExcBridgeRestore`（异常桥摘除——桥插在已摊平
-代码上，摘除后 CFF 的 state span goto 恢复整块形，罐 A 实证岛还原
-1281→1543）再 `GateProcessorFold`（ControlflowJump 门点 processor 跨方法
-求值 + 恒真门折叠，挂在 `ConstantCall` 之后——上游数字与 CffUnflatten
-islands 逐项不动）再 `CffUnflatten` 最后 `DispatcherRestore`。`CffUnflatten` 对
-DispatcherRestore 的分发器原生头是反误伤面（alias 缺席整岛拒，wave2c
-正例罐 290 候选全数此桶、产物逐条目 CRC 全等），组合链零干扰；
-boar 全链罐上 DispatcherRestore 的头锚缺席经二轮归因修正为 desc 形状与 `__grt$indy$` indy 蹬床/数值走廊方法碰撞（anti-候选；非 post-Redirect junk 前缀，jar 内 `[iload N; tableswitch]` 头形=0，归因量化见 `src/grunt/dispatcher_restore.cpp` 与 `src/grunt/cff_unflatten.cpp` 文件头注释）；缺口 #4 余量现口径为 processor 键 native 天花板 + SSA exp 变体。
+**Grunt v3 摊平反演面（v3 全链罐专用，不入 BoogerV2 主线）**：`CffUnflatten` + `ExcBridgeRestore` + `DispatcherRestore` 是 v3 语料的块序/调用点还原对——BoogerV2 语料无这些形态，主线 15 pass 判据对其天然静默。两条已验证链序：
+
+值与调用点供给链（boar 语料：materialLane 42228 → 5060，StringPoolFold 单跑 0 折叠 → 链上 19244 折叠）：
+
+```
+grunt.IndyRestore,grunt.StringPoolFold,grunt.MaterialKeyRestore,grunt.IndyRestore
+```
+
+块序与调用点段（先值还原解锁桥 span 求值与 processor 键，再摘异常桥、折门点 processor、反摊平，最后回填分发调用点）：
+
+```
+grunt.ConstantCall,grunt.ExcBridgeRestore,grunt.GateProcessorFold,grunt.CffUnflatten,grunt.DispatcherRestore
+```
+
+链序依据：`ExcBridgeRestore` 摘桥后 CFF 的 state span goto 恢复整块形——桥插在已摊平代码上，罐 A 实证摘桥后岛还原 1281→1543；`GateProcessorFold` 挂在 `ConstantCall` 之后（上游数字与 CffUnflatten islands 逐项不动）；`CffUnflatten` 对 `DispatcherRestore` 的分发器原生头是天然反误伤面（alias 缺席整岛拒，wave2c 正例罐 290 候选全数此桶、产物逐条目 CRC 与输入全等），组合链零干扰；boar 全链罐上 `DispatcherRestore` 头锚缺席归因为 desc 形状与 `__grt$indy$` indy 蹬床/数值走廊方法碰撞（anti-候选，非 junk 前缀所致；jar 内 `[iload N; tableswitch]` 头形=0，归因量化见 `src/grunt/dispatcher_restore.cpp` 与 `src/grunt/cff_unflatten.cpp` 文件头注释）。缺口 #4 余量现口径为 processor 键 native 天花板 + SSA exp 变体（见上文[覆盖现状](#覆盖现状)）。
 
 
 ## 全局不变量
 
-- **类数不增**：任何残留都不得新增类；`proof` 段每次校验。资源面同理**只
-  减不增**（资源删除残留另加删除清单逐条对账，见 proof_toolbox 的资源对
-  账原语）。
+- **类数不增**：任何残留都不得新增类；`proof` 段每次校验。资源面同理**只减不增**（资源删除残留另加删除清单逐条对账，见 proof_toolbox 的资源对账原语）。
 - **origin 永不改写**：输入 jar 只读，产物另存。
 - **fail-closed**：判据不全整站点跳过，不做猜测性改写；拒绝原因进 `rejects` 供 trace。
 - **引用普查全容器口径**：跨类引用普查是删动词的前置证据面，静默跳过的类就是蒸发的引用证据——解不开的类按原始字节照常入普查（超集宁误留），连骨架都解不开则整轮改写放弃（DeadMember census-blind / SeedStrip 与 ConstValuePromote 普查不完整整轮放弃 / BoogerAnnoStrip 引用门按引用在册关死）。
@@ -134,9 +112,7 @@ boar 全链罐上 DispatcherRestore 的头锚缺席经二轮归因修正为 desc
 
 ## Build
 
-mjbase 经 luiox-repo 中心包仓消费（`xmake f` 自动添加仓源并拉取 mjbase /
-libjbc / libca 及传递闭包），无需本地 mjbase 检出。libjsim 仍是源码级
-header-only 依赖：默认找兄弟目录 `../libjsim`，用 `LIBSIM_DIR` 覆盖。
+mjbase 经 luiox-repo 中心包仓消费（`xmake f` 自动添加仓源并拉取 mjbase / libjbc / libca 及传递闭包），无需本地 mjbase 检出。libjsim 仍是源码级 header-only 依赖：默认找兄弟目录 `../libjsim`，用 `LIBSIM_DIR` 覆盖。
 
 ```sh
 xmake f
@@ -147,7 +123,7 @@ xmake build grunt_cli
 
 ```sh
 ./build/windows/x64/release/grunt_cli.exe -i in.jar -o out.jar \
-  -p grunt.TrampolineSqueeze,grunt.IndyFold,grunt.ConstMethod,grunt.ProxyInline,grunt.FieldAccessProxy,grunt.ConstantCall,grunt.PredicateFold,grunt.SeedStrip,grunt.ConstValuePromote,grunt.DeadCode,grunt.DeadMember,grunt.FlagsStrip,grunt.BoogerAnnoStrip
+  -p grunt.TrampolineSqueeze,grunt.NumberFold,grunt.StringPoolFold,grunt.IndyFold,grunt.ConstMethod,grunt.ProxyInline,grunt.FieldAccessProxy,grunt.ConstantCall,grunt.PredicateFold,grunt.SeedStrip,grunt.ConstValuePromote,grunt.DeadCode,grunt.DeadMember,grunt.FlagsStrip,grunt.BoogerAnnoStrip
 ```
 
 直接调构建产物，别用 `xmake run grunt_cli --`：xmake 会吞掉/改写一部分参数（引号与逗号尤其容易走样）。
@@ -194,7 +170,7 @@ xmake build grunt_cli && ./test/corpus-regress.sh
 ## Doc index
 
 - [doc/README.md](doc/README.md)：索引与口径分工。
-- [doc/obf-behaviors.rst](doc/obf-behaviors.rst)：grunt 行为账总表（行为 × residue 状态）与遗留缺口清单（P1/P2/P3）。
+- [doc/obf-behaviors.rst](doc/obf-behaviors.rst)：grunt 行为总表（行为 × residue 状态）与遗留缺口清单（P1/P2/P3）。
 - [doc/obf-behaviors/grunt-v2-behaviors.rst](doc/obf-behaviors/grunt-v2-behaviors.rst)：v2（Gruntpocalypse 2.x）35 个 transformer 逐行为描述 + 16 个已验证 jasm 样例。
 - [doc/obf-behaviors/grunt-v3-behaviors.rst](doc/obf-behaviors/grunt-v3-behaviors.rst)：v3（Grunteon）39 个 transformer + GlslObfuscator 插件 + NativePipeline 阶段逐行为描述 + 11 个已验证 jasm 样例 + 产物面全局配置登记（corruptCRC32 / corruptHeaders）。
 - [doc/constant-call.md](doc/constant-call.md)：常量调用。
@@ -210,9 +186,15 @@ xmake build grunt_cli && ./test/corpus-regress.sh
 - [doc/number-fold.md](doc/number-fold.md)：藏形数值常量跨度。
 - [doc/indy-fold.md](doc/indy-fold.md)：indy 解密调用点。
 - [doc/proxy-inline.md](doc/proxy-inline.md)：代理方法内联。
+- [doc/field-access-proxy.md](doc/field-access-proxy.md)：字段代理方法内联。
 - [doc/indy-decode.md](doc/indy-decode.md)：Kasumi indy 静态还原。
 - [doc/string-cache-fold.md](doc/string-cache-fold.md)：Kasumi 字符串缓存回填。
 - [doc/metadata-strip.md](doc/metadata-strip.md)：Kasumi 元数据与水印清理。
+- [doc/string-pool-fold.md](doc/string-pool-fold.md)：字符串池读点折回（v2/v3）。
+- [doc/indy-restore.md](doc/indy-restore.md)：Grunt indy 调用点直接解密回填。
+- [doc/material-key-restore.md](doc/material-key-restore.md)：RuntimeMaterial 材料键折回。
+- [doc/cff-unflatten.md](doc/cff-unflatten.md)：控制流摊平反演。
+- [doc/dispatcher-restore.md](doc/dispatcher-restore.md)：InvokeDispatcher 调用点回填。
 - [doc/exc-bridge-restore.md](doc/exc-bridge-restore.md)：ControlflowJump 异常桥。
 - [doc/gate-processor-fold.md](doc/gate-processor-fold.md)：ControlflowJump 门点 processor 折叠。
 - [doc/kasumi-verify.md](doc/kasumi-verify.md)：Kasumi 专链端到端复现记录（五项门逐项数字、与树版口径差异点、通用链取证）。
