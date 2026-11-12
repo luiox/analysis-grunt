@@ -13,16 +13,16 @@
 #include <cstring>
 #include <exception>
 #include <string_view>
-#include <vector>
 
 #include "libca/core/datatype.hpp"
+#include "libca/core/tag_cast.hpp"
 
 #include "jbc/analysis/frame.hpp"
+#include "jbc/core/class_file.hpp"
 #include "jbc/core/opcode.hpp"
 #include "jbc/ir/code_editor.hpp"
 #include "jbc/ir/units.hpp"
 
-#include "mjbase/analysis/class_scan.hpp"
 #include "mjbase/asm/insn/insn_factory.hpp"
 #include "mjbase/hierarchy/class_hierarchy.hpp"
 #include "mjbase/hierarchy/summary.hpp"
@@ -125,29 +125,38 @@ inline bool makeConstLoad(jbc::ir::ClassSession& session, const jsim::SimValue& 
 
 /// @brief 容器级帧重算上下文：Strict 求解所需的类层级 + resolver 适配器。
 ///
-/// 成员间是借用关系（adapter 借 super，super 借 hierarchy，hierarchy 借
-/// pool），禁拷贝禁移动；按 rewrite() 单次调用于栈上持有。scanned_ 持有
-/// 会话保活（fillSummary 只读骨架，session 死则 summary 的符号视图悬垂）。
+/// summary 与 session 解绑：构造期逐类开会话 → fillSummary 抽骨架 → addClass 入库 → 会话当场弃置，任何时刻至多一个会话在场。解绑的依据是 fillSummary 的产出只有两处自持落点——pool_（内容寻址驻留池，arena 只增不移，视图随池存活）与 hierarchy_ 入库的 ClassSummary 值拷贝（键全是 pool_ 的 u32 id，vector 拷贝即快照）；byName_ 的名字视图同样借用 pool_ 而非会话符号池。构造完成后没有任何数据活引用 session，rewrite 阶段按类重开会话（容器里有原始字节），Strict 帧重算的 CommonSuperClassResolver 只读层级骨架，照常工作。
+///
+/// 遍历序沿用原 scanClassResources 的容器资源序（visitResources），驻留键的 intern 序逐位一致 → 键 id、环/重复登记的判定时点、resolver 查询缓存全部不动，这是 trace/产物逐位等价的前提。不挂 pass 级时间片门：层次图必须盖全容器（与原口径一致——空条目与畸形类不产出事实，fail-open）。
+///
+/// 成员间是借用关系（adapter 借 super，super 借 hierarchy，hierarchy 借 pool），禁拷贝禁移动；按 rewrite() 单次调用于栈上持有。
 class FrameContext
 {
 public:
     explicit FrameContext(const mjbase::model::ResourceContainer& container)
-        : scanned_(mjbase::analysis::scanClassResources(container))
     {
-        for (const mjbase::analysis::ScannedClass& sc : scanned_) {
-            if (!sc.session) continue;
-            (void)hierarchy_.addClass(mjbase::hierarchy::fillSummary(*sc.session, pool_));
-        }
+        container.visitResources(
+            [this](std::string_view, const mjbase::model::IResource& resource) {
+                if (resource.getType() != mjbase::model::ResourceType::Class) return;
+                const auto* cls =
+                    ca::core::tag_cast::cast<const mjbase::model::ClassResource>(&resource);
+                if (cls == nullptr || cls->get().empty()) return;
+                auto session = jbc::ir::makeSessionFromBytes(
+                    jbc::core::ByteView{cls->get().data(), cls->get().size()});
+                if (session.is_err()) return;
+                (void)hierarchy_.addClass(
+                    mjbase::hierarchy::fillSummary(*session.unwrap(), pool_));
+                // session 随作用域结束弃置：骨架已收进 pool_ 与 hierarchy_。
+            });
     }
 
     jbc::analysis::ITypeResolver& resolver() { return adapter_; }
 
 private:
-    mjbase::KeyPool                             pool_;
-    std::vector<mjbase::analysis::ScannedClass> scanned_;
-    mjbase::hierarchy::ClassHierarchy           hierarchy_{pool_};
-    mjbase::spi::CommonSuperClassResolver       super_{hierarchy_};
-    mjbase::spi::StrictTypeResolverAdapter      adapter_{super_};
+    mjbase::KeyPool                        pool_;
+    mjbase::hierarchy::ClassHierarchy      hierarchy_{pool_};
+    mjbase::spi::CommonSuperClassResolver  super_{hierarchy_};
+    mjbase::spi::StrictTypeResolverAdapter adapter_{super_};
 };
 
 /// @brief 单方法改写驱动：promote 一次 → mutate → 帧链正统写回。@return 是否改写成功。

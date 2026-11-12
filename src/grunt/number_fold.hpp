@@ -67,17 +67,40 @@ namespace grunt::number_fold {
 inline constexpr ca::usize kScanClassBudget    = 1'000'000;
 inline constexpr ca::usize kRewriteClassBudget = 4'000'000;
 
-/// @brief 一个可折叠站点。`anchorSrcPc`/`anchorOp` 跨会话稳定，rewrite 靠它
-///        重定位。`classIdx` 是 scan/rewrite 同一轮里容器 visitResources 的
-///        类序号（两段同序遍历，见 rewrite 注）——万类大罐上站点不带 uri
-///        字符串，数十万站点只按索引聚类。
+/// @brief 站点折叠值的紧凑存储形（POD：kind + 位形，无字符串驻留）。
+///
+/// scan 收进站点的值恒为数值四形（I32/I64/F32/F64 位形）——基 32 跨度的字符串键在匹配期就地折叠成 i64 位形并清串（matchBase32Long），跨段数据流里不需要字符串。访问器与 ValueLoad 同形（i32/i64/f32/f64 位形口径一致），rewrite 的复核比较（kind + bits）与单测断言逐位不动；slots 是 kind 的纯函数（I64/F64 双槽），不重复存。
+struct SiteValue
+{
+    const_args::ValueLoad::Kind kind = const_args::ValueLoad::Kind::None;
+    ca::u64                     bits = 0;   ///< 数值（符号扩展存）；浮点的 IEEE 位形
+
+    ca::i32 i32() const noexcept { return static_cast<ca::i32>(bits); }
+    ca::i64 i64() const noexcept { return static_cast<ca::i64>(bits); }
+    ca::f32 f32() const noexcept
+    {
+        return rewrite_tools::bitCast<ca::f32>(static_cast<ca::u32>(bits));
+    }
+    ca::f64 f64() const noexcept { return rewrite_tools::bitCast<ca::f64>(bits); }
+
+    /// 压栈槽数：kind 的纯函数（I64/F64 双槽），与 ValueLoad::slots 同口径。
+    ca::u32 slots() const noexcept
+    {
+        return (kind == const_args::ValueLoad::Kind::I64
+                || kind == const_args::ValueLoad::Kind::F64)
+                   ? 2
+                   : 1;
+    }
+};
+
+/// @brief 一个可折叠站点。`anchorSrcPc`/`anchorOp` 跨会话稳定，rewrite 靠它重定位。`classIdx` 是 scan/rewrite 同一轮里容器 visitResources 的类序号（两段同序遍历，见 rewrite 注）——万类大罐上站点不带 uri 字符串，数十万站点只按索引聚类；折叠值落 SiteValue 紧凑位形（罐 B 实测 77 万站点，POD 存储是 scan 期驻留的紧凑面）。
 struct Site
 {
-    ca::u32               classIdx    = 0;
-    ca::usize             methodIndex = 0;
-    ca::u32               anchorSrcPc = 0;
-    jbc::core::Op         anchorOp    = jbc::core::Op::NOP;
-    const_args::ValueLoad value;   ///< 折叠结果（I32 / I64 / F32 / F64 位形）
+    ca::u32       classIdx    = 0;
+    ca::usize     methodIndex = 0;
+    ca::u32       anchorSrcPc = 0;
+    jbc::core::Op anchorOp    = jbc::core::Op::NOP;
+    SiteValue     value;   ///< 折叠结果（I32 / I64 / F32 / F64 位形，无字符串）
 };
 
 /// @brief 三段之间唯一的数据流。
