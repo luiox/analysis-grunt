@@ -15,9 +15,9 @@
 ///   前缀 `kasumi_`，参考实现 isKasumiWatermarkString 三条全收）；
 /// - **资源面**：URI 前缀 `META-INF/Kasumi/` + `.md` 后缀 + 内容探针
 ///   （anti-llm / developer-message / jailbreak / prompt injection /
-///   PROTECTED BY Kasumi 五条任一子串在场）三证齐才删——参考实现
+///   PROTECTED BY Kasumi 五条任一子串在场）三证齐才删，参考实现
 ///   isKasumiAntiLlmResource 的三面判定，形状命中而探针缺席的资源**保留**
-///   （参考实现返回 false 同口径），本仓以 `resourceCandidates` 如实记账。
+///   （参考实现返回 false 同口径），本仓以 `resourceCandidates` 如实计数。
 ///
 /// 方法体不动：bootstrap/解密器在 indy 全还原后由下游 DeadMember/DeadCode
 /// 清理，本残留不碰代码（参考实现同口径）。
@@ -26,27 +26,27 @@
 ///
 /// - **S2 形状钉面**：注解描述符全等（`Ldev/kasumi/internal/Metadata;`），
 ///   资源 URI 形状（前缀 + `.md`），水印串形状（子串/前缀）。
-/// - **S3 Era 门**：三面判据全是 Kasumi 当前版本的实现选择（注解描述符、
+/// - **S3 Era 检查**：三面判据全是 Kasumi 当前版本的实现选择（注解描述符、
 ///   水印文本、资源前缀、探针表都换代可换），整个改写面落在
-///   `Era::Kasumi` 分支——Era 未判即关面（`eraBlocked`，fail-closed）。
-/// - **S1 互证**：资源删除要内容探针坐实（URI 形状命中 + 注入标记字节在
+///   `Era::Kasumi` 分支，Era 未判即关面（`eraBlocked`，fail-closed）。
+/// - **S1 核对**：资源删除要内容探针坐实（URI 形状命中 + 注入标记字节在
 ///   场才算注入内容）；水印字段删除要 ConstantValue 内容命中。注解摘除
 ///   走注解族深度预检（`attrSafeToDecode`，mjbase #158 守卫）：解不开的
-///   注解槽 fail-closed 不摘（`annoBlocked` 记账），不留半摘态。
+///   注解槽 fail-closed 不摘（`annoBlocked` 计数），不留半摘态。
 ///
 /// ## 资源动词（本仓首个非类条目写面）
 ///
 /// 现役画布 `forEachClass`/`replaceClass` 只走类资源；资源删除走
-/// rewrite_toolbox 的 `removeResource`（写侧原语），对账走 proof_toolbox 的
-/// `countResources`/`resourcesShrunk`（读侧门）：资源数不增（只减）+ 删除
+/// rewrite_toolbox 的 `removeResource`（写侧原语），核对走 proof_toolbox 的
+/// `countResources`/`resourcesShrunk`（读侧检查）：资源数不增（只减）+ 删除
 /// 清单逐条不在场 + 类数不变 + 脏类可重解析。删除清单逐条进 DirtySet
-/// 台账（Stats 面），虚报删减即 proof FAILED。
+/// 统计（Stats 面），虚报删减即 proof FAILED。
 ///
-/// ## 台账
+/// ## 统计
 ///
 /// DirtySet 分面计数（annos/fields/removedResources）+ annoBlocked（复核
-/// 预检拒绝）+ failed（编码失败未归账）；ProofResult 在双门（类数 + 资源
-/// 对账）之外统计三面 residual（语料单罐门要求全 0）。
+/// 预检拒绝）+ failed（编码失败未归账）；ProofResult 在两道检查（类数 + 资源
+/// 核对）之外统计三面 residual（语料单 jar 检查要求全 0）。
 #pragma once
 
 #include <string>
@@ -77,7 +77,7 @@ struct Site
 /// @brief 三段之间唯一的数据流。
 struct ScanResult
 {
-    std::vector<Site>        sites;       ///< 待清理类（逐类条目数台账）
+    std::vector<Site>        sites;       ///< 待清理类（逐类条目数统计）
     std::vector<std::string> resources;   ///< 待删资源（URI 形状 + 内容探针双证齐）
 
     ca::usize totalAnnos         = 0;  ///< 三面 `@Metadata` 总条目数
@@ -88,7 +88,7 @@ struct ScanResult
     ca::usize classesSkipped     = 0;  ///< 会话开不了的类
 };
 
-/// @brief 被清理的类 + 资源删除台账（Stats 面：删除清单逐条可审计）。
+/// @brief 被清理的类 + 资源删除统计（Stats 面：删除清单逐条可审计）。
 struct DirtySet
 {
     std::vector<std::string> uris;             ///< 被清理的类
@@ -102,20 +102,20 @@ struct DirtySet
     ca::usize resourceCandidates = 0;  ///< 删除时复核不再满足判据的资源数
 };
 
-/// @brief 验收结果。residual = 改写后容器里仍可判定的三面残留（语料单罐
-///        门要求全 0；深度预检拦下的敌意槽不在 residual 视野内——那是
-///        不可解面，不是清理缺陷，scan 的 annoBlocked 已如实记账）。
+/// @brief 验收结果。residual = 改写后容器里仍可判定的三面残留（语料单 jar
+///        检查要求全 0；深度预检拦下的敌意槽不在 residual 视野内，那是
+///        不可解面，不是清理缺陷，scan 的 annoBlocked 已如实计数）。
 struct ProofResult
 {
     bool                     ok = true;
-    std::vector<std::string> failed;          ///< 违例台账（class-count/resource-count/条目 URI）
+    std::vector<std::string> failed;          ///< 违例统计（class-count/resource-count/条目 URI）
     ca::usize                residualAnnos     = 0;  ///< 残留 `@Metadata` 条目
     ca::usize                residualFields    = 0;  ///< 残留水印字段
     ca::usize                residualResources = 0;  ///< 残留待删资源
 };
 
 /// @brief SCAN：纯读。三面盘查（注解三面普查 + 水印字段普查 + 资源清单），
-///        Era 门在面外先关（未判即空手而回，一个字节不看内容判据）。
+///        Era 检查在面外先关（未判即空手而回，一个字节不看内容判据）。
 ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInput& input);
 
 /// @brief REWRITE：纯写。只消费 ScanResult：资源先删（参考实现序），类按
@@ -123,7 +123,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
 DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result);
 
 /// @brief PROOF：纯判。类数不增 + 脏类可重解析（`classesIntact`，与全部
-///        残留同门）+ 资源对账（`resourcesShrunk`：数不增 + 清单逐条不在
+///        残留同一检查）+ 资源核对（`resourcesShrunk`：数不增 + 清单逐条不在
 ///        场）+ 三面 residual 统计。
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,
                   ca::usize classesBefore, ca::usize resourcesBefore);

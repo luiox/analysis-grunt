@@ -7,7 +7,7 @@
 /// 只读、rewrite 只写（mutateMethodWithFrames 正统帧链写回）、proof 只判）。
 /// 分发器生成面是知识转写（grunt3@e41e852 `redirect/InvokeDispatcher.kt`
 /// buildStageImpl 逐行，源锚点见各函数头注）；v2 分支（grunt2@36c0eef）
-/// redirect/ 下无此 transformer——v3-only。键表是纯常量直查（tableswitch
+/// redirect/ 下无此 transformer，v3-only。键表是纯常量直查（tableswitch
 /// 静态编码 + 调用点紧邻 key 常量），不需要 jsim；key 经算术混淆时常量缺
 /// 席 → fail-closed 保留（NumberFold 先折）。
 ///
@@ -20,26 +20,26 @@
 /// key - lo），case 数 < 2 拒。case 体从目标起直线走：允许 ALOAD 家族 /
 /// CHECKCAST / NOP，恰一个 INVOKESTATIC|INVOKEVIRTUAL（多候选或成员引用不
 /// 可解析即拒），收尾必须 ret 型 return；中段含标签（合并点）拒；转发目标
-/// 返回类型与键表 ret 恒等互证。virtual 分支的实参从槽 0 起连载、无显式
-/// receiver load——生成面源码 quirk，case 门两侧都不依赖它。
+/// 返回类型与键表 ret 恒等核对。virtual 分支的实参从槽 0 起连载、无显式
+/// receiver load，生成面源码 quirk，case 检查两侧都不依赖它。
 ///
 /// 调用点反查（分发器方法自身跳过）：INVOKESTATIC owner=self + desc 形命中
 /// 已识别键表后，key 位回走 NOP 跳过（squeeze 遗留口径；途中标签 = 合并
 /// 点 fail-closed）；key 非常量（含 NumberBasicEncrypt 藏形）→ keyNotConst，
-/// 不在键表区间 → keyNotInTable。null 跑互证：key 前连续 ACONST_NULL 计数
+/// 不在键表区间 → keyNotInTable。null 跑核对：key 前连续 ACONST_NULL 计数
 /// 与补位数对表（padCount = N - 目标消费实参数，virtual 含 receiver 槽）；
-/// null 跑长于补位数 = 原实参尾带 null 字面量，合法——站点记 padCount，
+/// null 跑长于补位数 = 原实参尾带 null 字面量，合法，站点记 padCount，
 /// 擦除只动末段补位，保留前段 null 实参。
 ///
-/// **promote 纪律**：每方法只 promote 一次——promoteMethod 重复调用幂等但
+/// **promote 纪律**：每方法只 promote 一次，promoteMethod 重复调用幂等但
 /// 重建 CodeUnit，旧 Insn* 全作废；scanClass 预循环单点持有，
-/// buildDispatcher 复用调用方视图绝不自行 promote（boar 正例罐实证：双
+/// buildDispatcher 复用调用方视图绝不自行 promote（boar 正例 jar 验证：双
 /// promote 后调用点反查用旧视图，UAF 直接硬崩）。
 ///
 /// ## REWRITE
 ///
-/// 按类聚类，方法级 roundTripSafe 前置门。单站点：srcPc + INVOKESTATIC 重
-/// 定位后形状复核（身份 / key / null 跑全部重钉——scan 之后字节可能已被同
+/// 按类聚类，方法级 roundTripSafe 前置检查。单站点：srcPc + INVOKESTATIC 重
+/// 定位后形状复核（身份 / key / null 跑全部重钉，scan 之后字节可能已被同
 /// 方法前站改写，不盲改），调用指令原地换真目标（srcPc 保留，opcode 换
 /// case 转发形，成员 intern 成真目标），跨度 [NOP 夹层; 末段 padCount 个
 /// 补位; key] 单批 eraseBatch（全有或全无，kRejectIfUsed 拒收即整体还原
@@ -48,17 +48,17 @@
 ///
 /// ## PROOF
 ///
-/// 类数不增 + 脏类可重解析 + residual（countOnly 复扫：仍「分发器识别通
-/// 过 + 调用点全形状命中键表」的站点数）。语料单罐门要求 0。
+/// 类数不增 + 脏类可重解析 + residual（countOnly 复扫：仍分发器识别通
+/// 过 + 调用点全形状命中键表的站点数）。语料单 jar 检查要求 0。
 ///
 /// ## 已知边界
 ///
-/// 全链罐（boar）不产此面：InvokeDispatcher 排在 ControlflowFlattening 之
-/// 前、调用点又被 ReferenceObfuscate indy 化，罐内真分发器全部被摊平成岛；
-/// desc 形候选与 `__grt$indy$` 蹬床 / 数值走廊方法形状碰撞，全数形状拒绝
-/// ——反误伤门工作正常，不是缺陷。正例罐（仅 InvokeDispatcher
-/// chance=1.0）实证识别与回填链路（语料数字见 corpus-ledger）。帧重算
-/// type conflict 的宿主方法 fail-closed 保留——无编辑帧链探针复现同一冲突
+/// 全链 jar（boar）不产此面：InvokeDispatcher 排在 ControlflowFlattening 之
+/// 前、调用点又被 ReferenceObfuscate indy 化，jar 内真分发器全部被摊平成岛；
+/// desc 形候选与 `__grt$indy$` 转发 / 数值走廊方法形状碰撞，全数形状拒绝
+/// ，反误伤检查工作正常，不是缺陷。正例 jar（仅 InvokeDispatcher
+/// chance=1.0）验证识别与回填链路（语料数字见 corpus-ledger）。帧重算
+/// type conflict 的宿主方法 fail-closed 保留，无编辑帧链探针复现同一冲突
 /// （原方法既有形态，与改写无关）；roundTripSafe 只测 promote→lower 不测
 /// rewire，查不出该形态，不手剪 StackMapTable。
 
@@ -115,7 +115,7 @@ bool intLoadSlotOf(const ir::Insn& in, ca::u32& slot)
     return false;
 }
 
-/// @brief 引用槽装载（ALOAD a / ALOAD_0..3 快捷形——生成面实参全是引用型，
+/// @brief 引用槽装载（ALOAD a / ALOAD_0..3 快捷形，生成面实参全是引用型，
 ///        `it.getLoadType()` 对 L/[ 型一律 ALOAD，grunt3 util Type.kt）。
 bool refLoadAt(const ir::Insn& in)
 {
@@ -165,7 +165,7 @@ std::optional<Op> returnOpOf(std::string_view ret)
     return std::nullopt;
 }
 
-/// @brief 目标 desc 的实参槽位总数（J/D 各占 2 槽）——调用点补位互证用；
+/// @brief 目标 desc 的实参槽位总数（J/D 各占 2 槽），调用点补位核对用；
 ///        描述符非法返回 -1。
 ca::i32 paramSlotsOf(std::string_view desc)
 {
@@ -263,7 +263,7 @@ struct Dispatcher
     std::vector<Target> cases;          ///< 下标 = key - lo
 };
 
-/// @brief 分发器识别失败原因（记账归类；None = 成功）。
+/// @brief 分发器识别失败原因（计数归类；None = 成功）。
 enum class DispFail : ca::u8 { None, NotCandidate, ShapeMismatch, Ambiguous };
 
 /// @brief 分发器识别：desc 形 → static → 头锚（ILOAD key 槽 + TABLESWITCH
@@ -272,13 +272,13 @@ enum class DispFail : ca::u8 { None, NotCandidate, ShapeMismatch, Ambiguous };
 ///
 /// 生成面逐字锚（grunt3@e41e852 InvokeDispatcher.kt buildStageImpl）：
 /// `LABEL(startLabel); ILOAD(maxLoadOp); TableSwitchInsnNode(startCase,
-/// endCase, startLabel.node, labels...)`——default 即方法头；case 体
+/// endCase, startLabel.node, labels...)`，default 即方法头；case 体
 /// `VarInsnNode(getLoadType, stack); CHECKCAST; INVOKESTATIC|INVOKEVIRTUAL;
 /// +InsnNode(returnType)`。头锚与 case 体任一不合规 → 整个分发器拒绝
 /// （fail-closed，该表完全不用，residual 如实计）。
 ///
 /// @param code 调用方已 promote 的视图（promoteMethod 重复调用会**重建**
-///        CodeUnit——旧 Insn* 全作废，故本函数绝不自行 promote，promote 纪
+///        CodeUnit，旧 Insn* 全作废，故本函数绝不自行 promote，promote 纪
 ///        律由 scanClass 的单点预循环持有）。
 /// @return 失败桶（None = 成功，out 已填充）；失败原因进 why。
 DispFail buildDispatcher(ir::ClassSession& s, ca::usize methodIndex, const PromotedCode& code,
@@ -402,7 +402,7 @@ DispFail buildDispatcher(ir::ClassSession& s, ca::usize methodIndex, const Promo
             why = "case 体缺转发 invoke 或 ret 型收尾";
             return DispFail::ShapeMismatch;
         }
-        // 转发目标返回类型与键表 ret 恒等（生成面按返回类型分组的事实互证：
+        // 转发目标返回类型与键表 ret 恒等（生成面按返回类型分组的事实核对：
         // case 转发 invoke 的返回类型 == 分发器 desc 的返回类型）。
         const std::string_view invokeRet = [&] {
             const std::string_view d = target->desc;
@@ -473,7 +473,7 @@ void scanClass(ir::ClassSession& s, const std::string& uri, ScanResult& result,
         const std::string refKey = disp.name + '\0' + disp.desc;
         const auto        [it, inserted] = byRefKey.emplace(refKey, mi);
         if (!inserted) {
-            // 同 (name, desc) 两个分发器形——JVMS 不可能，防御性 fail-closed。
+            // 同 (name, desc) 两个分发器形，JVMS 不可能，防御性 fail-closed。
             refAmbiguous = true;
             continue;
         }
@@ -481,7 +481,7 @@ void scanClass(ir::ClassSession& s, const std::string& uri, ScanResult& result,
         dispatchers.emplace(mi, std::move(disp));
     }
 
-    // ---- 相 2：调用点反查（分发器方法自身跳过——生成面 case 体不含分发器
+    // ---- 相 2：调用点反查（分发器方法自身跳过，生成面 case 体不含分发器
     //      调用，嵌套分发器不存在）----
     for (const ca::usize mi : order0) {
         if (dispatchers.count(mi) != 0) continue;
@@ -565,7 +565,7 @@ void scanClass(ir::ClassSession& s, const std::string& uri, ScanResult& result,
 
             // ---- 补位 ACONST_NULL 跑计数（key 之前连续的 aconst_null）----
             // 生成面在 key 前插入 addNulls 个补位；调用点原实参尾部的 null
-            // 字面量与补位同形不可分辨——null 跑 ≥ addNulls，只擦**末段**
+            // 字面量与补位同形不可分辨，null 跑 ≥ addNulls，只擦**末段**
             // addNulls 个（原实参原样保留）。
             ca::u32 nullRun = 0;
             const ca::u32 cap = static_cast<ca::u32>(disp.keySlot) + 1;
@@ -580,7 +580,7 @@ void scanClass(ir::ClassSession& s, const std::string& uri, ScanResult& result,
                 reject("补位跨度含合并点标签（fail-closed）", nullptr);
                 continue;
             }
-            // ---- 补位互证：addNulls = N - 目标消费（生成面
+            // ---- 补位核对：addNulls = N - 目标消费（生成面
             //      `addNulls = maxLoadOp - handle.loadType.size`）；null 跑
             //      ∈ [addNulls, N]（下界 = 无 null 实参，上界 = 验证器强制的
             //      满栈形）----
@@ -589,7 +589,7 @@ void scanClass(ir::ClassSession& s, const std::string& uri, ScanResult& result,
             if (consume < 0 || padCount < 0
                 || static_cast<ca::i32>(nullRun) < padCount
                 || static_cast<ca::i32>(nullRun) > disp.keySlot) {
-                reject("补位跨度与目标栈形互证不符（目标消费 " + std::to_string(consume)
+                reject("补位跨度与目标栈形核对不符（目标消费 " + std::to_string(consume)
                            + "，addNulls = " + std::to_string(padCount)
                            + "，null 跑 = " + std::to_string(nullRun) + "）",
                        &result.padMismatch);
@@ -643,7 +643,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
 
 namespace {
 
-/// @brief rewriteSite 失败步诊断（GRUNT_DISPATCHER_RESTORE_TRACE 门控；
+/// @brief rewriteSite 失败步诊断（GRUNT_DISPATCHER_RESTORE_TRACE 检查控；
 ///        恒返回 false，调用点写 `return siteFail(site, "步名")`）。
 bool siteFail(const Site& site, const char* step)
 {
@@ -655,7 +655,7 @@ bool siteFail(const Site& site, const char* step)
     return false;
 }
 
-/// @brief 单站点改写。@return false = 未动（failed 记账）。
+/// @brief 单站点改写。@return false = 未动（failed 计数）。
 ///
 /// 重定位（srcPc + INVOKESTATIC）→ 形状复核（scan 之后字节可能已被同方法
 /// 前站改写，不盲改）→ 调用指令原地换真目标（srcPc 保留，opcode 换转发
@@ -713,7 +713,7 @@ bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
         ++nullRun;
     }
     if (labeled) return false;
-    // 补位互证（与 scan 同式）：addNulls = N - 目标消费；null 跑 ∈ [addNulls, N]。
+    // 补位核对（与 scan 同式）：addNulls = N - 目标消费；null 跑 ∈ [addNulls, N]。
     const auto  shape    = parseDispDesc(site.dispDesc);
     const ca::i32 consume = targetStackConsume(site.target.isVirtual, site.target.desc);
     if (!shape.has_value() || consume < 0) return siteFail(site, "desc/目标消费复核不符");
@@ -721,11 +721,11 @@ bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
     if (padCount < 0 || padCount != static_cast<ca::i32>(site.padCount)
         || static_cast<ca::i32>(nullRun) < padCount
         || static_cast<ca::i32>(nullRun) > shape->keySlot) {
-        return siteFail(site, "补位互证复核不符");
+        return siteFail(site, "补位核对复核不符");
     }
 
     // 受害者清单：null 跑的**末段** padCount 个补位 + key（原实参尾部如有
-    // null 字面量在跑的前段，保留不动——生成面补位块紧邻 key）。
+    // null 字面量在跑的前段，保留不动，生成面补位块紧邻 key）。
     std::vector<ir::InsnId> victims;
     victims.reserve(static_cast<ca::usize>(padCount) + 1);
     ca::i32 toCollect  = padCount;
@@ -778,7 +778,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
     rewrite_tools::FrameContext frames(container);
 
-    // 站点按 uri 聚类（万类大罐上避免 classes × sites 平方账）。
+    // 站点按 uri 聚类（万类大 jar 上避免 classes × sites 平方账）。
     std::unordered_map<std::string, std::vector<const Site*>> byUri;
     for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
 
@@ -804,7 +804,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
-        // 前置门：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
+        // 前置检查：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
         const std::unordered_set<ca::usize> safe =
             proof_tools::roundTripSafe(*entry.bytes,
                                        std::vector<ca::usize>(methodIdxs.begin(),
@@ -882,7 +882,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,
                   ca::usize classesBefore)
 {
-    // proof 是效力门（不变量复核），不许被 pass 级时间片截短——挂起期间
+    // proof 是效力检查（不变量复核），不许被 pass 级时间片截短，挂起期间
     // forEachClass 全量放行（residual 统计同样要看到全量类）。
     pass_clock::Suspend                   suspend;
     const proof_tools::ClassIntactResult intact =

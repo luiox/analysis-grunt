@@ -2,28 +2,28 @@
 /// @brief       残留 `cff_unflatten` 的三段判据测试（真值往返 + 拒绝面反证 +
 ///              JVM -Xverify:all 实跑）。
 ///
-/// 夹具是「缩小版 Grunt v3 ControlflowFlattening 产物形态」（jasm 现场汇编，
+/// 夹具是缩小版 Grunt v3 ControlflowFlattening 产物形态（jasm 现场汇编，
 /// 源算法锚 grunt3@e41e852 FlowControlFlowFlattener.kt，boar-main.jar
-/// `net/spartanb312/obf/AD.a` 实证同构）：每方法一个 fresh state 槽、每出口
+/// `net/spartanb312/obf/AD.a` 验证同构）：每方法一个 fresh state 槽、每出口
 /// 一个 dispatcher 岛 `[ILOAD s; TABLESWITCH]`（键窗连续、default 落岛首真
-/// 块 = alias face）、每条入边一个常量供给桥（inline span 闭链）、junk 门
+/// 块 = alias face）、每条入边一个常量供给桥（inline span 闭链）、junk 检查
 /// 与 scramble 假桥同形。
 ///
 /// 真值往返的证据链：桥 span 的求值（Add/Xor 闭链）与键表（tableswitch 静
-/// 态编码）是同一份静态事实的两半——scan 反查「桥 → 真块」，rewrite 直连后
+/// 态编码）是同一份静态事实的两半，scan 反查桥 → 真块，rewrite 直连后
 /// 方法恢复直线块序；断言反摊平后的 JVM 实跑结果 == 夹具真值表写下的值
 /// （无循环论证：判据不读方法名，键表由结构重建）。
 ///
 /// 覆盖分工：
-/// - SCAN：单岛 / 多岛同槽 / 边载体 junk 门 / 异常 handler 桥（per-frame
+/// - SCAN：单岛 / 多岛同槽 / 边载体 junk 检查 / 异常 handler 桥（per-frame
 ///   第二岛）四形态定案；state 槽越界写、processor 形桥、span 除零、岛间
 ///   共享块、InvokeDispatcher 方法头（反误伤）、异常 start 锚被擦块 →
-///   拒绝面逐桶记账；
+///   拒绝面逐桶计数；
 /// - REWRITE：岛 + 桥擦除、alias-face 剪枝（scramble → default）、入口块归
-///   位、handler 重绑、无假臂门紧邻岛头的 positional 落空臂钉；拒绝面上
+///   位、handler 重绑、无假臂 guard紧邻岛头的 positional 落空臂钉；拒绝面上
 ///   容器字节逐位不动；
 /// - PROOF：类数不增 + 脏类可重解析 + residual 归零（未跑 rewrite 时如实
-///   报「本可反摊平」岛数）；
+///   报本可反摊平岛数）；
 /// - JVM：-Xverify:all 下实跑反摊平产物（含异常路径），stdout 对照真值。
 #include "grunt/cff_unflatten.hpp"
 
@@ -187,7 +187,7 @@ std::string flatSource(const std::string& name)
            "}\n";
 }
 
-/// @brief 边载体夹具：入口桥的 goto 被 ControlflowJump junk 门包裹（门块无
+/// @brief 边载体夹具：入口桥的 goto 被 ControlflowJump junk guard 包裹（guard 块无
 ///        state 读写、唯一前驱 = 常量供给入口桥 → 臂重指 caseOf(12)=LE）。
 std::string gateSource(const std::string& name)
 {
@@ -205,7 +205,7 @@ std::string gateSource(const std::string& name)
                 "      bipush 15\n"
                 "      ixor\n"
                 "      istore 2\n"
-                "      goto Lgate\n"          // 入口桥 → junk 门（不直连岛头）
+                "      goto Lgate\n"          // 入口桥 → junk 检查（不直连岛头）
                 "    Lgate:\n"                // 边载体：5<9 恒真 → 岛头；假臂
                 "      iconst_5\n"            //   落 junk 尾（原样保留）
                 "      bipush 9\n"
@@ -390,9 +390,9 @@ std::string multiSource(const std::string& name)
            "}\n";
 }
 
-/// @brief positional 落空臂钉夹具：junk 门紧邻岛头（门块 if_icmplt 的落空
-///        臂是位置边，直落岛头）——岛头被擦后落空臂会改落邻接后继（LB1），
-///        改写期须补 GOTO 钉回 case 目标（LE）。门带假臂时假臂自成一块、
+/// @brief positional 落空臂钉夹具：junk 检查紧邻岛头（guard 块 if_icmplt 的落空
+///        臂是位置边，直落岛头），岛头被擦后落空臂会改落邻接后继（LB1），
+///        改写期须补 GOTO 钉回 case 目标（LE）。guard 带假分支时假臂自成一块、
 ///        不触发此形，故本夹具无假臂且 LB1 紧跟 Ldisp。
 std::string pinGateSource(const std::string& name)
 {
@@ -401,7 +401,7 @@ std::string pinGateSource(const std::string& name)
            "\n"
            "  .method public static flat (II)I {\n"
            "    code: {\n"
-           "      iconst_3\n"              // 入口桥：3^15=12 → junk 门（不直连岛头）
+           "      iconst_3\n"              // 入口桥：3^15=12 → junk 检查（不直连岛头）
            "      bipush 15\n"
            "      ixor\n"
            "      istore 2\n"
@@ -424,8 +424,8 @@ std::string pinGateSource(const std::string& name)
            "      iadd\n"
            "      istore 2\n"
            "      goto Ldisp\n"
-           "    Lgate:\n"                  // 边载体 junk 门：紧邻岛头（落空臂
-           "      iconst_5\n"              //   positional 直落岛头——钉点回归面）
+           "    Lgate:\n"                  // 边载体 junk 检查：紧邻岛头（落空臂
+           "      iconst_5\n"              //   positional 直落岛头，钉点回归面）
            "      bipush 9\n"
            "      if_icmplt Ldisp\n"
            "    Ldisp:\n"
@@ -480,7 +480,7 @@ std::string flatPlainSource(const std::string& name)
     return src.replace(at, scr.size(), "");
 }
 
-/// @brief 拒绝面夹具：span 求值除零——LbR 桥 6/0（IDIV 除数 0，Java 抛
+/// @brief 拒绝面夹具：span 求值除零，LbR 桥 6/0（IDIV 除数 0，Java 抛
 ///        ArithmeticException，静态复算不定 → spanUnsolvable 整岛拒）。
 std::string divZeroSource(const std::string& name)
 {
@@ -499,7 +499,7 @@ std::string divZeroSource(const std::string& name)
                        "      idiv\n");
 }
 
-/// @brief 拒绝面夹具：state 槽越界写——真块 E 以非常量表达式写槽 2
+/// @brief 拒绝面夹具：state 槽越界写，真块 E 以非常量表达式写槽 2
 ///        （iload 参与 → span 出词汇表 → 槽污染连坐整槽）。
 std::string pollutedSource(const std::string& name)
 {
@@ -518,7 +518,7 @@ std::string pollutedSource(const std::string& name)
 }
 
 /// @brief 拒绝面夹具：processor 形桥（Mixed 模式缩样，键在 key processor
-///        后静态不可解）+ inline 入口桥——整岛 keyProcessor 保留。
+///        后静态不可解）+ inline 入口桥，整岛 keyProcessor 保留。
 std::string processorSource(const std::string& name)
 {
     return ".super java/lang/Object\n"
@@ -582,7 +582,7 @@ std::string processorSource(const std::string& name)
            "}\n";
 }
 
-/// @brief 拒绝面夹具：岛间共享块——两岛（不同槽）case 目标同落 LX。
+/// @brief 拒绝面夹具：岛间共享块，两岛（不同槽）case 目标同落 LX。
 std::string sharedBlockSource(const std::string& name)
 {
     return ".super java/lang/Object\n"
@@ -649,8 +649,8 @@ std::string sharedBlockSource(const std::string& name)
 }
 
 /// @brief 反误伤夹具：v3 InvokeDispatcher 分发器方法头（ILOAD key 槽 +
-///        tableswitch default 回跳方法头 + case 转发体）——岛形判据不得把
-///        它当 CFF 岛擦掉（default 非 case 目标 + 零分支引用双门）。
+///        tableswitch default 回跳方法头 + case 转发体），岛形判据不得把
+///        它当 CFF 岛擦掉（default 非 case 目标 + 零分支引用两道检查）。
 std::string dispatcherHeadSource(const std::string& name)
 {
     return ".super java/lang/Object\n"
@@ -687,9 +687,9 @@ std::string dispatcherHeadSource(const std::string& name)
            "}\n";
 }
 
-/// @brief 拒绝面夹具：异常区间 start 锚在桥头（被擦块）——保护语义不可保持。
+/// @brief 拒绝面夹具：异常区间 start 锚在桥头（被擦块），保护语义不可保持。
 ///        单岛 + handler 为独立真块（异常 handler 栈面 [exc] 不汇入共享
-///        dispatcher——handler 桥若同岛会因 [exc]×[] 合并冲突无法过帧分析，
+///        dispatcher，handler 桥若同岛会因 [exc]×[] 合并冲突无法过帧分析，
 ///        per-frame 第二岛才是生成面正形，见 excSource）。
 std::string excStartOnBridgeSource(const std::string& name)
 {
@@ -762,7 +762,7 @@ std::string excStartOnBridgeSource(const std::string& name)
            "}\n";
 }
 
-/// @brief JVM 实跑夹具：flat（异常路径版）+ main——反摊平后
+/// @brief JVM 实跑夹具：flat（异常路径版）+ main，反摊平后
 ///        `java -Xverify:all` 实跑 stdout 应为 "33\n-1"。
 std::string jvmSource(const std::string& name)
 {
@@ -835,7 +835,7 @@ std::string locateJava()
 }
 
 /// @brief 反摊平产物落临时目录 + `java -Xverify:all -cp <dir> <main>` 实跑
-///        （stdout/stderr 重定向落盘回读——std::system 面，无平台宏）。
+///        （stdout/stderr 重定向落盘回读，std::system 面，无平台宏）。
 /// @return (退出码, 合并输出)；java 不可用返回 (-1, "no java")。
 std::pair<int, std::string> runJavaVerify(const std::vector<ca::u8>& bytes,
                                           const std::string&         mainClass)
@@ -858,7 +858,7 @@ std::pair<int, std::string> runJavaVerify(const std::vector<ca::u8>& bytes,
                   static_cast<std::streamsize>(bytes.size()));
     }
 
-    // cmd /c 对含引号命令行走「剥首尾引号」老规则——免引号面才是稳定面：
+    // cmd /c 对含引号命令行走剥首尾引号老规则，免引号面才是稳定面：
     // 全路径无空格时直接裸拼（java 全路径 / temp 目录带空格 = 环境不支持，
     // 如实报 no java 交由调用方跳过）。
     const std::filesystem::path outPath = dir / "out.txt";
@@ -1076,16 +1076,16 @@ TEST(CffRewrite, UnflattensBehindJunkGateCarrier)
     const std::string out = disassemble(classBytes(container, "CffGate.class"));
     EXPECT_EQ(out.find("tableswitch"), std::string::npos) << out;
     EXPECT_EQ(out.find("istore_2"), std::string::npos) << out;
-    // junk 门原样保留（臂已重指真实块），假臂 ireturn 尾在场。
+    // junk 检查原样保留（臂已重指真实块），假臂 ireturn 尾在场。
     EXPECT_NE(out.find("if_icmplt"), std::string::npos) << out;
     EXPECT_NE(out.find("ireturn"), std::string::npos) << out;
 }
 
 TEST(CffRewrite, PinsFallthroughArmOfGateAdjacentToDispatcher)
 {
-    // 无假臂 junk 门紧邻岛头：if_icmplt 落空臂是位置边（usersOf 看不见），
+    // 无假臂 junk 检查紧邻岛头：if_icmplt 落空臂是位置边（usersOf 看不见），
     // 岛头擦除后必须补 GOTO 钉回 case 目标（key 12 → LE），否则落空臂改落
-    // 邻接后继（LB1）。已归类条件门 → 不拒，钉后正常反摊平。
+    // 邻接后继（LB1）。已归类条件 guard 块 → 不拒，钉后正常反摊平。
     model::ResourceContainer container =
         makeContainer({{"CffPinGate", pinGateSource("CffPinGate")}});
 
@@ -1102,7 +1102,7 @@ TEST(CffRewrite, PinsFallthroughArmOfGateAdjacentToDispatcher)
     EXPECT_EQ(dirty.entryRestored, 1u);
 
     const std::string out = disassemble(classBytes(container, "CffPinGate.class"));
-    // 岛 + 三桥 + 入口桥 span 全数离场（jasm 反汇编把 bipush 折成 ldc——
+    // 岛 + 三桥 + 入口桥 span 全数离场（jasm 反汇编把 bipush 折成 ldc，
     // 桥 span 的 6/7/15 以 ldc 形在场即未擦净）。
     EXPECT_EQ(out.find("tableswitch"), std::string::npos) << out;
     EXPECT_EQ(out.find("istore_2"), std::string::npos) << out;
@@ -1113,7 +1113,7 @@ TEST(CffRewrite, PinsFallthroughArmOfGateAdjacentToDispatcher)
                           "ldc 6", "ldc 7", "ldc 15"}) {
         EXPECT_EQ(out.find(k), std::string::npos) << k << " 在场:\n" << out;
     }
-    // junk 门块体保留（臂重指 LE），真块链在场（bipush 9 经 jasm 折为 ldc 9）。
+    // junk guard 块体保留（臂重指 LE），真块链在场（bipush 9 经 jasm 折为 ldc 9）。
     EXPECT_NE(out.find("iconst_5"), std::string::npos) << out;
     EXPECT_NE(out.find("ldc 9"), std::string::npos) << out;
     EXPECT_NE(out.find("if_icmplt"), std::string::npos) << out;
@@ -1143,7 +1143,7 @@ TEST(CffRewrite, UnflattensTwoIslandsAndRebindsHandler)
     const std::string out = disassemble(classBytes(container, "CffExc.class"));
     EXPECT_EQ(out.find("tableswitch"), std::string::npos) << out;
     EXPECT_EQ(out.find("istore_2"), std::string::npos) << out;
-    // 异常表面保留（handler 重绑由 JVM 实跑门验证；反汇编输出不带 L 前缀）。
+    // 异常表面保留（handler 重绑由 JVM 实跑检查验证；反汇编输出不带 L 前缀）。
     EXPECT_NE(out.find("java/lang/Throwable"), std::string::npos) << out;
     EXPECT_NE(out.find("iconst_m1"), std::string::npos) << out;
 }
@@ -1202,7 +1202,7 @@ TEST(CffProof, KeepsClassCountReparsesAndResidualZero)
 
 TEST(CffProof, CountsResidualWhenIslandsUntouched)
 {
-    // 岛在场但没跑 rewrite：residual 如实报告「本可反摊平」的岛数。
+    // 岛在场但没跑 rewrite：residual 如实报告本可反摊平的岛数。
     model::ResourceContainer container =
         makeContainer({{"CffMulti", multiSource("CffMulti")}});
 

@@ -11,18 +11,18 @@
 /// ## 复核纪律与写回
 ///
 /// rewrite 不信 scan 的区域收集结果：按 `srcPc+op` 重定位分支后**重新收
-/// 操作数区、重新裁决**——同方法前面的站点改写后（首条变 ICONST_0 / NOP）
+/// 操作数区、重新裁决**，同方法前面的站点改写后（首条变 ICONST_0 / NOP）
 /// 后续站点的紧邻关系可能已变，盲改就是半截改写。
 ///
 /// 写回是类级批驱动：逐方法 promote → DOM 改写 → 全部方法 lower 成功才
 /// `writeClass`（任一失败整类放弃，session 丢弃，半改写态不外泄）。**不走
 /// `mutateMethodWithFrames` 的 Strict 帧再生**：改写不新增合并点、不新增
 /// 帧位（TAKEN 的 `IFEQ` 目标是原分支目标，本来就有帧；延续段经条件跳转
-/// 的 fallthrough 保持可达），旧 SMT 由 lower 的 pcmap 重定位即真值——被
+/// 的 fallthrough 保持可达），旧 SMT 由 lower 的 pcmap 重定位即真值，被
 /// 擦区域对栈的净效应为零（操作数全部被分支消费），后继帧内容无需变更。
 ///
 /// 这条契约的前提是形状纪律：**改写不得引入无条件跳转、不得新增合并点**。
-/// HotSpot 线性走查要求无条件跳转之后的段首带帧，而本 pass 不再生 SMT——
+/// HotSpot 线性走查要求无条件跳转之后的段首带帧，而本 pass 不再生 SMT，
 /// 一旦破例插 `goto`，被擦延续段的段首无帧，导出即
 /// `Expecting a stack map frame`。NOT-TAKEN 折叠留下的分支目标死块带原帧，
 /// 中间态合法，由下游 `grunt.DeadCode` 清理。
@@ -124,7 +124,7 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
         if (!allI32(args)) continue;
         // 自身 TAKEN 形态 [ICONST_0, IFEQ→T] 是本判据的不动点：恒真条件跳转
         // 的操作数也是常量，再裁决再重写只会原样吐回（hit 虚增、收敛判据
-        // 失真）——扫描面直接排除。
+        // 失真），扫描面直接排除。
         if (in->op == Op::IFEQ && producers.size() == 1) {
             const ir::Insn* producer = cu->dom.peek(producers[0]);
             if (producer != nullptr && producer->op == Op::ICONST_0) continue;
@@ -136,7 +136,7 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
 /// @brief 单方法 REWRITE。@return 改写成功的站点数；failed 走出参。
 ///
 /// cu 由调用方 promote：DOM 改写落在本 unit，随后由调用方统一 lowerMethod
-/// （原 SMT/行表由 lower 的 pcmap 重定位——本改写不新增合并点：TAKEN 落
+/// （原 SMT/行表由 lower 的 pcmap 重定位，本改写不新增合并点：TAKEN 落
 /// [ICONST_0, IFEQ→T] 恒真条件跳转、NOT-TAKEN 锚 NOP 原地保 srcPc，被擦
 /// 指令若被帧/标签锚定 eraseBatch 会拒收整站放弃，不产生需要再生的帧）。
 ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
@@ -174,7 +174,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
             continue;
         }
         // 防御复核：自身 TAKEN 形态的不动点原样跳过（scan 面已排除，站点不
-        // 应到达这里；同方法前站改写后临时成形的除外——跳过即终态）。
+        // 应到达这里；同方法前站改写后临时成形的除外，跳过即终态）。
         if (branch->op == Op::IFEQ && producers.size() == 1) {
             const ir::Insn* producer = dom.peek(producers[0]);
             if (producer != nullptr && producer->op == Op::ICONST_0) continue;
@@ -210,7 +210,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
             gotoTarget = &branch->target;
         }
 
-        // 标签门：区域中段或分支本体带标签 = 合并点，外部到达路径的栈形状与
+        // 标签检查：区域中段或分支本体带标签 = 合并点，外部到达路径的栈形状与
         // 区域产出耦合，整站放弃；区域首条（anchor）的标签安全。
         bool blocked = !dom.labelsAt(order[branchPos]).empty();
         for (ca::usize i = 1; i < producers.size(); ++i) {
@@ -233,7 +233,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
         const ir::Insn original = *anchor;
         const ca::u32 keepPc = anchor->srcPc;
 
-        // TAKEN：恒真条件跳转形态 [ICONST_0, IFEQ→T]——锚改常量、分支本体
+        // TAKEN：恒真条件跳转形态 [ICONST_0, IFEQ→T]，锚改常量、分支本体
         // 原地换 op+目标、其余操作数擦除。不插无条件 GOTO：HotSpot 线性走查
         // 要求无条件跳转之后的段首带帧，而被擦区域的延续段在原 SMT 中无帧
         // （非合并点，实测 VerifyError "Expecting a stack map frame"）；条件
@@ -263,9 +263,9 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
         }
 
         // 其余操作数（与 NOT-TAKEN 下的分支本体）擦除。eraseBatch 是
-        // kRejectIfUsed：受害者被异常表 start/end 引用时拒收（上面的标签门
-        // 只盖跳转标签）——拒收即整站放弃，anchor/分支回滚原样，不留
-        // 「常量装载已被覆盖、分支还在」的半改写态（栈下溢 VerifyError）。
+        // kRejectIfUsed：受害者被异常表 start/end 引用时拒收（上面的标签检查
+        // 只盖跳转标签），拒收即整站放弃，anchor/分支回滚原样，不留
+        // 常量装载已被覆盖、分支还在的半改写态（栈下溢 VerifyError）。
         std::vector<ir::InsnId> victims(producers.begin() + 1, producers.end());
         if (!taken) victims.push_back(order[branchPos]);
         if (!victims.empty() && dom.eraseBatch(victims).is_err()) {
@@ -338,7 +338,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
-        // 前置门：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
+        // 前置检查：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
         const std::unordered_set<ca::usize> safe =
             proof_tools::roundTripSafe(*entry.bytes,
                                        std::vector<ca::usize>(methodIdxs.begin(),

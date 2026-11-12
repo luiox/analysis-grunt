@@ -1,14 +1,14 @@
 /// @file        indy_decode_test.cpp
 /// @brief       残留 `indy_decode` 的三段判据测试（参考实现 2 case 迁移 + 拒绝面反证）。
 ///
-/// 夹具是「缩小版 Kasumi 形态」（jasm 现场汇编，不落二进制、不依赖语料目录）：
+/// 夹具是缩小版 Kasumi 形态（jasm 现场汇编，不落二进制、不依赖语料目录）：
 /// 每类自带 8 参 BSM + `(String;)String` XOR 解密器（双层 `charAt; LDC K1;
 /// LDC K2; IXOR; IXOR; i2c` 形状，key 逐字取参考实现测试的 0x29432d6c）；密文串
 /// 以 \uXXXX 转义落 jasm 源（XOR 结果的码元任意，转义面无损）。
 ///
 /// 覆盖分工：
 /// - SCAN：key 链 + 解密 + 7 形态表 → 站点成立；Era 未判 / key 缺失 /
-///   bsmArgs 畸形 / desc 互证不符 / 接口无旁证 → 拒绝面逐类记账；
+///   bsmArgs 畸形 / desc 核对不符 / 接口无旁证 → 拒绝面逐类计数；
 /// - REWRITE：static 原地换 invokestatic；virtual 插 spill/checkcast 后落
 ///   invokeinterface（接口旁证注入面）；拒绝面上容器字节逐位不动；
 /// - PROOF：类数不增 + 脏类可重解析 + residual 归零。
@@ -253,7 +253,7 @@ TEST(IndyDecodeScan, RejectsSiteWhenBsmArgsMalformed)
 
 TEST(IndyDecodeScan, RejectsSiteWhenDescCrossCheckFails)
 {
-    // 解密 desc 与 indy desc 互证不符：S1 拒绝（(II)V vs (I)I）。
+    // 解密 desc 与 indy desc 核对不符：S1 拒绝（(II)V vs (I)I）。
     const std::string args = "0, \"" + xorEscape("java.lang.Math", kKey) + "\", \""
                              + xorEscape("abs", kKey) + "\", \"" + xorEscape("(II)V", kKey)
                              + "\", 0";
@@ -301,7 +301,7 @@ TEST(IndyDecodeRewrite, SwapsStaticIndyForInvokestatic)
 TEST(IndyDecodeRewrite, SpillsReceiverAndDispatchesInvokeinterface)
 {
     // 参考实现 case 2：virtual 目标是 JDK 接口（java/util/Iterator.hasNext）时必须
-    // 走 invokeinterface——旁证由注入面给（穷举普查，成员与否双向作证）。
+    // 走 invokeinterface，旁证由注入面给（穷举普查，成员与否双向作证）。
     model::ResourceContainer container = makeContainer(
         {{"KasumiHost", hostSource("KasumiHost", true, "", virtualArgsOk())}});
     const ScanResult scanned =
@@ -322,7 +322,7 @@ TEST(IndyDecodeRewrite, SpillsReceiverAndDispatchesInvokeinterface)
 
 TEST(IndyDecodeRewrite, LeavesContainerUntouchedOnRejections)
 {
-    // 拒绝面四态（key 缺失 / 参数畸形 / desc 互证不符 / 接口无旁证）：字节逐位不动。
+    // 拒绝面四态（key 缺失 / 参数畸形 / desc 核对不符 / 接口无旁证）：字节逐位不动。
     std::vector<std::pair<std::string, std::string>> fixtures;
     fixtures.push_back(
         {"noKey", hostSource("NoKeyHost", false, staticArgsOk(), "")});

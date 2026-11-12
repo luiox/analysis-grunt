@@ -2,7 +2,7 @@
 /// @brief       残留 `material_key_restore`：Grunt v3 RuntimeMaterial 材料通道
 ///              解密器 key 静态折回（indy_restore `materialLane` 拒绝桶的闭环）。
 ///
-/// ## 形态（artifact 侧，boar-main.jar 逐字节实证；源锚 `grunt3@e41e852`
+/// ## 形态（artifact 侧，boar-main.jar 逐字节验证；源锚 `grunt3@e41e852`
 ///    `RuntimeMaterial.kt` / `ReferenceObfuscate.kt`）
 ///
 /// v3 `ReferenceObfuscate` 在带 RuntimeMaterial 草稿的类里生成材料通道解密器
@@ -10,9 +10,9 @@
 /// IXOR; I2C`）与材料取值方法 `materialKey()`（`createMaterialKeyMethod`
 /// 逐字 9 条：`GETSTATIC keyField(J); DUP2; INT(32); LUSHR; LXOR; L2I;
 /// GETSTATIC poisonField(I); IXOR; IRETURN`），有效 key = `K ^ materialKey()`。
-/// 每类恰好一个材料解密器、`materialKey()` 恰被它调用一次（boar xref 实证）。
+/// 每类恰好一个材料解密器、`materialKey()` 恰被它调用一次（boar xref 验证）。
 ///
-/// 材料初值链（boar 实证，上游供给链 `grunt.IndyRestore` + `grunt.
+/// 材料初值链（boar 验证，上游供给链 `grunt.IndyRestore` + `grunt.
 /// StringPoolFold` 之后全静态）：
 ///
 ///     <clinit>:  ldc <池明文>; INT(32);
@@ -22,19 +22,19 @@
 ///
 /// parse 面是 `java/lang/Long.parseUnsignedLong (Ljava/lang/String;I)J`
 /// （直连，或体恰为 `aload_0; iload_1; invokestatic <parse>; lreturn` 的单跳
-/// 蹦床——IndyRestore 第一轮已把蹦床里的 plain-lane indy 解直）。生成面源锚：
+/// 蹦床，IndyRestore 第一轮已把蹦床里的 plain-lane indy 解直）。生成面源锚：
 /// RuntimeMaterial 的 clinitMaterialInit 本来发 `LDC2_W` 常量，boar 的
 /// number-reobf 层把它包进基 32 字符串通道；`simpleDecryptKey = decryptKey
-/// xor seedFold`（ReferenceObfuscate 构建期计算）钉死「清洁运行期字段态 ==
-/// 初值常量」这一 S1 等价。
+/// xor seedFold`（ReferenceObfuscate 构建期计算）钉死清洁运行期字段态 ==
+/// 初值常量这一 S1 等价。
 ///
 /// ## 还原口径（明确写死的语义边界）
 ///
 /// RuntimeMaterial 是 AntiDebug 面：clinit/`<init>` 里有守卫支路
-/// （`INVOKESTATIC guard()I; dup; ifeq clean`——guard 读 ManagementFactory/
+/// （`INVOKESTATIC guard()I; dup; ifeq clean`，guard 读 ManagementFactory/
 /// 环境变量找调试证据），可疑路径才写 keyField/poison（扰动窗口形：
 /// `GETSTATIC F; <expr>; LXOR|IOR [; IOR]; PUTSTATIC F`）。**还原目标 =
-/// 清洁运行环境语义**（guard 未命中：keyField 恒初值、poison 恒初值）——
+/// 清洁运行环境语义**（guard 未命中：keyField 恒初值、poison 恒初值），
 /// 这不是对运行期岔路的静态裁定，而是 deobf 的既定口径：反调试扰动路径
 /// （guard 命中时故意用错 key 自毁解密）不在还原范围。结构性边界照旧
 /// fail-closed：初值表达式不可静态求值、字段出现非扰动窗口形的额外写、
@@ -47,31 +47,31 @@
 ///   （唯一初值写 + 其余写全为扰动窗口形 + 所在方法带守卫指纹）+ 初值
 ///   跨度逐条钉形（Contiguous 无合并点）；
 /// - **S1 语义后果**：`materialKey = fold(keyField 初值) ^ poison 初值`
-///   （`fold(K) = (int)(K ^ K>>>32)`，源锚 `Long.foldToInt`）；互证 =
+///   （`fold(K) = (int)(K ^ K>>>32)`，源锚 `Long.foldToInt`）；核对 =
 ///   路由到本材料解密器的全部 BSM indy 站点按候选 key 解出合法
-///   owner/name/desc 且与 indy desc 互证全过（错 key 解出垃圾必死在这步，
+///   owner/name/desc 且与 indy desc 核对全过（错 key 解出垃圾必死在这步，
 ///   与 indy_restore simple 面同一自证逻辑）；
-/// - **无 Era 门**：判据全是结构自证事实（同 string_pool_fold 口径）；
+/// - **无 Era 检查**：判据全是结构自证事实（同 string_pool_fold 口径）；
 ///   类级 Grunt BSM desc 指纹做家族锚（无 BootstrapMethods 指纹的类不进面）。
 ///
 /// ## 改写（与 indy_restore 的协作面）
 ///
 /// **零侵入协作**：本残留只把材料解密器窗口里的 `INVOKESTATIC <self>
 /// materialKey()I` 原地换 `LDC <materialKey>`（srcPc 保留，帧链正统写回）
-/// ——窗口随即变成 indy_restore 已有的 reobf 折叠键形（`LDC K; LDC MK;
+/// ，窗口随即变成 indy_restore 已有的 reobf 折叠键形（`LDC K; LDC MK;
 /// IXOR; IXOR; I2C`，key = K ^ MK），indiy_restore 第二轮按既有 Plain 通道
 /// 折回全部 materialLane 站点。indy_restore 本体一个字节不动。链序（外部
 /// 知识）：`grunt.IndyRestore,grunt.StringPoolFold,grunt.MaterialKeyRestore,
-/// grunt.IndyRestore`——材料初值跨度依赖 StringPoolFold 折回的池明文 ldc；
-/// 池读未折回的类 fail-closed（`initBlocked` 独立记账，报链序缺位）。
+/// grunt.IndyRestore`，材料初值跨度依赖 StringPoolFold 折回的池明文 ldc；
+/// 池读未折回的类 fail-closed（`initBlocked` 独立计数，报链序缺位）。
 /// materialKey() 本体、材料字段与守卫支路不删（折回后 materialKey 零引用，
 /// 交下游 DeadMember/DeadCode 回收）。
 ///
-/// ## 台账
+/// ## 统计
 ///
-/// DirtySet 按类/站点计数 + failed/skippedByRoundTrip；ProofResult 在类数门
-/// 之外统计 residual（改写后容器里仍带材料解密器窗口形的类数——语料单罐
-/// 门要求 0）。
+/// DirtySet 按类/站点计数 + failed/skippedByRoundTrip；ProofResult 在类数检查
+/// 之外统计 residual（改写后容器里仍带材料解密器窗口形的类数，语料单 jar
+/// 检查要求 0）。
 #pragma once
 
 #include <string>
@@ -98,10 +98,10 @@ struct Site
     ca::u32     invokeSrcPc          = 0;  ///< INVOKESTATIC `<self>`()I 旧布局 pc
     ca::i32     decryptorRawKey      = 0;  ///< 窗口 LDC K（异或前原始 key）
     ca::i32     materialKey          = 0;  ///< 静态折回值（= K ^ 有效 key 的补数面）
-    ca::usize   sitesVerified        = 0;  ///< S1 互证的路由站点数
+    ca::usize   sitesVerified        = 0;  ///< S1 核对的路由站点数
 };
 
-/// @brief 拒绝（fail-closed 记账：拒绝原因进 trace，站点不动）。
+/// @brief 拒绝（fail-closed 计数：拒绝原因进 trace，站点不动）。
 struct Reject
 {
     std::string uri;
@@ -121,7 +121,7 @@ struct ScanResult
     ca::usize initConflict    = 0;  ///< 初值写多个/不在 clinit（多写冲突）
     ca::usize writerShape     = 0;  ///< 字段存在非扰动窗口形的额外写
     ca::usize writerUnguarded = 0;  ///< 扰动写所在方法缺守卫指纹
-    ca::usize keyRefuted      = 0;  ///< S1 互证失败（候选 key 解不出合法目标）
+    ca::usize keyRefuted      = 0;  ///< S1 核对失败（候选 key 解不出合法目标）
     ca::usize decryptorAmbiguous = 0;  ///< 一类多个材料解密器窗口 / materialKey 调用点多于 1
     ca::usize classesSkipped = 0;   ///< 会话开不了的类
 };
@@ -138,7 +138,7 @@ struct DirtySet
 };
 
 /// @brief 验收结果。residual = 改写后容器里仍带材料解密器窗口形的类数
-///        （还原不彻底的残留，语料单罐门要求 0）。
+///        （还原不彻底的残留，语料单 jar 检查要求 0）。
 struct ProofResult
 {
     bool                     ok = true;
@@ -146,7 +146,7 @@ struct ProofResult
     ca::usize                residual = 0;
 };
 
-/// @brief SCAN：纯读。窗口定位 + materialKey 体形 + 初值链求值 + S1 互证，
+/// @brief SCAN：纯读。窗口定位 + materialKey 体形 + 初值链求值 + S1 核对，
 ///        产出可折回站点。
 ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInput& input);
 

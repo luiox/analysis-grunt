@@ -1,15 +1,15 @@
 /// @file        const_method.hpp
-/// @brief       残留 `const_method`：把「方法体 = 单条常量生产 + 返回」的
+/// @brief       残留 `const_method`：把方法体 = 单条常量生产 + 返回的
 ///              static 方法的调用点内联成常量装载。
 ///
 /// ## 形态（artifact 侧）
 ///
-/// 混淆器把「取原始类型 Class 常量」这类表达式包一层静态方法：
+/// 混淆器把取原始类型 Class 常量这类表达式包一层静态方法：
 ///
 ///     public static Class t() { return Long.TYPE; }
 ///     // 字节码：getstatic java/lang/Long.TYPE Ljava/lang/Class; ; areturn
 ///
-/// 调用点与目标一一对应、方法体无分支，返回值与运行环境无关——调用点等价
+/// 调用点与目标一一对应、方法体无分支，返回值与运行环境无关，调用点等价
 /// 于一条常量装载。实测样本规模：686 处 getstatic+areturn、少量 int/null 形态。
 ///
 /// ## 判据（scan 的细找）
@@ -23,10 +23,10 @@
 ///      c) `aconst_null` + `areturn` → null。
 ///      其余 getstatic（`Boolean.TRUE` 这类堆对象常量）没有可静态编码的
 ///      等价形式，拒绝；
-///   3. **所有者类初始化纯度门**：`invokestatic` 是主动使用，删调用会推迟
+///   3. **所有者类初始化纯度检查**：`invokestatic` 是主动使用，删调用会推迟
 ///      目标类初始化。所有者的 `<clinit>` 必须缺失，或整体落在纯常量白名单
 ///      内（常量装载/数值运算/转换/比较 + 对**本类**静态字段的 `putstatic`，
-///      直线无标签）。此时跳过初始化只推迟「常量写入自己字段」，后续任何
+///      直线无标签）。此时跳过初始化只推迟常量写入自己字段，后续任何
 ///      `getstatic` 读取者自己就是主动使用，仍会触发初始化拿到同样的值。
 ///
 /// 保守面：跨类 `putstatic`、分支/循环、一切堆读取 → 所有者判不纯，整方法
@@ -81,7 +81,7 @@ struct Site
 
 /// @brief 定义侧拒绝原因（方法不满足内联判据；调用侧只在改写失败时计数）。
 enum class RejectReason : ca::u8 {
-    BodyNotSingleConst = 0,  ///< 方法体不是「单常量生产 + 匹配返回」的形状
+    BodyNotSingleConst = 0,  ///< 方法体不是单常量生产 + 匹配返回的形状
     TargetSynchronized,      ///< 监视器语义，删调用会改变可观测行为
     GetstaticUnsupported,    ///< getstatic 目标不是九大原始 TYPE
     OwnerClassInitImpure,    ///< 所有者 `<clinit>` 不在纯常量白名单内

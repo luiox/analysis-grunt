@@ -6,42 +6,42 @@
 /// 源算法对照：Grunt grunt3 @ e41e852（FlowControlFlowFlattener.kt
 /// emitInlineStateProgram / emitProcessorStateProgram / createFakeCaseBlock
 /// 逐行；JvmFlowExporter jasm 形态；boar-main.jar `net/spartanb312/obf/AD.a`
-/// 实证互证）。判据只吃产物结构，全形状自证，无 Era 门（v2 Controlflow 是
-/// junk 分支面，无 state 槽摊平——岛形 v3 特有）。
+/// 验证核对）。判据只吃产物结构，全形状自证，无 Era 检查（v2 Controlflow 是
+/// junk 分支面，无 state 槽摊平，岛形 v3 特有）。
 ///
 /// 识别骨架（多岛共存逐个处理）：
 ///  1. dispatcher 候选 = 形为 `[ILOAD s; TABLESWITCH]` 的基本块；
 ///  2. state 槽 confinement：s 的每次 ILOAD 必须在岛头或 processor 夹心内、
 ///     每次 ISTORE s 必须落在可解 span 尾（inline 闭链或 processor 形）、
-///     禁 IINC 与其余读写——s 是 CFF fresh 槽，原代码不可触碰，任何越界
+///     禁 IINC 与其余读写，s 是 CFF fresh 槽，原代码不可触碰，任何越界
 ///     读写 = 槽污染，整槽岛全拒（fail-closed）。分桶按面：DivZero span
-///     （除 0、`INT_MIN / -1`——守卫看累计运行值 v，IMUL/IADD 回绕可把 v
-///     推到 INT_MIN）→ spanUnsolvable（README 口径「/0」）；其余越界读写
+///     （除 0、`INT_MIN / -1`，守卫看累计运行值 v，IMUL/IADD 回绕可把 v
+///     推到 INT_MIN）→ spanUnsolvable（README 口径/0）；其余越界读写
 ///     → statePolluted；
-///  3. 岛形门：alias face（default ∈ case 目标，生成面 default 落岛首真块）
-///     + ≥1 桥引用 + case 目标不回指岛头——InvokeDispatcher 方法头
+///  3. 岛形检查：alias face（default ∈ case 目标，生成面 default 落岛首真块）
+///     + ≥1 桥引用 + case 目标不回指岛头，InvokeDispatcher 方法头
 ///     （`[ILOAD key; TABLESWITCH default→方法头]`、零分支引用、default 非
-///     case 目标）被双门天然拒绝，不误伤；
-///  4. 引用分类：usersOf(岛头) 逐边归桶——常量供给桥（span 闭链可解，键回
+///     case 目标）被两道检查天然拒绝，不误伤；
+///  4. 引用分类：usersOf(岛头) 逐边归桶，常量供给桥（span 闭链可解，键回
 ///     查键表；出表键 = scramble，goto 同 default）、processor 形桥/链内
 ///     `INVOKESTATIC (II)I`（键在 `__grt$indy$` 蹦床后，静态不可解 →
-///     keyProcessor 整岛保留）、无状态 junk 门（ControlflowJump 边包裹，
+///     keyProcessor 整岛保留）、无状态 junk 检查（ControlflowJump 边包裹，
 ///     唯一常量供给前驱传递 state → 边载体，臂字段重指）、其余 →
-///     foreignRef 整岛拒。边载体候选限「终结限单目标 GOTO/条件分支」：
-///     switch 终结拒入——TableSwitch 的 setTarget 改的是 default 字段，与
+///     foreignRef 整岛拒。边载体候选限终结限单目标 GOTO/条件分支：
+///     switch 终结拒入，TableSwitch 的 setTarget 改的是 default 字段，与
 ///     臂重指语义面不同。
 ///
 /// 入口桥认领与回滚：blocks[0] 直连岛头直接认领，否则解析为 state-setter
 /// 后顺终结链追岛/载体；入口桥多岛认领冲突全拒。入口真块头落异常保护区
 /// 严格内含 → 退蹦床（range 起点即目标块头不算交叠：start 标签随
 /// moveRange 的 kHeadFollows 平移）。改写失败在干净会话重放；重放开不了
-/// 会话整类放弃——半落会话无帧 = VerifyError 面，绝不落盘。
+/// 会话整类放弃，半落会话无帧 = VerifyError 面，绝不落盘。
 ///
 /// 修复面存证（unittest 回归钉住）：邻接谓词 layoutAdjacent =
 /// `prev.orderPos + prev.insns.size() == blk.orderPos`（orderPos 是块入口
-/// dom 序位置，`+1` 只对单指令前驱成立）——相 3 顺序落入 / 相 4 载体前驱
+/// dom 序位置，`+1` 只对单指令前驱成立），相 3 顺序落入 / 相 4 载体前驱
 /// / 相 7 落空臂 / 步 4 前驱四处同用，误用 `+1` 是历史缺陷面；插入前定靶
-/// ——fallPins / 入口归位补 GOTO 一律先 `g.target = lbl` 再插，kNoLabel
+/// ，fallPins / 入口归位补 GOTO 一律先 `g.target = lbl` 再插，kNoLabel
 /// 靶过不了 DOM 插入的句柄校验（InvalidHandle），三处插入路径同病，此前
 /// 无测试踩到；junk 前缀 scramble 桥保留块体的 keep 判据 = 条件形 ||
 /// span 起点 > 0。
@@ -50,11 +50,11 @@
 /// 出表 ≡ switch default（表只覆盖 [lo, lo+n)，default 是唯一出表去向），
 /// 即使岛被误判，goto 直连 default 目标也与原路径逐位等价；桥块把 s 先写
 /// 后读、直连后不再读 s，槽上残余写死代码无语义。可整块擦除的桥块仅限
-/// 「纯 span + goto」形（生成面桥块无 junk 前缀；出表 scramble 同理——带
+/// 纯 span + goto形（生成面桥块无 junk 前缀；出表 scramble 同理，带
 /// junk 前缀的桥可达且有未知副作用，不可证伪即不删）；条件形桥与带 junk
 /// 前缀的桥一律保留块体、只重指臂/goto 字段。usersOf 只看字段引用，位置
 /// 边（非终结顺序落入 / 条件分支落空臂）单独守卫：受害者（岛头/可整擦桥）
-/// 的布局前驱若有位置落入，只有「本岛已归类条件用户紧邻岛头」可钉（补
+/// 的布局前驱若有位置落入，只有本岛已归类条件用户紧邻岛头可钉（补
 /// GOTO 指其 case 目标，与原分发结果同址），其余整岛拒。执行序：桥前驱
 /// replaceAllUses 直连真实块（alias-face 剪枝）→ 边载体/条件桥臂字段
 /// setTarget 重指 + positional 落空臂钉 → 异常表 handler 桥重绑 / 被擦块
@@ -162,7 +162,7 @@ bool isConditionalBranch(Op op)
 }
 
 /// @brief promote 单方法摊平成指令视图（同 dispatcher_restore）。promote 纪律
-///        由调用方单点持有——重复 promote 会重建 CodeUnit 弃掉全部句柄。
+///        由调用方单点持有，重复 promote 会重建 CodeUnit 弃掉全部句柄。
 struct PromotedCode
 {
     std::vector<const ir::Insn*> seq;   ///< dom 序的指令视图（含 NOP）
@@ -212,7 +212,7 @@ struct MethodView
     }
 };
 
-/// @brief 从已 promote 的视图建块视图（不再 promote——promote 纪律）。
+/// @brief 从已 promote 的视图建块视图（不再 promote，promote 纪律）。
 bool buildMethodView(const PromotedCode& code, MethodView& out)
 {
     out.code = code;
@@ -240,7 +240,7 @@ bool buildMethodView(const PromotedCode& code, MethodView& out)
     return true;
 }
 
-/// @brief dom 序里 pos 的下一条指令（方法尾返回 kNoInsn——moveRange 尾哨兵）。
+/// @brief dom 序里 pos 的下一条指令（方法尾返回 kNoInsn，moveRange 尾哨兵）。
 ir::InsnId nextInsnOf(const MethodView& mv, ca::usize pos)
 {
     const std::vector<ir::InsnId>& order = mv.code.cu->dom.order();
@@ -249,7 +249,7 @@ ir::InsnId nextInsnOf(const MethodView& mv, ca::usize pos)
 
 /// @brief 布局邻接（位置边成立面）：prev 的末条指令正是 blk 入口的前一条。
 ///
-///        orderPos 是块入口指令的 dom 序位置——邻接判据是
+///        orderPos 是块入口指令的 dom 序位置，邻接判据是
 ///        `prev.orderPos + prev.insns.size() == blk.orderPos`，不是 +1
 ///        （+1 只对单指令前驱块成立；多指令前驱全部漏判，位置边静默丢失）。
 bool layoutAdjacent(const MethodView& mv, const Blk& prev, const Blk& blk)
@@ -277,14 +277,14 @@ struct SpanParse
 /// 源算法逐行对照（grunt3@e41e852 FlowControlFlowFlattener.kt）：
 /// - inline：`[pushInt(baseKey); (pushInt(c); IADD|ISUB|IXOR|IMUL|IDIV|
 ///   INVOKESTATIC Math.max (II)I)*; ISTORE(slot)]`（emitInlineStateProgram +
-///   StateOp.emitTo——DivConst 常量是除数 `v / value`，nextDivisor 恒正，
+///   StateOp.emitTo，DivConst 常量是除数 `v / value`，nextDivisor 恒正，
 ///   守卫 0 与 INT_MIN/-1）；
 /// - processor：`[INT(inputKey); ISTORE(slot); ILOAD(slot); INT(salt);
 ///   INVOKESTATIC proc (II)I; ISTORE(slot)]`（emitProcessorStateProgram）。
 ///
-/// span 内部不允许标签（合并点）——块视图天然保证：标签锚定 leader，块回走
+/// span 内部不允许标签（合并点），块视图天然保证：标签锚定 leader，块回走
 /// 出块即 NotSpan。链内非 Math.max 的 INVOKESTATIC (II)I = key processor
-/// 藏形（boar 实证落在 `__grt$indy$` 蹦床后）→ Processor。
+/// 藏形（boar 验证落在 `__grt$indy$` 蹦床后）→ Processor。
 SpanParse evalSpanTail(const MethodView& mv, const Blk& blk, ca::usize tailIdx, ca::u32 slot,
                        ir::ClassSession& s)
 {
@@ -378,7 +378,7 @@ SpanParse evalSpanTail(const MethodView& mv, const Blk& blk, ca::usize tailIdx, 
         case Op::IXOR: v ^= c; break;
         case Op::IMUL: v *= c; break;
         case Op::IDIV:
-            // 守卫看运行值 v（含 base 与中间值——IMUL/IADD 回绕可把 v 推到
+            // 守卫看运行值 v（含 base 与中间值，IMUL/IADD 回绕可把 v 推到
             // INT_MIN）：除零与 INT_MIN/-1 在 Java 是 ArithmeticException，
             // 静态复算不定 → 不可解。
             if (st.c == 0
@@ -416,7 +416,7 @@ struct BridgeRef
     bool      entry   = false;   ///< blocks[0]
 };
 
-/// @brief 一条边载体（无状态 junk 门；臂字段重指 caseOf(key)/default）。
+/// @brief 一条边载体（无状态 junk 检查；臂字段重指 caseOf(key)/default）。
 struct CarrierRef
 {
     ca::usize              blk = kNoPos;
@@ -439,7 +439,7 @@ struct Island
     std::vector<std::pair<ca::u32, ir::InsnId>> handlerRebinds;  ///< (exc 下标, 新锚)
     std::vector<std::pair<ca::u32, ir::InsnId>> endReanchors;    ///< (exc 下标, 新锚；kNoInsn = 方法尾)
     /// positional 落空臂钉：(块下标, 钉点目标块头)。usersOf 只看字段引用，
-    /// 条件分支的落空臂是位置边——本岛已归类条件用户紧邻岛头（布局前驱）
+    /// 条件分支的落空臂是位置边，本岛已归类条件用户紧邻岛头（布局前驱）
     /// 时，岛头被擦后落空臂会改落邻接后继，改写期补一枚 GOTO 钉住原落点。
     std::vector<std::pair<ca::usize, ir::InsnId>> fallPins;
     bool    hasEntry        = false;  ///< blocks[0] 是本岛入口桥
@@ -467,7 +467,7 @@ const char* bucketOf(IslandFail f)
 {
     switch (f) {
     case IslandFail::ShapeMismatch:  return "形状不符（alias face 缺席 / case 自环）";
-    case IslandFail::ForeignRef:     return "岛外引用（非常量供给 / junk 门无解 / 无桥引用）";
+    case IslandFail::ForeignRef:     return "岛外引用（非常量供给 / junk 检查无解 / 无桥引用）";
     case IslandFail::KeyProcessor:   return "processor 形 span（键在 key processor 后，静态不可解）";
     case IslandFail::SpanUnsolvable: return "span 求值除零/溢出（fail-closed）";
     case IslandFail::StatePolluted:  return "state 槽越界读写（槽污染连坐）";
@@ -498,7 +498,7 @@ bool blockTouchesSlot(const MethodView& mv, const Blk& blk, ca::u32 slot)
 }
 
 /// @brief 块作为常量供给桥解析：取最后一处 ISTORE s 为 span 尾反推。
-///        kind = Inline → key 求值完成；Processor/DivZero → 记账桶；
+///        kind = Inline → key 求值完成；Processor/DivZero → 计数桶；
 ///        NotSpan → 非桥形（交给边载体判定）。
 struct SetterParse
 {
@@ -607,11 +607,11 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
                 ca::u32 st = 0;
                 if (intStoreSlotOf(in, st) && st == slot) {
                     const SpanParse sp = evalSpanTail(mv, blk, i, slot, s);
-                    if (sp.kind == SpanKind::Inline) continue;      // span 尾记账
+                    if (sp.kind == SpanKind::Inline) continue;      // span 尾计数
                     if (sp.kind == SpanKind::Processor) {
                         procRanges.emplace_back(blk.entry.slot,
                                                 std::pair<ca::usize, ca::usize>{sp.start, i});
-                        continue;                                   // 夹心随形记账
+                        continue;                                   // 夹心随形计数
                     }
                     ok = false;   // DivZero / NotSpan：越界 state 写
                     divZero = (sp.kind == SpanKind::DivZero);
@@ -626,7 +626,7 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
                     if (!headPos && !inProcRange(blk, i)) {
                         // processor 夹心的 ILOAD 先于闭合 ISTORE 到达（前向
                         // 扫描序）：[ISTORE s; ILOAD s; INT; INVOKE(II)I;
-                        // ISTORE s] 前视夹心即记账放行（与 evalSpanTail 的
+                        // ISTORE s] 前视夹心即计数放行（与 evalSpanTail 的
                         // processor 形判据同形，只是从 ILOAD 位起看）。
                         bool ahead = false;
                         if (i > 0 && i + 3 < blk.insns.size()) {
@@ -657,7 +657,7 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
         }
         if (!ok) {
             // 槽级连坐按面分桶：DivZero span（求值 ArithmeticException，静态
-            // 复算不定）记 spanUnsolvable（README 口径「/0」面）；其余越界
+            // 复算不定）记 spanUnsolvable（README 口径/0面）；其余越界
             // 读写记 statePolluted。同槽多岛同桶整拒（fail-closed 不分岛）。
             const IslandFail bucket =
                 divZero ? IslandFail::SpanUnsolvable : IslandFail::StatePolluted;
@@ -665,7 +665,7 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
         }
     }
 
-    // ---- 相 3：岛形门 + 岛头引用分类 ----
+    // ---- 相 3：岛形检查 + 岛头引用分类 ----
     for (ca::usize i = 0; i < islands.size(); ++i) {
         Island& isl = islands[i];
         if (failOf[i] != IslandFail::None) continue;
@@ -695,7 +695,7 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
             fail(i, IslandFail::ShapeMismatch);
             continue;
         }
-        // alias face：default ∈ case 目标（生成面 default 落岛首真块）——
+        // alias face：default ∈ case 目标（生成面 default 落岛首真块），
         // InvokeDispatcher 方法头（default 回跳自身、case 全是转发体）天然缺席。
         bool alias = false;
         for (const ir::InsnId c : isl.cases) {
@@ -763,7 +763,7 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
                     break;
                 }
                 // 可整块擦除 = 纯 span + goto（生成面桥块无前缀形）。条件形
-                // 与 junk 前缀桥一律保留块体（出表 scramble 也不例外——前缀
+                // 与 junk 前缀桥一律保留块体（出表 scramble 也不例外，前缀
                 // 可达且有未知副作用，不可证伪即不删；保留形由 goto 重指
                 // default 完成同一剪枝）。
                 br.keep = br.cc || sp.start > 0;
@@ -780,9 +780,9 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
                 refOk = false;
                 break;
             }
-            // 非 span 形 → 边载体候选（无状态 junk 门）。终结必须是单目标
-            // GOTO/条件分支——switch 的 setTarget 改的是 default 字段，与
-            // 「臂重指」语义面不同，不可入载体。
+            // 非 span 形 → 边载体候选（无状态 junk 检查）。终结必须是单目标
+            // GOTO/条件分支，switch 的 setTarget 改的是 default 字段，与
+            // 臂重指语义面不同，不可入载体。
             if (blockTouchesSlot(mv, blk, isl.slot)) {
                 fail(i, IslandFail::ForeignRef);
                 refOk = false;
@@ -975,7 +975,7 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
         }
 
         // ---- positional 落入守卫（usersOf 只看字段引用；非终结顺序落入
-        //         与条件分支落空臂都是位置边——受害者被擦后位置边改落邻接
+        //         与条件分支落空臂都是位置边，受害者被擦后位置边改落邻接
         //         后继，语义断边）----
         //   - 前驱是本岛已归类条件用户且受害者是岛头 → 钉（补 GOTO 指向该
         //     用户的 case 目标：原落空臂经岛头分发 caseOf(key)，钉点同址）；
@@ -1170,7 +1170,7 @@ bool executeIsland(ir::ClassSession& s, const MethodView& mv, ir::CodeEditor& ed
     }
     // 2b. positional 落空臂钉：条件用户紧邻岛头（布局前驱）→ 终结指令后
     //     补一枚 GOTO 钉住原落点（岛头被擦后落空臂 positional 改落邻接
-    //     后继；钉点 = 该用户的 case 目标，与原「落空臂经岛头分发」同址）。
+    //     后继；钉点 = 该用户的 case 目标，与原落空臂经岛头分发同址）。
     for (const auto& [pinBlk, pinTgt] : isl.fallPins) {
         const Blk& pblk = mv.blocks[pinBlk];
         ir::LabelId lbl;
@@ -1198,12 +1198,12 @@ bool executeIsland(ir::ClassSession& s, const MethodView& mv, ir::CodeEditor& ed
         if (!editor.bindLabel(cu.exc[ei].end, anchor).is_ok()) return false;
     }
 
-    // ---- 4. 入口块归位（蹦床/junk 前缀退避：不移动——入口块保留原地
+    // ---- 4. 入口块归位（蹦床/junk 前缀退避：不移动，入口块保留原地
     //         时其前缀与 goto 还在执行路径上，moveRange 会让前缀失去执行）----
     if (isl.hasEntry && !isl.entryTrampoline && !isl.entryKeep) {
         const ir::InsnId tHead = targetHeadOf(isl, isl.entryCaseIdx);
         const Blk&       t     = mv.blocks[mv.blockOf.at(tHead.slot)];
-        // 预算（全部句柄在插入前定案——插入不改句柄，moveRange 只认句柄）：
+        // 预算（全部句柄在插入前定案，插入不改句柄，moveRange 只认句柄）：
         //   nextAfterT = 目标块尾的后继（改前布局）；prevBlk = 紧邻前驱块。
         const ir::InsnId nextAfterT = nextInsnOf(mv, mv.orderOf.at(t.insns.back().slot));
         const ca::usize  tBlk      = mv.blockOf.at(t.entry.slot);
@@ -1249,7 +1249,7 @@ bool executeIsland(ir::ClassSession& s, const MethodView& mv, ir::CodeEditor& ed
     }
 
     // ---- 5. 受害者终检：岛头残余引用必须全体是待擦受害者（桥 goto 入
-    //         victims 但 eraseBatch 在批尾——此处零引用判据会把在批的桥误
+    //         victims 但 eraseBatch 在批尾，此处零引用判据会把在批的桥误
     //         判成分类遗漏；正确口径 = 每个引用者都在 victims 里，引用者
     //         落在 victims 之外即分类遗漏，fail-closed 整岛回滚）----
     {
@@ -1349,7 +1349,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
     rewrite_tools::FrameContext frames(container);
 
-    // 计划按 uri 聚类（万类大罐上避免 classes × islands 平方账）。
+    // 计划按 uri 聚类（万类大 jar 上避免 classes × islands 平方账）。
     std::unordered_map<std::string, std::vector<const IslandPlan*>> byUri;
     for (const IslandPlan& plan : result.islands) byUri[plan.uri].push_back(&plan);
 
@@ -1376,7 +1376,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const IslandPlan* plan : plansOf) methodIdxs.insert(plan->methodIndex);
 
-        // 前置门：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
+        // 前置检查：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
         const std::unordered_set<ca::usize> safe =
             proof_tools::roundTripSafe(*entry.bytes,
                                        std::vector<ca::usize>(methodIdxs.begin(),
@@ -1432,13 +1432,13 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 
         if (failed > 0) {
             // 帧链回炉：rewire 失败的方法已经 lower 进会话（SMT 摘除后未
-            // 再生）——半落会话直接写回会落无帧方法。整类在干净会话上只
-            // 重放成功面（同字节同改写 = 同结果），失败方法保持原样——
+            // 再生），半落会话直接写回会落无帧方法。整类在干净会话上只
+            // 重放成功面（同字节同改写 = 同结果），失败方法保持原样，
             // fail-closed 落到方法粒度、不留半截；计数以回放为准。
             std::shared_ptr<ir::ClassSession> replay = openSession(*entry.bytes);
             if (!replay) {
                 // 干净回炉开不了会话：半落会话（rewire 失败方法无帧）绝不
-                // 落盘——无帧方法 = VerifyError 面。整类放弃，fail-closed。
+                // 落盘，无帧方法 = VerifyError 面。整类放弃，fail-closed。
                 dirty.failed += hit;
                 return;
             }
@@ -1453,7 +1453,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                     ca::usize mEntry   = 0;
                     ca::usize mTramp   = 0;
                     if (!runMethod(*replay, mi, mIslands, mScr, mEntry, mTramp)) {
-                        // 非确定性防御：回放失败的方法按失败记账（岛留原样）。
+                        // 非确定性防御：回放失败的方法按失败计数（岛留原样）。
                         for (const IslandPlan* plan : plansOf) {
                             if (plan->methodIndex == mi) dirty.failed += 1;
                         }
@@ -1502,7 +1502,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,
                   ca::usize classesBefore)
 {
-    // proof 是效力门（不变量复核），不许被 pass 级时间片截短——挂起期间
+    // proof 是效力检查（不变量复核），不许被 pass 级时间片截短，挂起期间
     // forEachClass 全量放行（residual 统计同样要看到全量类）。
     pass_clock::Suspend                   suspend;
     const proof_tools::ClassIntactResult intact =

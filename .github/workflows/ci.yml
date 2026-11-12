@@ -3,9 +3,9 @@
 # docs job：引用门禁 check_refs + Sphinx -W 构建 RST 站 + Doxygen 吃 src ///
 # 注释（口径照 mjbase/libjbc 三段式；sphinx 9.1.1 / doxygen 1.18.0 双钉版）。
 # 范围：grunt 静态库 + grunt_cli + grunt_unittest 全量单测（cff_unflatten /
-# exc_bridge_restore 有 JVM 实跑验证门，setup-java 常备 JDK 保证真跑；
+# exc_bridge_restore 有 JVM 实跑验证检查，setup-java 常备 JDK 保证真跑；
 # java 缺席时该类测试自跳，CI 不依赖这个退路）。
-# 依赖：luiox-repo git 直连包（mjbase/libjbc/libca 等）——root xmake.lua 内
+# 依赖：luiox-repo git 直连包（mjbase/libjbc/libca 等），root xmake.lua 内
 # add_repositories 已指向 GitHub 远端，CI 无需显式注册（同 mjbase 口径）；
 # gtest 走 xrepo。
 # libjsim：luiox-repo 包消费（0.0.1），CI 与本地同一条包消费路径。
@@ -36,13 +36,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install Sphinx
-        # 钉死本地实测通过的版本：-W 下警告集合随 Sphinx 小版本变，范围安装等于定时炸；升级随文档批次显式改这一行。
+        # 钉死本地实测通过的版本：-W 下警告集合随 Sphinx 小版本变，范围安装等于定时炸；升级随文档改动显式改这一行。
         run: python -m pip install --upgrade "sphinx==9.1.1"
 
       - name: Reference gate (check_refs)
         run: python doc/check_refs.py .
 
-      # -E：增量缓存会跳过「回到旧状态」的文件，警告随之消失，等于没门禁。
+      # -E：增量缓存会跳过回到旧状态的文件，警告随之消失，等于没门禁。
       - name: "Build behavior ledger (-W: 警告即失败)"
         run: sphinx-build -b html -E -W --keep-going doc doc/_build
 
@@ -55,7 +55,7 @@ jobs:
 
       # 微观层：Doxygen 只吃头文件 /// 注释，与 RST 站互不干涉。
       # 版本必须钉死（与本地实测同版）：Doxyfile 的 WARN_* 档随版本增减标签，
-      # apt 里的老版本会把「不认识的标签」报成告警，WARN_AS_ERROR 下直接变红。
+      # apt 里的老版本会把不认识的标签报成告警，WARN_AS_ERROR 下直接变红。
       - name: Install Doxygen (pinned 1.18.0)
         run: |
           curl -fsSL https://www.doxygen.nl/files/doxygen-1.18.0.linux.bin.tar.gz -o /tmp/dox.tar.gz
@@ -84,7 +84,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup JDK (JVM 实跑验证门)
+      - name: Setup JDK (JVM 实跑验证检查)
         uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -124,7 +124,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup JDK (JVM 实跑验证门)
+      - name: Setup JDK (JVM 实跑验证检查)
         uses: actions/setup-java@v5
         with:
           distribution: temurin

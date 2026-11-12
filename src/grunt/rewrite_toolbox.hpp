@@ -2,10 +2,10 @@
 /// @brief       REWRITE 工具箱：跨残留共享的改写原语。
 ///
 /// CONVENTION §7：跨残留复用只允许发生在工具箱。当前收口三组原语：
-/// 「按求值结果造一条常量装载」（constant_call / const_method 改写段共用）、
-/// 「单 promote + mjbase 帧链写回」（predicate_fold / dead_code /
-/// const_value_promote / seed_strip 的改写驱动共用）与「资源删除」（资源
-/// 面改写动词，metadata_strip 首用；对账面在 proof_toolbox）。
+/// 按求值结果造一条常量装载（constant_call / const_method 改写段共用）、
+/// 单 promote + mjbase 帧链写回（predicate_fold / dead_code /
+/// const_value_promote / seed_strip 的改写驱动共用）与资源删除（资源
+/// 面改写动词，metadata_strip 首用；核对面在 proof_toolbox）。
 #pragma once
 
 #include <cstdio>
@@ -48,7 +48,7 @@ To bitCast(const From& from) noexcept
 
 /// @brief 按求值结果造一条常量装载：短形态优先，放不下才落池。
 ///
-/// 池索引走 `CodeEditor::loadConst` 选形态——`LDC` 的操作数域只有 u1，大类
+/// 池索引走 `CodeEditor::loadConst` 选形态，`LDC` 的操作数域只有 u1，大类
 /// 的池索引轻易超过 255，编码器对超界 `LDC` 直接 Unencodable（insn_codec
 /// 的域宽校验）。`loadConst` 负责按实际索引在 `LDC`/`LDC_W` 之间选对。
 inline bool makeConstLoad(jbc::ir::ClassSession& session, const jsim::SimValue& v,
@@ -113,21 +113,21 @@ inline bool makeConstLoad(jbc::ir::ClassSession& session, const jsim::SimValue& 
 // 帧链写回（擦除系残留共用）
 //
 // 为什么必须是 mjbase 帧链而不是手剪 SMT：折叠/擦除后，锚在被擦指令上的
-// 帧、锚在 NOP 化锚点上的帧，内容都描述改写前的栈形——逐帧修补修不完
+// 帧、锚在 NOP 化锚点上的帧，内容都描述改写前的栈形，逐帧修补修不完
 // （v5 round1 实测 verifyFail=1412，基线 146）。mjbase 的正统写法是
 // prepareNestedAttrsForLayout（LNT/LVT 悬垂吸附、SMT 悬垂整体摘除）→
 // lowerMethod → rewireFramesAfterLower（Strict 数据流从代码真值重算全部
 // 帧 + maxes 再生挂回）。帧内容永远是重算的，不存在陈旧。
 //
 // promote 纪律（v5 教训）：promoteMethod 每次调用都从 backing 的 Code
-// 字节重建 mu->code——同方法只准 promote 一次，DOM 改写、prepare、lower
+// 字节重建 mu->code，同方法只准 promote 一次，DOM 改写、prepare、lower
 // 全落在同一 unit 上；中间任何再 promote 都会静默弃掉全部改写。
 
 /// @brief 容器级帧重算上下文：Strict 求解所需的类层级 + resolver 适配器。
 ///
-/// summary 与 session 解绑：构造期逐类开会话 → fillSummary 抽骨架 → addClass 入库 → 会话当场弃置，任何时刻至多一个会话在场。解绑的依据是 fillSummary 的产出只有两处自持落点——pool_（内容寻址驻留池，arena 只增不移，视图随池存活）与 hierarchy_ 入库的 ClassSummary 值拷贝（键全是 pool_ 的 u32 id，vector 拷贝即快照）；byName_ 的名字视图同样借用 pool_ 而非会话符号池。构造完成后没有任何数据活引用 session，rewrite 阶段按类重开会话（容器里有原始字节），Strict 帧重算的 CommonSuperClassResolver 只读层级骨架，照常工作。
+/// summary 与 session 解绑：构造期逐类开会话 → fillSummary 抽骨架 → addClass 入库 → 会话当场弃置，任何时刻至多一个会话在场。解绑的依据是 fillSummary 的产出只有两处自持落点，pool_（内容寻址驻留池，arena 只增不移，视图随池存活）与 hierarchy_ 入库的 ClassSummary 值拷贝（键全是 pool_ 的 u32 id，vector 拷贝即快照）；byName_ 的名字视图同样借用 pool_ 而非会话符号池。构造完成后没有任何数据活引用 session，rewrite 阶段按类重开会话（容器里有原始字节），Strict 帧重算的 CommonSuperClassResolver 只读层级骨架，照常工作。
 ///
-/// 遍历序沿用原 scanClassResources 的容器资源序（visitResources），驻留键的 intern 序逐位一致 → 键 id、环/重复登记的判定时点、resolver 查询缓存全部不动，这是 trace/产物逐位等价的前提。不挂 pass 级时间片门：层次图必须盖全容器（与原口径一致——空条目与畸形类不产出事实，fail-open）。
+/// 遍历序沿用原 scanClassResources 的容器资源序（visitResources），驻留键的 intern 序逐位一致 → 键 id、环/重复登记的判定时点、resolver 查询缓存全部不动，这是 trace/产物逐位等价的前提。不挂 pass 级时间片检查：层次图必须盖全容器（与原口径一致，空条目与畸形类不产出事实，fail-open）。
 ///
 /// 成员间是借用关系（adapter 借 super，super 借 hierarchy，hierarchy 借 pool），禁拷贝禁移动；按 rewrite() 单次调用于栈上持有。
 class FrameContext
@@ -163,7 +163,7 @@ private:
 ///
 /// mutate(CodeUnit&) 返回是否改动了 DOM（false = 无改动，不写回）。
 /// 改动时走 prepare → lower → rewire。jsr/ret 等 Strict 不可算形态以异常
-/// 抛出，这里收敛为 false——调用方 fail-closed 整类放弃，不落半截。
+/// 抛出，这里收敛为 false，调用方 fail-closed 整类放弃，不落半截。
 template<typename MutateFn>
 bool mutateMethodWithFrames(jbc::ir::ClassSession& s, ca::usize methodIndex,
                             jbc::analysis::ITypeResolver& resolver, MutateFn&& mutate)
@@ -210,7 +210,7 @@ bool mutateMethodWithFrames(jbc::ir::ClassSession& s, ca::usize methodIndex,
         return true;
     } catch (const std::exception& e) {
         // GRUNT_FRAME_TRACE=1：打印 Strict 帧重算异常（帧链失败定位面；
-        // 恒 false 语义不变——诊断只在 env 门下多打一行 stderr）。
+        // 恒 false 语义不变，诊断只在 env 检查下多打一行 stderr）。
         if (std::getenv("GRUNT_FRAME_TRACE") != nullptr) {
             std::fprintf(stderr, "[grunt.Frame] rewire exc: %s\n", e.what());
         }
@@ -222,17 +222,17 @@ bool mutateMethodWithFrames(jbc::ir::ClassSession& s, ca::usize methodIndex,
 // 资源删除（资源面改写动词：本仓首个非类条目写原语）
 //
 // 现役画布（container.hpp 的 forEachClass / replaceClass）只走类资源；资源
-// 删除是容器条目的结构性变化，单独成原语收口在这里（写侧），对账在
-// proof_toolbox（读侧）。删除只摘条目、不碰类面；「删哪个」由各残留的
-// scan 产出（Era=Kasumi 门在 scan），本原语不做任何家族判断。
+// 删除是容器条目的结构性变化，单独成原语收口在这里（写侧），核对在
+// proof_toolbox（读侧）。删除只摘条目、不碰类面；删哪个由各残留的
+// scan 产出（Era=Kasumi 检查在 scan），本原语不做任何家族判断。
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// @brief 按 uri 从容器摘除一个资源条目（类与非类条目同一口径）。
-/// @return 是否确有此条目被摘除（缺失 = false，调用方按对账违例记账）。
+/// @return 是否确有此条目被摘除（缺失 = false，调用方按核对违例计数）。
 ///
 /// 键视图驻留容器 arena（unordered_map<std::string_view> 按内容相等查找），
 /// 等价字符串视图可直查； erase 只摘 map 条目，URI arena 文本不回收
-/// （arena 只增不移，条目名后续对账引用无悬垂风险）。
+/// （arena 只增不移，条目名后续核对引用无悬垂风险）。
 inline bool removeResource(mjbase::model::ResourceContainer& container, std::string_view uri)
 {
     auto& resources = container.getResources();

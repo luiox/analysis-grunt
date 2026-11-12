@@ -45,7 +45,7 @@ std::vector<ca::u8> assemble(const std::string& name, const std::string& source)
     return std::move(assembled.value->bytes);
 }
 
-/// 汇编器默认产出较旧的 class 版本；判据门要求 major >= 55，这里统一抬到 61。
+/// 汇编器默认产出较旧的 class 版本；判据检查要求 major >= 55，这里统一抬到 61。
 std::vector<ca::u8> asJava17(const std::vector<ca::u8>& bytes)
 {
     auto session = openSession(bytes);
@@ -139,7 +139,7 @@ TEST(FlagsStripScan, PreservesDollarNamedMembers)
     auto session = openSession(classBytes(container, "fixture/Flagged.class"));
     ASSERT_TRUE(session != nullptr);
     jbc::core::ClassFile& cf = session->backing();
-    // sm 的名字改成 $access$000（名字形状门生效的前提：标志保持伪造态）
+    // sm 的名字改成 $access$000（名字形状检查生效的前提：标志保持伪造态）
     for (jbc::core::MemberInfo& m : cf.methods) {
         if (cf.utf8(m.nameCp) == "sm") m.nameCp = cf.cp.addUtf8("$access$000");
     }
@@ -164,7 +164,7 @@ TEST(FlagsStripScan, PreservesDollarNamedMembers)
 
 TEST(FlagsStripScan, ClearsOldClassFileVersionToo)
 {
-    // $ 名字门与版本无关：major 52 的伪标志 static synthetic 照样收。
+    // $ 名字检查与版本无关：major 52 的伪标志 static synthetic 照样收。
     model::ResourceContainer container;
     const std::string        uri = "fixture/Flagged.class";
     auto session = openSession(assemble("fixture/Flagged", kFlaggedSource));

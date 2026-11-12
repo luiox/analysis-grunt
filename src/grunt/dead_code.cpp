@@ -20,12 +20,12 @@
 ///
 /// 任一端点解析失败（`sBgn == kNo || sEnd == kNo || sEnd <= sBgn`）整方法
 /// 放弃，不做半截改写。`excChanged` 但 `victims` 为空时也写回 `cu->exc`
-/// ——异常表本身就是改动。孤儿标签销毁前清点：句柄无效（含 kNoLabel）
-/// 跳过、孤儿集内重复句柄只销毁一次、被存活表项共享的保留——按 `cu->exc`
+/// ，异常表本身就是改动。孤儿标签销毁前清点：句柄无效（含 kNoLabel）
+/// 跳过、孤儿集内重复句柄只销毁一次、被存活表项共享的保留，按 `cu->exc`
 /// 向量序线性清点，无集合遍历，双跑产物不引入遍历序依赖。受害者内部互指
 /// （死块内 goto）的 ControlFlow 标签不保护锚点；若收敛逻辑漏处置某枚
 /// Boundary 标签，`eraseBatch` 按锚定保护契约返回 Err，本 pass 保守放弃
-/// ——fail-closed 兜底即断言。
+/// ，fail-closed 兜底即断言。
 ///
 /// 端点吸附必须**搬移**旧标签而不是造新标签：旧 Boundary 标签仍锚在被擦
 /// 指令上时，`eraseBatch` 的锚定保护会整批拒绝，改写整体不可达（历史教训，
@@ -34,15 +34,15 @@
 /// ## JSR/RET
 ///
 /// `JSR` 的后继 = 目标 + 顺序下一条（返回地址压栈）；`RET` 无静态后继
-/// （目标在局部变量里）——按终止符处理，保守不越。Strict 帧重算对 jsr/ret
+/// （目标在局部变量里），按终止符处理，保守不越。Strict 帧重算对 jsr/ret
 /// 抛异常，`mutateMethodWithFrames` 收敛为 false（整方法放弃）。
 ///
 /// ## 与 HotSpot 线性 walk 的关系
 ///
-/// HotSpot 校验器对死代码并非「跳过」：线性 walk 走遍全部帧，且每个分支
+/// HotSpot 校验器对死代码并非跳过：线性 walk 走遍全部帧，且每个分支
 /// 目标 / 异常 handler 都必须有帧。所以死区必须在导出前物理消失，而不是
-/// 留 NOP 或留帧——本残留擦掉死区，帧由 `rewireFramesAfterLower` 的 Strict
-/// 求解从代码真值整体重算，不存在「锚在被擦指令上的孤儿帧」。
+/// 留 NOP 或留帧，本残留擦掉死区，帧由 `rewireFramesAfterLower` 的 Strict
+/// 求解从代码真值整体重算，不存在锚在被擦指令上的孤儿帧。
 #include "grunt/dead_code.hpp"
 
 #include <set>
@@ -70,7 +70,7 @@ using jbc::core::Op;
 /// @brief 单方法可达性 BFS（异常表感知）：返回逐指令可达标记（order 序）。
 ///
 /// 入口 = 首条指令。异常表是隐藏控制流边：范围内任一可达指令都可能抛出
-/// 并进入 handler，故 handler 以「区间与可达集相交」为根，迭代到不动点
+/// 并进入 handler，故 handler 以区间与可达集相交为根，迭代到不动点
 /// （handler 自己落在别的区间里时继续传导）。
 std::vector<ca::u8> reachability(const ir::CodeUnit& cu)
 {
@@ -174,16 +174,16 @@ std::vector<ca::u8> reachability(const ir::CodeUnit& cu)
 ///
 /// cu 是 mutateMethodWithFrames 提升好的当前 unit：promote 只发生一次，
 /// DOM 改写、prepare、lower 都落在同一 unit 上（再 promote 即弃改写）。
-/// 受害者一律 eraseBatch——SMT 由 rewireFramesAfterLower 严格重算，无需
+/// 受害者一律 eraseBatch，SMT 由 rewireFramesAfterLower 严格重算，无需
 /// 为帧锚保活任何指令。异常表不再整体跳过：可达性含异常边（见
 /// reachability），全死区间删表项，端点锚在死指令上时向前吸附到存活
 /// 指令（区间吞并被删段，与 frame_rewire 的 LNT/LVT 吸附规则一致），
 /// 尾部全死落到方法末尾哨兵。
 ///
 /// 端点吸附用 bindLabel 搬移旧 Boundary 标签（句柄身份不变，表项引用
-/// 不动）；createLabel 换新引用而不销毁旧标签的形态不可用——旧标签仍
-/// 锚在被擦指令上，eraseBatch 按「批内成员被存活 Boundary 标签锚定 →
-/// Err 且整批不删」契约拒绝，方法整体 fail-closed（2026-11-12 修复的
+/// 不动）；createLabel 换新引用而不销毁旧标签的形态不可用，旧标签仍
+/// 锚在被擦指令上，eraseBatch 按批内成员被存活 Boundary 标签锚定 →
+/// Err 且整批不删契约拒绝，方法整体 fail-closed（2026-11-12 修复的
 /// 根因）。删表项的孤儿端点/handler 标签在销毁前按句柄身份清点存活
 /// 表项引用。
 ca::usize rewriteMethod(ir::CodeUnit* cu)
@@ -208,7 +208,7 @@ ca::usize rewriteMethod(ir::CodeUnit* cu)
     };
 
     // 异常表收敛（先于擦除：Boundary 标签保护锚点，吸附必须在擦除前落
-    // 定）。遍历与处置均按 cu->exc 向量序、孤儿标签线性清点——无集合
+    // 定）。遍历与处置均按 cu->exc 向量序、孤儿标签线性清点，无集合
     // 遍历，双跑产物确定性不引入遍历序依赖。
     std::vector<ir::CodeUnit::Exc> liveExc;
     std::vector<ir::LabelId>       orphanLabels;   // 删表项的端点/handler 标签
@@ -254,7 +254,7 @@ ca::usize rewriteMethod(ir::CodeUnit* cu)
         liveExc.push_back(e);
     }
 
-    // 孤儿标签销毁：句柄无效（含 kNoLabel）跳过——无效标签不锚定任何
+    // 孤儿标签销毁：句柄无效（含 kNoLabel）跳过，无效标签不锚定任何
     // 指令，无害；同一句柄在孤儿集里重复出现或被存活表项共享时保留
     // （线性清点，序确定）。
     for (ca::usize oi = 0; oi < orphanLabels.size(); ++oi) {
@@ -281,7 +281,7 @@ ca::usize rewriteMethod(ir::CodeUnit* cu)
     // 引用的指令必然可达（异常边已入 reachability），不会进受害者集合；
     // 受害者内部互指（死块内 goto 等）的 ControlFlow 标签不保护锚点，
     // 按 eraseBatch 契约随批消亡。若收敛逻辑漏处置某枚 Boundary 标签，
-    // eraseBatch 返回 Err，本函数保守放弃——fail-closed 兜底即断言。
+    // eraseBatch 返回 Err，本函数保守放弃，fail-closed 兜底即断言。
     if (!victims.empty() && cu->dom.eraseBatch(victims).is_err()) return 0;
     return victims.size();
 }
@@ -357,7 +357,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
-        // 前置门：原样往返不了的方法不进改写面。
+        // 前置检查：原样往返不了的方法不进改写面。
         const std::unordered_set<ca::usize> safe = proof_tools::roundTripSafe(
             *entry.bytes,
             std::vector<ca::usize>(methodIdxs.begin(), methodIdxs.end()));

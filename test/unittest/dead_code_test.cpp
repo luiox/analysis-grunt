@@ -2,8 +2,8 @@
 /// @brief       残留 `dead_code` 的三段判据测试（jasm 夹具）。
 ///
 /// 覆盖分工：
-/// - SCAN：return 后死尾 / goto 越过的死块产出站点（victimCount 记账），
-///   全活方法零站点；可达性含异常边——handler 无显式跳转入口也存活；
+/// - SCAN：return 后死尾 / goto 越过的死块产出站点（victimCount 计数），
+///   全活方法零站点；可达性含异常边，handler 无显式跳转入口也存活；
 /// - REWRITE：死尾擦除的字节码断言；保护区中段死块擦除且 handler 存活
 ///   （端点全在存活指令上的正形，回归锚）；端点锚在死指令 / 全死区间
 ///   两类形状按文档行为断言（吸附路径已修复，2026-11-12 修复批）；
@@ -91,7 +91,7 @@ const char* kDeadTailSource =
 
 /// 异常边正形夹具：保护区 [Ltry, Lmid) 端点全在存活指令上，死块在区间中段
 /// （goto 越过），handler 无显式跳转入口（只能靠异常边进）。jasm 的区间末
-/// 标签是排他语义，且未定义标签会落到方法末哨兵——第二标签必须指向已定义
+/// 标签是排他语义，且未定义标签会落到方法末哨兵，第二标签必须指向已定义
 /// 的 Lmid。
 const char* kMidRegionExcSource =
     ".super java/lang/Object\n"
@@ -389,8 +389,8 @@ TEST(DeadCodeRewrite, HandlerSurvivesExcEdgeInMidRegionDeadBlock)
 
 /// 端点吸附/删表路径测试（2026-11-12 修复批翻转为文档行为断言）：修复前
 /// `rewriteMethod` 用 `createLabel` 造新 Boundary 标签替换 `cu->exc` 端点
-/// 但从不销毁旧标签，旧标签仍锚在待擦指令上，eraseBatch 按「批内成员被
-/// 存活 Boundary 标签锚定 → Err 且整批不删」契约拒绝，整方法 fail-closed
+/// 但从不销毁旧标签，旧标签仍锚在待擦指令上，eraseBatch 按批内成员被
+/// 存活 Boundary 标签锚定 → Err 且整批不删契约拒绝，整方法 fail-closed
 /// 空转。修法 = 端点吸附改 `bindLabel` 搬移旧标签（句柄身份不变，表项引
 /// 用不动）+ 删表项的孤儿端点/handler 标签销毁（实现契约见
 /// src/grunt/dead_code.cpp 文件头注释）。

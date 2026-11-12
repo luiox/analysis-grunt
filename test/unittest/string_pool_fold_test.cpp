@@ -2,27 +2,27 @@
 /// @brief       残留 `string_pool_fold` 的三段判据测试（真算法往返 + 拒绝面
 ///              反证）。
 ///
-/// 夹具是「缩小版 Grunt v2/v3 字符串池形态」（jasm 现场汇编，不落二进制、
+/// 夹具是缩小版 Grunt v2/v3 字符串池形态（jasm 现场汇编，不落二进制、
 /// 不依赖语料目录）：每类带池字段 + arrayInit + **真算法解密器**（体是
 /// grunt2@36c0eef createDecryptMethod 的逐字生成面，非骨架桩），调用点各一。
 ///
 /// 真算法往返的证据链（无循环论证）：
-/// 1. 密文由 test/tools/GruntStringEncryptRef.java 产出——该文件的 encrypt()
+/// 1. 密文由 test/tools/GruntStringEncryptRef.java 产出，该文件的 encrypt()
 ///    从 Grunt 源码逐行转写（JVM int 语义原生），对明文跑真加密；
 /// 2. 夹具把密文（literal ldc / arrayed CASTORE）、seed、key 嵌进 arrayInit，
 ///    classKey 嵌进解密器体首条 ldc；
 /// 3. 本仓转写的解密算法（gruntCharXorStream，与 1 同源独立转写）在 scan 里
-///    对密文解出明文——断言 == 1 步的输入明文。两份转写一正一逆、各自独立
+///    对密文解出明文，断言 == 1 步的输入明文。两份转写一正一逆、各自独立
 ///    成文，任何 JVM int 语义偏差都会在这一步爆。
 ///
 /// 覆盖分工：
 /// - SCAN：v2 literal / v3 arrayed 两形态站点定案；下标非常量（静默跳过）、
 ///   池字段形态不符（无前导，静默跳过）、解密器缺失 / 解密器体非生成面、
-///   arrayed 码元写序列断链、seed 缺失 → 拒绝面逐桶记账；
+///   arrayed 码元写序列断链、seed 缺失 → 拒绝面逐桶计数；
 /// - REWRITE：两形态锚点原地换 ldc + 三元组擦除；**池字段/arrayInit/解密器
 ///   不删**（改写后仍在场）；拒绝面上容器字节逐位不动；
 /// - PROOF：类数不增 + 脏类可重解析 + residual 归零（未跑 rewrite 时如实
-///   报「本可折叠」站点数）。
+///   报本可折叠站点数）。
 #include "grunt/string_pool_fold.hpp"
 
 #include "jbc/ir/units.hpp"
@@ -109,7 +109,7 @@ std::string decryptorBody(const std::string& className, const std::string& class
 {
     return "  .method private static dec ([CJI)Ljava/lang/String; {\n"
            "    code: {\n"
-           "      " + classKeyLdc + "\n"           // INT(classKey)——init 窗口头
+           "      " + classKeyLdc + "\n"           // INT(classKey)，init 窗口头
            "      iload_3\n"                       // key 参数（desc ([CJI) 槽 3）
            "      ixor\n"
            "      istore 4\n"                      // state n2
@@ -246,8 +246,8 @@ std::string v2LiteralSource(const std::string& name)
 }
 
 /// @brief 正例夹具（直线蹦床形）：clinit 的 arrayInit 调用隔一层纯结构静态
-///        蹦床（体恰为 INVOKESTATIC ai ()V + RETURN）——上游 indy 还原后的
-///        产物形（boar 语料实证：Grunteon 全链把该调用藏进自家 indy 机器，
+///        蹦床（体恰为 INVOKESTATIC ai ()V + RETURN），上游 indy 还原后的
+///        产物形（boar 语料验证：Grunteon 全链把该调用藏进自家 indy 机器，
 ///        上游还原后即此形）。池链判定应跟一跳到达真 arrayInit。
 std::string v2TrampolineSource(const std::string& name)
 {
@@ -407,7 +407,7 @@ std::string v3ArrayedSource(const std::string& name)
            "}\n";
 }
 
-/// @brief 拒绝面夹具：读取点下标非常量（iload 0——非本家三元组，静默跳过）。
+/// @brief 拒绝面夹具：读取点下标非常量（iload 0，非本家三元组，静默跳过）。
 std::string badIdxSource(const std::string& name)
 {
     return ".super java/lang/Object\n"
@@ -451,7 +451,7 @@ std::string badIdxSource(const std::string& name)
            "}\n";
 }
 
-/// @brief 拒绝面夹具：池字段形态不符——String[] 字段 + 三元组读取，但无
+/// @brief 拒绝面夹具：池字段形态不符，String[] 字段 + 三元组读取，但无
 ///        Grunt 池分配前导（普通数组/Kasumi 缓存同形）。
 std::string plainArraySource(const std::string& name)
 {
@@ -470,7 +470,7 @@ std::string plainArraySource(const std::string& name)
            "}\n";
 }
 
-/// @brief 拒绝面夹具：解密器缺失——arrayInit 引用不在场的 ([CJI) 方法。
+/// @brief 拒绝面夹具：解密器缺失，arrayInit 引用不在场的 ([CJI) 方法。
 std::string missingDecSource(const std::string& name)
 {
     return ".super java/lang/Object\n"
@@ -503,7 +503,7 @@ std::string missingDecSource(const std::string& name)
            "}\n";
 }
 
-/// @brief 拒绝面夹具：解密器体非生成面（骨架桩——核窗口缺失）。
+/// @brief 拒绝面夹具：解密器体非生成面（骨架桩，核窗口缺失）。
 std::string stubDecSource(const std::string& name)
 {
     return ".super java/lang/Object\n"
@@ -536,7 +536,7 @@ std::string stubDecSource(const std::string& name)
            "\n"
            "  .method private static dec ([CJI)Ljava/lang/String; {\n"
            "    code: {\n"
-           "      aconst_null\n"                  // 行为账 §1.1 样例的骨架形：
+           "      aconst_null\n"                  // 行为记录 §1.1 样例的骨架形：
            "      areturn\n"                      //   判据钉生成面 → 整类拒绝
            "    }\n"
            "  }\n"
@@ -613,7 +613,7 @@ std::string brokenArrayedSource(const std::string& name)
            "}\n";
 }
 
-/// @brief 拒绝面夹具：seed 缺失——block 的 long 位放了 int 装载。
+/// @brief 拒绝面夹具：seed 缺失，block 的 long 位放了 int 装载。
 std::string missingSeedSource(const std::string& name)
 {
     return ".super java/lang/Object\n"
@@ -667,7 +667,7 @@ struct NegativeFixture
 {
     std::string name;
     std::string source;
-    bool        expectReject;   // true = 有记账拒绝；false = 静默跳过
+    bool        expectReject;   // true = 有计数拒绝；false = 静默跳过
 };
 
 std::vector<NegativeFixture> negativeFixtures()
@@ -848,7 +848,7 @@ TEST(StringPoolRewrite, FoldsBothFormsToLdcAndKeepsPoolStructure)
     EXPECT_NE(v2.find("invokestatic GtPool2.dec"), std::string::npos) << v2;
     EXPECT_NE(v2.find("anewarray java/lang/String"), std::string::npos) << v2;
 
-    // v3 类：同折叠口径（arrayed 密文块的 CASTORE 序列不动——池面不在
+    // v3 类：同折叠口径（arrayed 密文块的 CASTORE 序列不动，池面不在
     // 本残留改写范围）。
     const std::string v3 = disassemble(classBytes(container, "GtPool3.class"));
     EXPECT_NE(v3.find("ldc \"GRUNTEON_POOL\""), std::string::npos) << v3;
@@ -914,7 +914,7 @@ TEST(StringPoolProof, KeepsClassCountReparsesAndResidualZero)
 
 TEST(StringPoolProof, CountsResidualWhenSitesUntouched)
 {
-    // 池表在场但没跑 rewrite：residual 如实报告「本可折叠」的站点数。
+    // 池表在场但没跑 rewrite：residual 如实报告本可折叠的站点数。
     model::ResourceContainer container =
         makeContainer({{"GtPool2", v2LiteralSource("GtPool2")}});
 

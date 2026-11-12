@@ -7,49 +7,49 @@
 /// ## SCAN（形状钉 → 求值，两段）
 ///
 /// 形状钉逐方法：INVOKESTATIC 描述符恰 `(III)I`（生成面 ActionDesc 指纹，
-/// 其余 desc 静默跳过不记账）→ 逆向三实参 const_args::collectArgs（NOP 跳
+/// 其余 desc 静默跳过不计数）→ 逆向三实参 const_args::collectArgs（NOP 跳
 /// 过，全 known i32）→ 前窗 parseForwardWindow：走廊 `[INT; (INT;
 /// IMUL|IAND|IOR|IXOR)*]` 按 JVM 栈语义折叠（交换律 + 结合律下左折即真
 /// 值），NOP 跳过；终点恰为 IF_ICMPEQ..IF_ICMPLE 且折叠栈恰剩 1 个 i32 =
 /// compareValue。停点具名识别：引用 ThreadLocalRandom 的窗口变体单独入
 /// tlrWindow 桶（运行期随机排除），其余停点 → forwardShape。目标解析（容
 /// 器方法索引，constant_call 同源 keyOf）：容器外 / 非 static /
-/// synchronized 逐桶；**目标有码检查在求值段做**——loc.index 是目标类下
+/// synchronized 逐桶；**目标有码检查在求值段做**，loc.index 是目标类下
 /// 标而 scan 会话开在调用者类上，两套下标空间错位，在 scan 段查是单测钉
 /// 过的缺陷面。
 ///
-/// 求值按目标 owner 分组：目标类会话上 classInitNeutral 门（非中性时只留
-/// 同类调用——JVMS 5.5 同类豁免，constant_call 同源）→ SimExecutor.invoke
+/// 求值按目标 owner 分组：目标类会话上 classInitNeutral 检查（非中性时只留
+/// 同类调用，JVMS 5.5 同类豁免，constant_call 同源）→ SimExecutor.invoke
 /// 跨方法求值（编排层递归穿透 `__grt$indy$` 转发器；结果缓存 + 深度 6 +
 /// 步数预算）→ known i32 出值 → gateVerdict(op, R, compareValue) 必须
-/// taken（生成面恒真自证门；判非 taken = 求值与生成面脱钩，fail-closed）。
+/// taken（生成面恒真自证检查；判非 taken = 求值与生成面脱钩，fail-closed）。
 ///
 /// **mock 面（最小申报）**：只接管 `java/lang/Integer.rotateLeft(II)I`
 /// （PredicateStep 盐旋转步生成面；jsim 核心/num 包无 JDK 数学面，缺它整
 /// 桶 EvalBadState）。JVM 语义 = ishl/iushr 位移掩码 5 位
 /// `(i << d) | (i >>> (32 - d))`（d &= 31，d=0 恒等）；unknown 按未知口径
 /// 传播不编值。**刻意不装 str/num/reflect/indy 扩展包**：TLR / material /
-/// indy 蹬床面必须在这里 fail-closed 显形——装包会把它们误放进折叠面。
+/// indy 转发面必须在这里 fail-closed 显形，装包会把它们误放进折叠面。
 ///
 /// ## REWRITE（TAKEN 形）
 ///
-/// 按类聚类 → 方法级 roundTripSafe 前置门 → promote 一次 → DOM 改写 →
+/// 按类聚类 → 方法级 roundTripSafe 前置检查 → promote 一次 → DOM 改写 →
 /// lower 全部候选方法（任一失败整类放弃，半改写态不外泄）。逐站：分支按
-/// branchSrcPc + branchOp 重定位后做操作数区复核——逆向越过前窗找到门点
+/// branchSrcPc + branchOp 重定位后做操作数区复核，逆向越过前窗找到 gate
 /// 调用并全等比对成员与三实参，再**正向重跑前窗解析**，终点分支与
 /// compareValue 必须与 scan 全等（权威复核）；裁决复核仍 taken（纯函数下
-/// 恒成立，防御面）。标签门：操作数区中段（right/salt/调用/窗内指令）或
+/// 恒成立，防御面）。标签检查：操作数区中段（right/salt/调用/窗内指令）或
 /// 分支本体带标签（合并点）整站放弃；区域首条（left 锚）的标签安全。改
 /// 写：锚（left 常量装载）原地改 ICONST_0（保 srcPc），分支本体原地换
 /// IFEQ（目标 = 原分支目标，保 srcPc），其余受害者（right/salt/调用/窗内
-/// 走廊）单批 eraseBatch（kRejectIfUsed——异常表/帧锚占用即拒收，整站回
+/// 走廊）单批 eraseBatch（kRejectIfUsed，异常表/帧锚占用即拒收，整站回
 /// 滚 anchor 与分支，不留半改写态）。不新增合并点、不插无条件 GOTO
 /// （HotSpot 线性走查帧约束，predicate_fold 同款）；junk 臂原地保留成不可
 /// 达码交下游 DeadCode。
 ///
 /// ## PROOF
 ///
-/// 类数不增 + 脏类可重解析 + residual 复扫（脏类集上重跑全判据——形状 +
+/// 类数不增 + 脏类可重解析 + residual 复扫（脏类集上重跑全判据，形状 +
 /// 求值 + 恒真裁决）。改写 fail-closed 放弃的站点如实计入 residual，求值
 /// 失败面从未进改写面不计入。
 #include "grunt/gate_processor_fold.hpp"
@@ -108,7 +108,7 @@ bool scanGuard(std::string_view stage, std::string_view uri, Fn&& fn)
     return false;
 }
 
-/// @brief 门点分支语义：生成面 Comparison 全族落在 IF_ICMP*（v1 = proc 结果
+/// @brief gate 分支语义：生成面 Comparison 全族落在 IF_ICMP*（v1 = proc 结果
 ///        （先压，深槽），v2 = compareValue（顶槽））。
 bool gateVerdict(Op op, ca::i32 v1, ca::i32 v2, bool& taken)
 {
@@ -123,7 +123,7 @@ bool gateVerdict(Op op, ca::i32 v1, ca::i32 v2, bool& taken)
     }
 }
 
-/// @brief 拒绝记账：逐条进 rejects，桶计数同步自增。
+/// @brief 拒绝计数：逐条进 rejects，桶计数同步自增。
 void bumpReject(ScanResult& result, std::string_view owner, std::string_view method,
                 ca::u32 callSrcPc, RejectReason reason)
 {
@@ -154,7 +154,7 @@ void bumpReject(ScanResult& result, std::string_view owner, std::string_view met
 // ============================================================================
 
 /// 容器方法索引构建：scan_tools::buildMethodIndex 收口（constant_call 同源
-/// 口径），本 pass 只钉两件口径——重名类撞键取后到（insert_or_assign 原形
+/// 口径），本 pass 只钉两件口径，重名类撞键取后到（insert_or_assign 原形
 /// = KeepLast）、stderr 前缀走本 pass 的 scanGuard。
 void buildIndex(const mjbase::model::ResourceContainer& container,
                 scan_tools::MethodIndex& index)
@@ -165,7 +165,7 @@ void buildIndex(const mjbase::model::ResourceContainer& container,
     scan_tools::buildMethodIndex(container, index, scan_tools::IndexDup::KeepLast, guard);
 }
 
-/// @brief 前窗成员判定（rewrite 逆向定位调用用，宽松形——权威复核在正向
+/// @brief 前窗成员判定（rewrite 逆向定位调用用，宽松形，权威复核在正向
 ///        重跑的前窗解析）：i32 常量装载与走廊折叠算术。
 bool isWindowInsn(const ir::Insn& in)
 {
@@ -200,7 +200,7 @@ enum class WindowVerdict : ca::u8
 /// @brief 前窗解析：compareValue 常量走廊 `[INT; (INT; IMUL|IAND|IOR|IXOR)*]`
 ///        栈机折叠，终点恰为 IF_ICMP* 分支。
 ///
-/// 生成面 compareValue.emit() 走 IntConstChain——罐 A 实测多数门点是多段走
+/// 生成面 compareValue.emit() 走 IntConstChain，样本 A 实测多数 gate 是多段走
 /// 廊而非单常量。折叠按 JVM 栈语义（imul/iand/ior/ixor 全交换 + 结合，左折
 /// 即真值）；窗内指令原样记入 `windowInsns`（rewrite 的受害者清单），分支
 /// srcPc 走出参。ThreadLocalRandom 是唯一的具名停点：RandomBound 窗口变体
@@ -283,8 +283,8 @@ WindowVerdict parseForwardWindow(ir::ClassSession& s, const ir::CodeDom& dom,
     return WindowVerdict::Bad;   // 越方法尾
 }
 
-/// @brief 形状钉：门点调用锚（INVOKESTATIC (III)I）逆向三常量 + 前窗
-///        「i32 常量 → IF_ICMP*」逐字。命中产出 Site（未求值）。
+/// @brief 形状钉：gate 调用锚（INVOKESTATIC (III)I）逆向三常量 + 前窗
+///        i32 常量 → IF_ICMP*逐字。命中产出 Site（未求值）。
 void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& uri,
                 std::string_view self, const scan_tools::MethodIndex& index,
                 ScanResult& result)
@@ -306,7 +306,7 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
         ir::ClassSession::MemberSem enc;
         if (!s.memberOf(*in, enc)) continue;
         if (enc.kind != ir::ClassSession::MemberSem::Kind::Method) continue;
-        if (enc.desc != kGateDesc) continue;   // 非门点 desc：非候选，不进桶
+        if (enc.desc != kGateDesc) continue;   // 非 gate desc：非候选，不进桶
 
         const auto reject = [&](RejectReason r) {
             bumpReject(result, self, name, in->srcPc, r);
@@ -331,7 +331,7 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
 
         // 前窗：compareValue 常量走廊 → IF_ICMP* 分支（生成面逐字）。其它任
         // 何内容整站拒绝；停点引用 ThreadLocalRandom 的（RandomBound 窗口变
-        // 体）单独入 TlrWindow 桶——运行期随机不进折叠面。
+        // 体）单独入 TlrWindow 桶，运行期随机不进折叠面。
         std::vector<ir::InsnId> windowInsns;
         ca::i32                 compareValue = 0;
         Op                      branchOp     = Op::NOP;
@@ -363,7 +363,7 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
             continue;
         }
         // 目标有码检查不在这里做：loc.index 是目标类的方法下标，本会话是
-        // 调用者类——检查挪到求值段（目标类会话在手，constant_call 同位）。
+        // 调用者类，检查挪到求值段（目标类会话在手，constant_call 同位）。
 
         Site site;
         site.uri              = uri;
@@ -384,7 +384,7 @@ void scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
 }
 
 /// @brief 求值段：装好 rotateLeft 接管的 jsim 执行器逐站点跨方法跑 proc；
-///        通过者写回 `result`，失败者转拒绝记录。类初始化门先判。
+///        通过者写回 `result`，失败者转拒绝记录。类初始化检查先判。
 void evaluateSites(const mjbase::model::ResourceContainer& container, ScanResult& result)
 {
     std::unordered_map<std::string, std::vector<ca::usize>> byOwner;
@@ -395,16 +395,16 @@ void evaluateSites(const mjbase::model::ResourceContainer& container, ScanResult
     std::vector<ca::u8> ok(result.sites.size(), 0);   // 0 待判 / 1 通过 / 2 拒绝
 
     SimExecutor exec(container);
-    // 不装任何扩展包（str/num/reflect/indy 全不装）：门点 proc 体按生成面是
+    // 不装任何扩展包（str/num/reflect/indy 全不装）：gate proc 体按生成面是
     // 纯算术 + Integer.rotateLeft，任何堆访问/字符串/indy 面都该在求值处
     // fail-closed（TLR / material-key 桶靠这条边界显形），装包会把这些面误
     // 放进来。
     //
-    // Integer.rotateLeft (II)I 接管（本文件内最小扩面，申报理由：门点 proc
+    // Integer.rotateLeft (II)I 接管（本文件内最小扩面，申报理由：gate proc
     // 体的 PredicateStep AddSaltRotate/RotateBySalt 生成面 emit
     // `INVOKESTATIC java/lang/Integer.rotateLeft(II)I`（IntExpression.kt 盐
     // 旋转步）；jsim 核心/num 包没有 JDK 数学面，缺这个接管整桶
-    // EvalBadState 拒——罐 A 供给链实测 4282 个 const-fed 门点全部因此存活。
+    // EvalBadState 拒，样本 A 供给链实测 4282 个 const-fed gate 全部因此存活。
     // rotateLeft 是全序纯函数：JVM ishl/iushr 位移掩码 5 位，双常量实参下值
     // 唯一确定；unknown 按未知口径传播（折叠面 ValueKindUnsupported 拒），
     // 不编值。）
@@ -437,9 +437,9 @@ void evaluateSites(const mjbase::model::ResourceContainer& container, ScanResult
             if (group == byOwner.end()) return;
 
             if (!scan_tools::classInitNeutral(*session)) {
-                // 类初始化门（constant_call 同源）：删掉指向本类的调用会改变
-                // 被调类的初始化时机——照旧整组拒绝。同类调用豁免（门点 proc
-                // 与蹬床和门点同类是生成面事实）：JVMS 5.5 本类方法开始执行
+                // 类初始化检查（constant_call 同源）：删掉指向本类的调用会改变
+                // 被调类的初始化时机，照旧整组拒绝。同类调用豁免（gate proc
+                // 与转发和 gate 同类是生成面事实）：JVMS 5.5 本类方法开始执行
                 // 时类已在初始化中/已完成，同类 INVOKESTATIC 不触发初始化，
                 // 删调用不移时机；豁免站点的纯性由封闭环境求值独立证明。
                 bool anyKept = false;
@@ -458,7 +458,7 @@ void evaluateSites(const mjbase::model::ResourceContainer& container, ScanResult
 
             for (const ca::usize si : group->second) {
                 Site& site = result.sites[si];
-                if (ok[si] == 2) continue;   // 门组拒绝已记账
+                if (ok[si] == 2) continue;   // 检查组拒绝已计数
 
                 if (!ir::hasCode(*session, site.targetMethodIndex)) {
                     bumpReject(result, site.callerOwner, site.callerMethod, site.callSrcPc,
@@ -471,7 +471,7 @@ void evaluateSites(const mjbase::model::ResourceContainer& container, ScanResult
                     exec.invoke(site.targetOwner, site.targetName + site.targetDesc, site.args);
                 if (out.kind == SimOutcome::Kind::Void) {
                     // (III)I 恒有返回值；到这里说明桥转换把体读成了 void，按
-                    // 求值失败面记账。
+                    // 求值失败面计数。
                     bumpReject(result, site.callerOwner, site.callerMethod, site.callSrcPc,
                                RejectReason::EvalBadState);
                     ok[si] = 2;
@@ -509,7 +509,7 @@ void evaluateSites(const mjbase::model::ResourceContainer& container, ScanResult
     });
 
     // 没被任何目标类覆盖的站点（目标类会话开不了 / 时间片止步）统一按
-    // 目标无码记账（fail-closed 同口径）。
+    // 目标无码计数（fail-closed 同口径）。
     std::vector<Site> kept;
     kept.reserve(result.sites.size());
     for (ca::usize i = 0; i < result.sites.size(); ++i) {
@@ -565,7 +565,7 @@ namespace {
 ///        走出参。
 ///
 /// cu 由调用方 promote：DOM 改写落在本 unit，随后由调用方统一 lowerMethod
-/// （帧链由 lower 的 pcmap 重定位——本改写不新增合并点：TAKEN 落
+/// （帧链由 lower 的 pcmap 重定位，本改写不新增合并点：TAKEN 落
 /// [ICONST_0, IFEQ→T] 恒真条件跳转、锚原地改写保 srcPc，被擦指令若被帧/标
 /// 签/异常表锚定 eraseBatch 会拒收整站放弃并回滚）。
 ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
@@ -609,7 +609,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
         const ir::LabelId takenTarget = branch->target;
 
         // 操作数区复核（scan 之后字节可能已被同方法其他站点改写，不盲改）：
-        // 从分支逆向越过前窗（走廊常量与折叠算术）定位门点调用，成员全等；
+        // 从分支逆向越过前窗（走廊常量与折叠算术）定位 gate 调用，成员全等；
         // 再从调用正向重跑前窗解析，分支/compareValue/实参值与 scan 全等。
         ca::usize callPos = kNoIndex;
         {
@@ -657,7 +657,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
         }
 
         // 前窗复核：正向重跑解析，终点分支与 compareValue 必须与 scan 一致
-        // （门点调用 + 窗内指令清单即受害者余量）。
+        // （gate 调用 + 窗内指令清单即受害者余量）。
         std::vector<ir::InsnId> windowInsns;
         ca::i32                 compareValue = 0;
         Op                      branchOp     = Op::NOP;
@@ -679,7 +679,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
             continue;
         }
 
-        // 标签门：区域中段或分支本体带标签 = 合并点，外部到达路径的栈形状
+        // 标签检查：区域中段或分支本体带标签 = 合并点，外部到达路径的栈形状
         // 与区域产出耦合，整站放弃；区域首条（anchor）的标签安全。
         bool blocked = !dom.labelsAt(branchId).empty();
         for (ca::usize i = 1; i < producers.size(); ++i) {
@@ -696,7 +696,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
             continue;
         }
 
-        // TAKEN：恒真条件跳转形态 [ICONST_0, IFEQ→T]——锚改常量、分支本体
+        // TAKEN：恒真条件跳转形态 [ICONST_0, IFEQ→T]，锚改常量、分支本体
         // 原地换 op+目标、其余操作数擦除。不插无条件 GOTO：HotSpot 线性走查
         // 要求无条件跳转之后的段首带帧，而被擦区域的延续段在原 SMT 中无帧；
         // 条件跳转让延续段保持 fallthrough 可达，帧面零改动（predicate_fold
@@ -727,8 +727,8 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
         *branchMut         = branchFresh;
 
         // 其余操作数（right/salt/调用/compareValue）单批擦除。eraseBatch 是
-        // kRejectIfUsed：受害者被异常表 start/end 引用时拒收——拒收即整站
-        // 放弃，anchor/分支回滚原样，不留「常量装载已被覆盖、分支还在」的
+        // kRejectIfUsed：受害者被异常表 start/end 引用时拒收，拒收即整站
+        // 放弃，anchor/分支回滚原样，不留常量装载已被覆盖、分支还在的
         // 半改写态（栈下溢 VerifyError）。
         std::vector<ir::InsnId> victims(producers.begin() + 1, producers.end());
         if (!victims.empty() && dom.eraseBatch(victims).is_err()) {
@@ -775,7 +775,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
-        // 前置门：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
+        // 前置检查：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
         const std::unordered_set<ca::usize> safe =
             roundTripSafe(*entry.bytes,
                           std::vector<ca::usize>(methodIdxs.begin(), methodIdxs.end()));
@@ -848,7 +848,7 @@ ProofResult proof(const mjbase::model::ResourceContainer& container, const Dirty
 
     // residual：脏类集上重跑全判据（形状 + 目标解析 + 跨方法求值 + 恒真裁
     // 决）仍成站点的数量。改写 fail-closed 放弃的站点如实入账；求值失败面
-    // （TLR/material，从未进改写面）不计入。效力门挂时间片，全量盘点。
+    // （TLR/material，从未进改写面）不计入。效力检查挂时间片，全量盘点。
     if (!dirty.uris.empty()) {
         const pass_clock::Suspend suspend;
         const std::set<std::string> dirtySet(dirty.uris.begin(), dirty.uris.end());

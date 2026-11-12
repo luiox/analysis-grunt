@@ -1,9 +1,9 @@
 /// @file        argv_utf8.hpp
 /// @brief       CLI argv 的编码根修：Windows 宽字符 argv → UTF-8。
 ///
-/// 背景（语料 D 类 19 罐）：Windows CRT 的窄字符 `main` 拿到的 argv 是按 ANSI
-/// 代码页（GBK）转出来的字节，Git Bash / 语料驱动传 UTF-8 路径时非 ASCII 罐名
-/// 必然错配——导入口拿错路径报 NotFound。根修是入口直接取宽字符 argv（wmain）
+/// 背景（语料 D 类 19 jar）：Windows CRT 的窄字符 `main` 拿到的 argv 是按 ANSI
+/// 代码页（GBK）转出来的字节，Git Bash / 语料驱动传 UTF-8 路径时非 ASCII jar 名
+/// 必然错配，导入口拿错路径报 NotFound。根修是入口直接取宽字符 argv（wmain）
 /// 再转 UTF-8（仓内字符串面统一 UTF-8），POSIX 侧 argv 本就是 UTF-8，直通。
 #pragma once
 

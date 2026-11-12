@@ -26,9 +26,9 @@
 ///
 /// 常量装载置 NOP、putstatic 擦除（布局缩短交 lower，孤儿帧先修剪）；
 /// 字段补 ACC_FINAL（ConstantValue 只对 static final 生效）并挂
-/// ConstantValue 属性（RawAttr 2 字节 CP 索引——libjbc 0.4.15 未建模该属性）。
+/// ConstantValue 属性（RawAttr 2 字节 CP 索引，libjbc 0.4.15 未建模该属性）。
 ///
-/// ## 台账
+/// ## 统计
 ///
 /// DirtySet.promoted 计数字段数；uri 列表是被改写的类。
 #pragma once

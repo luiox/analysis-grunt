@@ -4,49 +4,49 @@
 /// ## scan/rewrite 分工
 ///
 /// scan 只产**形状候选**（方法体形状 / 字段访问位 / clinit 拆空）；零引用
-/// 判定必须发生在 rewrite——它依赖「先压缩再普查」这个改写动作，scan 不能
-/// 改容器。rewrite 里候选可能被引用门拒掉（rejectedByRef），这是设计内的。
+/// 判定必须发生在 rewrite，它依赖先压缩再普查这个改写动作，scan 不能
+/// 改容器。rewrite 里候选可能被引用检查拒掉（rejectedByRef），这是设计内的。
 ///
 /// ## 压缩的双重身份
 ///
-/// (1) 普查前提——死条目会污染零引用判定；(2) 删除后的收尾——被删成员的
+/// (1) 普查前提，死条目会污染零引用判定；(2) 删除后的收尾，被删成员的
 /// 描述符 utf8 从池里带走。两步都落盘；仅压缩变小的类也进 dirty.uris（落
-/// 过盘就要过 proof 的可重解析门）。
+/// 过盘就要过 proof 的可重解析检查）。
 ///
 /// ## 引用键口径与普查分层
 ///
 /// 方法键 owner::name::desc，字段键 owner::name。BootstrapMethods 引用的
-/// MethodHandle→Methodref 在压缩闭包内存活，自然计入活引用——indy 引导方
+/// MethodHandle→Methodref 在压缩闭包内存活，自然计入活引用，indy 引导方
 /// 法引用的成员不会被误删。普查**分层兜底**（Kasumi 批修复的教训：普查曾
-/// 是「压缩成功类才作引用方」，压缩失败类被整体排除后其对外引用从活引用
+/// 是压缩成功类才作引用方，压缩失败类被整体排除后其对外引用从活引用
 /// 集蒸发，下游类被误删、运行期 NoSuchMethodError，取证见 kasumi-verify
 /// §3）：会话可开 → 枚举池；会话打不开 / 普查异常 → 原始字节骨架解析
 /// （readClass，只解头/池/成员目录，Raw 面不挡路）再枚举；骨架也解不开 →
 /// census-blind，本轮成员删除与空壳回收整体放弃。压缩失败的类仍不作删除
-/// 候选（两边宁留），但引用照入普查；普查挂起时间片跑全量（proof 类数门
-/// 同门）。同病同修：field_census（ConstValuePromote / SeedStrip 的访问面
-/// 普查）补完整性台账、不完整整轮放弃；booger_anno_strip 引用门对会话打
+/// 候选（两边宁留），但引用照入普查；普查挂起时间片跑全量（proof 类数检查
+/// 同一检查）。同病同修：field_census（ConstValuePromote / SeedStrip 的访问面
+/// 普查）补完整性统计、不完整整轮放弃；booger_anno_strip 引用检查对会话打
 /// 不开的类按引用在册关死。
 ///
-/// ## ACC_BRIDGE 豁免的核查结论（不改门）
+/// ## ACC_BRIDGE 豁免的核查结论（不改检查）
 ///
 /// ACC_BRIDGE 零引用豁免在 Grunteon 生成面不携带信息：FakeSyntheticBridge
-/// 给全体非 abstract 方法补 ACC_BRIDGE|ACC_SYNTHETIC——真方法、indy 目标、
-/// 死代理同一形状，「真桥排除面」会把这类罐里几乎所有成员从豁免里摘出去，
+/// 给全体非 abstract 方法补 ACC_BRIDGE|ACC_SYNTHETIC，真方法、indy 目标、
+/// 死代理同一形状，真桥排除面会把这类 jar 里几乎所有成员从豁免里摘出去，
 /// 恰好打掉豁免要保的对象。豁免的触发条件是 bsmUnresolved（容器存在未收
 /// 敛 BSM）：该前提下任何 public synthetic/bridge 成员都无法证明零引用死
 /// （BSM 运行时 findStatic 的目标没有 CP 明文引用），误保死代理是设计内的
 /// 保守价；indy_fold 收敛后豁免不再触发，死代理走 gateB + 引用普查正常删
-/// 除（链序上 indy_fold 恒在本残留之前）。「带操作数 xload 的伪 bridge」
-/// 体形排除对 indy 目标同样成立不了——indy 目标是真方法体普遍带操作数装
+/// 除（链序上 indy_fold 恒在本残留之前）。带操作数 xload 的伪 bridge
+/// 体形排除对 indy 目标同样成立不了，indy 目标是真方法体普遍带操作数装
 /// 载，与死代理形状无法区分；pureArithShape（gateA）已是唯一不进豁免的体
 /// 形删除面。
 ///
-/// ## 空壳摘除门的放行边界
+/// ## 空壳摘除检查的放行边界
 ///
-/// `<init>`-only + 零字段 + 全容器引用普查 + main 门是空壳摘除的现行形态；
-/// **不新增「仅 public 无参构造 + 零字段」放行形态**——没有活样本支撑，放
-/// 行只会在无证据面扩大摘除权；语料再现此形态时先补罐再议。
+/// `<init>`-only + 零字段 + 全容器引用普查 + main 检查是空壳摘除的现行形态；
+/// **不新增仅 public 无参构造 + 零字段放行形态**，没有活样本支撑，放
+/// 行只会在无证据面扩大摘除权；语料再现此形态时先补 jar 再议。
 #include "grunt/dead_member.hpp"
 
 #include <algorithm>
@@ -133,7 +133,7 @@ bool fieldHasConstantValue(ir::ClassSession& s, const jbc::core::MemberInfo& fld
 
 /// @brief 递归收集注解元素值里的字符串面（保守保留依据）。
 ///
-/// 's' 字符串值、'e' 枚举常量名、'c' 类描述符都收——运行时框架（mixin 等）
+/// 's' 字符串值、'e' 枚举常量名、'c' 类描述符都收，运行时框架（mixin 等）
 /// 按这些名字反射定位成员，CP 的 Methodref 静态面看不见这类引用。
 void collectAnnoStrings(const jbc::core::AnnotationsAttr::ElemValue& v,
                         const jbc::core::ClassFile& cf, std::set<std::string>& out)
@@ -164,7 +164,7 @@ std::set<std::string> annotationStrings(ir::ClassSession& s)
             }
             // 注解族槽先过嵌套深度预检（mjbase #158）：libjbc attr_codec 注解
             // 解码互递归无界，敌意深嵌注解会在 decodeAttr 内栈溢出；预检拒绝
-            // 按「解不开原样保真」fail-open 跳过——少保一条注解字符串值，
+            // 按解不开原样保真fail-open 跳过，少保一条注解字符串值，
             // 进程不被打爆。
             if (!mjbase::util::attrSafeToDecode(cf, slot)) continue;
             auto d = cf.decodeAttr(slot);
@@ -188,7 +188,7 @@ std::set<std::string> annotationStrings(ir::ClassSession& s)
 /// @brief 单类 CP 的成员引用快照：枚举 Fieldref/Methodref/接口引用。
 ///
 /// 压缩成功的类上池是闭包（枚举即活引用）；压缩失败/未压缩的类上池可能含
-/// 死条目，枚举结果是活引用的超集——两类都按 fail-closed 宁误留口径入集。
+/// 死条目，枚举结果是活引用的超集，两类都按 fail-closed 宁误留口径入集。
 struct CpSnap
 {
     std::set<std::string> methodKeys;   // owner::name::desc
@@ -229,9 +229,9 @@ void mergeSnap(const CpSnap& snap, std::set<std::string>& liveMethods,
 
 /// @brief 类的形状候选收集（SCAN 本体）。
 ///
-/// indyTargets 是跨类运行时目标集（owner+name）：本类 BSM 盲区只覆盖「类内带
-/// BootstrapMethods」的形态，而 Grunt 的 BSM 常在 A 类、findStatic 的目标在
-/// B 类——普查看不见这种引用，必须由 indy_fold::scan 真跑 BSM 补上。
+/// indyTargets 是跨类运行时目标集（owner+name）：本类 BSM 盲区只覆盖类内带
+/// BootstrapMethods的形态，而 Grunt 的 BSM 常在 A 类、findStatic 的目标在
+/// B 类，普查看不见这种引用，必须由 indy_fold::scan 真跑 BSM 补上。
 /// bsmUnresolved（存在未收敛 BSM）时 synthetic/bridge 候选整档豁免：那是 indy
 /// 目标的形状（Grunt 给每个调用点造 public static bridge），目标名是解密产物，
 /// CP 里零引用；findStatic 跨类又要求 public，private 候选不在此列。
@@ -247,10 +247,10 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri,
     const ir::ClassUnit&       unit = s.unit();
 
     // 运行时引用面（CP 普查的三类盲区，命中即跳过成员删除）：
-    // 1. BootstrapMethods——BSM 可在运行时经解密字符串 findStatic/findVirtual
+    // 1. BootstrapMethods，BSM 可在运行时经解密字符串 findStatic/findVirtual
     //    本类任意成员（Grunt 形态：目标名是密文，字节码里没有明文引用）；
-    // 2. 注解字符串——mixin 框架按注解值里的方法名反射定位（@Redirect）；
-    // 3. 跨类 indy 目标——别类 BSM 运行时 findStatic 本类成员（indyTargets）。
+    // 2. 注解字符串，mixin 框架按注解值里的方法名反射定位（@Redirect）；
+    // 3. 跨类 indy 目标，别类 BSM 运行时 findStatic 本类成员（indyTargets）。
     // <clinit> 不受此限：它不可被反射句柄定位，只由 JVM 初始化触发。
     const bool hasBsm = cf.findClassAttr("BootstrapMethods") != nullptr;
     const std::set<std::string> annoNames = annotationStrings(s);
@@ -333,7 +333,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
     // 跨类 indy 目标普查：真跑全容器 BSM（indy_fold 的执行面），解析出的目标
     // 方法按 owner+name 保护。BSM 在 A 类、目标在 B 类的引用静态普查看不见，
     // 不保护就会删掉 BSM 运行时才解出的目标（NoSuchMethodError at findStatic）。
-    // BSM 未收敛的站点目标未知，计数进台账（链上 IndyFold 在前会先折掉大半）。
+    // BSM 未收敛的站点目标未知，计数进统计（链上 IndyFold 在前会先折掉大半）。
     {
         const indy_fold::ScanResult indyScan = indy_fold::scan(container);
         std::set<std::pair<std::string, std::string>> indyTargets;
@@ -385,7 +385,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     static const bool dmTrace = std::getenv("GRUNT_DM_TRACE") != nullptr;
 
     // (1) 全容器 CP 压缩：引用闭包前提（死条目会污染零引用判定）。压缩失败
-    // 的类不做成员删除，也不作为引用方计入——两边都宁留勿删。
+    // 的类不做成员删除，也不作为引用方计入，两边都宁留勿删。
     std::set<std::string> compactFailed;
     {
         std::vector<std::pair<std::string, std::vector<ca::u8>>> snapshot;
@@ -393,10 +393,10 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             snapshot.emplace_back(std::string(entry.uri), *entry.bytes);
         });
         for (auto& [uri, bytes] : snapshot) {
-            // 类级 fail-closed：单类压缩崩了按「压缩失败」收场（两边都宁留勿删）。
+            // 类级 fail-closed：单类压缩崩了按压缩失败收场（两边都宁留勿删）。
             // 压缩前先过注解族深度预检（classAnnoDepthSafe）：cp_compact 会解
             // 全部属性槽，敌意深嵌注解在 libjbc 互递归解码里栈溢出（不走
-            // Result 错误通道），预检拒绝按「压缩失败」同一通道原样保真。
+            // Result 错误通道），预检拒绝按压缩失败同一通道原样保真。
             try {
                 auto session = openSession(bytes);
                 if (!session || !classAnnoDepthSafe(session->backing())
@@ -437,17 +437,17 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 
     // (2) 活引用普查（压缩后闭包 = 枚举即活引用）。
     //
-    // 全容器口径：每个类都必须成为引用方，缺一个类就是漏计（K4 实证：压缩
+    // 全容器口径：每个类都必须成为引用方，缺一个类就是漏计（验证案例：压缩
     // 失败类被排除在普查外，`w` 对 `t.aa` 的 Methodref 蒸发，`t` 类 93 方法
     // 全删）。分层收集：
     // - 会话可开 + 普查不崩：枚举池入集（压缩成功类 = 活引用；未压缩类 =
     //   超集，同样宁误留）；
     // - 会话打不开 / 普查崩了：按原始字节骨架解析（readClass 只解头、池、
-    //   成员目录，不碰属性体——封闭集之外的 Raw 属性面也不挡路）再枚举原池；
-    // - 连骨架都解不开：引用证据完全不可得，任何候选都无法被证明死——置
+    //   成员目录，不碰属性体，封闭集之外的 Raw 属性面也不挡路）再枚举原池；
+    // - 连骨架都解不开：引用证据完全不可得，任何候选都无法被证明死，置
     //   censusBlind，本轮成员删除整体放弃（零删除，宁整轮不删不冒删错）。
-    // 普查是效力门不是改写面：挂起时间片（proof 类数门同门），不许被超墙
-    // 截短出「晚到的类不在普查里」的漏计。
+    // 普查是效力检查不是改写面：挂起时间片（proof 类数检查同一检查），不许被超墙
+    // 截短出晚到的类不在普查里的漏计。
     std::set<std::string> liveMethods;
     std::set<std::string> liveFields;
     {
@@ -498,8 +498,8 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     }
 
     // census 盲区 fail-closed：有类连引用面都枚举不出，全容器任何候选都可能
-    // 被它引用——本轮删除整体放弃（压缩已做的类级字节变化保留：压缩不删
-    // 成员，引用一致性不受影响）。空壳回收同门停：解不开的类可能按名引用壳。
+    // 被它引用，本轮删除整体放弃（压缩已做的类级字节变化保留：压缩不删
+    // 成员，引用一致性不受影响）。空壳回收同一检查停：解不开的类可能按名引用壳。
     if (dirty.censusBlind != 0) {
         std::fprintf(stderr,
                      "[grunt.DeadMember] census-blind %zu 类：本轮成员删除与空壳回收整体放弃（宁整轮不删）\n",
@@ -524,7 +524,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             return;
         }
 
-        // 类级 fail-closed：删成员崩了整类放弃（容器保有原字节——本 lambda 的
+        // 类级 fail-closed：删成员崩了整类放弃（容器保有原字节，本 lambda 的
         // 全部改动都落在局部 session，pending 只在成功末尾追加）。
         try {
         auto session = openSession(*entry.bytes);
@@ -635,7 +635,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // (3.5) 空壳类回收：全成员删净且全容器零类级引用的外置壳类整体摘除。
     // 判据保守：删后 methods/fields 全空 ∧ 非 module-info/package-info ∧
     // 其余全类 CP 无 Classref / 同名 utf8 / L<name>; 描述符引用。含 main 的
-    // 主类不可能过第一道门（main 是成员）。经 getResources() 可变视图摘除。
+    // 主类不可能过第一道检查（main 是成员）。经 getResources() 可变视图摘除。
     {
         std::vector<std::string> shellUris;
         std::vector<std::string> shellNames;
@@ -643,9 +643,9 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             auto session = openSession(*entry.bytes);
             if (!session) return;
             jbc::core::ClassFile& cf = session->backing();
-            // 零存活成员门：fields 全空；methods 只剩 <init>（真实代理壳带的
-            // 默认构造器）——外部构造需要 CP Class 引用，引用普查会拦。带
-            // main / <clinit> 的类不可能过此门。
+            // 零存活成员检查：fields 全空；methods 只剩 <init>（真实代理壳带的
+            // 默认构造器），外部构造需要 CP Class 引用，引用普查会拦。带
+            // main / <clinit> 的类不可能过此检查。
             if (!cf.fields.empty()) return;
             for (const jbc::core::MemberInfo& m : cf.methods) {
                 if (cpUtf8(cf, m.nameCp) == "<init>") continue;
@@ -661,8 +661,8 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             forEachClass(container, [&](const ClassEntry& entry) {
                 const std::string self(entry.uri);
                 // 类模型：会话优先，打不开走原始字节骨架解析（引用普查同一
-                // 分层——解不开的类不许按「零引用」记账）；两边都失败按
-                // 「引用在册」处理——空壳摘除是删动词，宁误留勿误删。
+                // 分层，解不开的类不许按零引用计数）；两边都失败按
+                // 引用在册处理，空壳摘除是删动词，宁误留勿误删。
                 auto                                  session = openSession(*entry.bytes);
                 const jbc::core::ClassFile*           model
                     = session ? &session->backing() : nullptr;
@@ -741,7 +741,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                 auto session = openSession(bytes);
                 if (!session) continue;
                 // 二次压缩同一道注解族深度预检：越限类保有删成员后的字节，
-                // 不再压缩（与 compact 失败同一「原样保真」口径）。
+                // 不再压缩（与 compact 失败同一原样保真口径）。
                 if (!classAnnoDepthSafe(session->backing())) continue;
                 if (ir::compactConstantPool(*session).is_err()) continue;
                 auto encoded = jbc::core::writeClass(session->backing());
@@ -775,8 +775,8 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,
                   ca::usize classesBefore)
 {
-    // 类数门：整类摘除（dirty.classes）按预期递减核账，其余场合类数不变；
-    // 落盘类必须可重解析——整类摘除的 URI 已不在场，不进重解析面。
+    // 类数检查：整类摘除（dirty.classes）按预期递减核账，其余场合类数不变；
+    // 落盘类必须可重解析，整类摘除的 URI 已不在场，不进重解析面。
     ProofResult      result;
     const ca::usize  expected = classesBefore - dirty.classes;
     const ca::usize  now      = countClasses(container);

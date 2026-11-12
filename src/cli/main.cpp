@@ -46,8 +46,8 @@
 
 namespace {
 
-/// @brief 罐级 fail-closed 的进程收口：未处理 SEH（堆损坏类硬崩——崩点在
-/// ntdll 堆管理器内部，catch(...) 既接不住也续不得）在此点名罐与崩时 pass，
+/// @brief jar 级 fail-closed 的进程收口：未处理 SEH（堆损坏类硬崩，崩点在
+/// ntdll 堆管理器内部，catch(...) 既接不住也续不得）在此点名 jar 与崩时 pass，
 /// 以 rc=3 终止。只写字面量到 fd=2，不碰堆（此刻堆不可信）。
 const char* gCrashInput = nullptr;
 
@@ -61,7 +61,7 @@ LONG WINAPI crashFilter(EXCEPTION_POINTERS* ep)
     const char* pass = grunt::gActivePass != nullptr ? grunt::gActivePass : "?";
     const char* jar  = gCrashInput != nullptr ? gCrashInput : "?";
     const int   n = _snprintf(buf, sizeof(buf) - 1,
-                             "罐级 fail-closed：硬崩（SEH %08lX @ pass %s）：%s\n",
+                             "jar 级 fail-closed：硬崩（SEH %08lX @ pass %s）：%s\n",
                              static_cast<unsigned long>(code), pass, jar);
     if (n > 0) _write(2, buf, n);
     ExitProcess(3);
@@ -75,9 +75,9 @@ constexpr const char* kUsage =
     "  -o  输出 jar\n"
     "  -p  逗号分隔 pass 名（grunt. 前缀）\n"
     "  -c  pack 配置 JSON 文件（可选，文本整体交给 pack 解析）\n"
-    "  --jdk  JDK 根目录（可选）：grunt.IndyDecode 的接口旁证注入面——扫描\n"
+    "  --jdk  JDK 根目录（可选）：grunt.IndyDecode 的接口旁证注入面，扫描\n"
     "         jmods/lib 收集接口集，Era=Kasumi 才激活；空 = 接口路 fail-closed\n"
-    "  --tsv  明文表路径（可选）：grunt.StringCacheFold 的 TSV 旁证注入面——\n"
+    "  --tsv  明文表路径（可选）：grunt.StringCacheFold 的 TSV 旁证注入面，\n"
     "         KasumiStringDumper 产出的 owner/key/index/plaintext 四列明文映射，\n"
     "         Era=Kasumi 才激活；缺失/不可读 = 旁证降级 fail-closed\n"
     "  --list  列出本 pack 注册的全部 pass 后退出\n"
@@ -122,7 +122,7 @@ int main(int argc, char** argv)
     mjbase::log::initDefaultLogger();
 
     // argv 编码根修：Windows 取宽字符 argv 转 UTF-8（窄字符 main 的 ANSI argv
-    // 对非 ASCII 罐名必然错配）；POSIX 直通。
+    // 对非 ASCII jar 名必然错配）；POSIX 直通。
     std::vector<std::string> args;
 #if defined(_WIN32)
     if (!grunt::cli::utf8Args(argc, argv, args)) {
@@ -183,7 +183,7 @@ int main(int argc, char** argv)
     grunt::gKasumiJdkPath = jdkPath;
 
     // StringCacheFold 的 TSV 明文旁证注入：文件读取收敛在管线启动前（adapter
-    // 在 Era=Kasumi 时才消费；缺失/不可读按旁证降级 fail-closed 记账）。
+    // 在 Era=Kasumi 时才消费；缺失/不可读按旁证降级 fail-closed 计数）。
     grunt::gKasumiTsvPath = tsvPath;
 
     // 探针是独立通路：不进 pack、不进管线，只读容器跑一次模拟执行。
@@ -254,14 +254,14 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    // 罐级 fail-closed：框架段（层次图装配/管线驱动/导出）的异常与 SEH 硬崩
-    // 不许无声穿透——pass 段已由 FailClosedPass 单点收口，这里是最后一道。
+    // jar 级 fail-closed：框架段（层次图装配/管线驱动/导出）的异常与 SEH 硬崩
+    // 不许无声穿透，pass 段已由 FailClosedPass 单点收口，这里是最后一道。
     try {
         mjbase::spi::PassJobContext job;
 
         // 帧链接线（pass-contract §9：resolver 数据获取是调用方的事）：本 jar 的类
         // 登记成层次图，Strict resolver 注入管线选项。折叠会改变方法体长度，既有
-        // StackMapTable 必须整体重算——未注入 resolver 时管线只做 relocation。
+        // StackMapTable 必须整体重算，未注入 resolver 时管线只做 relocation。
         // 层次图流式装配（与 FrameContext 同款解绑）：逐类开会话 → fillSummary 抽骨架 →
         // addClass 入库 → 会话当场弃置，任何时刻至多一个会话在场。骨架自持于 pool 与
         // hierarchy（fillSummary 产出仅这两处落点），装配完成后无数据活引用 session；
@@ -299,10 +299,10 @@ int main(int argc, char** argv)
             return 2;
         }
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "罐级 fail-closed：异常穿透（%s）：%s\n", e.what(), input.c_str());
+        std::fprintf(stderr, "jar 级 fail-closed：异常穿透（%s）：%s\n", e.what(), input.c_str());
         return 3;
     } catch (...) {
-        std::fprintf(stderr, "罐级 fail-closed：硬崩（SEH 穿透）：%s\n", input.c_str());
+        std::fprintf(stderr, "jar 级 fail-closed：硬崩（SEH 穿透）：%s\n", input.c_str());
         return 3;
     }
     return 0;

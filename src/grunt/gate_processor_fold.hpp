@@ -1,43 +1,43 @@
 /// @file        gate_processor_fold.hpp
-/// @brief       残留 `gate_processor_fold`：Grunt v3 ControlflowJump 门点
-///              processor 调用跨方法静态求值 + 恒真门比较折叠。
+/// @brief       残留 `gate_processor_fold`：Grunt v3 ControlflowJump gate
+///              processor 调用跨方法静态求值 + 恒真检查比较折叠。
 ///
 /// ## 形态（artifact 侧；源锚 `grunt3@e41e852`
 ///          OpaquePredicateProcessorRegistry.kt / IntExpression.kt）
 ///
-/// v3 ControlflowJump 的 guard / mangled-gate 块在真分支边上插一道「processor
-/// 门」：三个 int 常量（left/right/salt）喂一个生成面 processor（ActionDesc
-/// 恰为 `(III)I`，与门点同类），返回值与 compareValue 常量比较后条件跳转。
+/// v3 ControlflowJump 的 guard / mangled-gate 块在真分支边上插一道processor
+/// 检查：三个 int 常量（left/right/salt）喂一个生成面 processor（ActionDesc
+/// 恰为 `(III)I`，与 gate 同类），返回值与 compareValue 常量比较后条件跳转。
 /// 生成面逐字：
 ///
 ///     bipush <left>
 ///     bipush <right>
 ///     bipush <salt>
-///     invokestatic <proc> (III)I      // 门点 processor 调用
+///     invokestatic <proc> (III)I      // gate processor 调用
 ///     <compareValue 常量走廊>          // compareValue.emit()：[INT; (INT; OP)*]
 ///     if_icmpxx  Lreal                // 真分支臂；fallthrough = junk 臂
 ///
 /// compareValue 走生成面 IntConstChain 常量走廊：`INT v0; (INT v1; OP)*`，
-/// OP ∈ {imul, iand, ior, ixor}（全交换律 + 结合律，左折即 JVM 语义）；罐 A
-/// 实测多数门点的 compareValue 是多段走廊而非单常量。
+/// OP ∈ {imul, iand, ior, ixor}（全交换律 + 结合律，左折即 JVM 语义）；样本 A
+/// 实测多数 gate 的 compareValue 是多段走廊而非单常量。
 ///
-/// 生成器带 `require(comparison.test(result, compareValue.value))`：门点必须
-/// 恒走真分支，否则自己的 payload 到不了。所以「proc(left,right,salt) 与
-/// compareValue 按分支语义比较 = taken」是**混淆器自证的语义事实**——只要
+/// 生成器带 `require(comparison.test(result, compareValue.value))`：gate 必须
+/// 恒走真分支，否则自己的 payload 到不了。所以proc(left,right,salt) 与
+/// compareValue 按分支语义比较 = taken是**混淆器自证的语义事实**，只要
 /// proc 体能在常量实参下静态求值，分支走向就是确定的。
 ///
-/// ReferenceObfuscate（chance=1.0）把多数门点 proc 调用包进 indy，IndyRestore
-/// 还原后成为同方法直线转发器（`__grt$indy$` 蹬床形：`iload×3;
+/// ReferenceObfuscate（chance=1.0）把多数 gate proc 调用包进 indy，IndyRestore
+/// 还原后成为同方法直线转发器（`__grt$indy$` 转发形：`iload×3;
 /// invokestatic 真体; ireturn`）；真体 = 槽位解码链（`iload n; 常量走廊;
 /// ixor; istore n`×3）+ BitAction 算术（含 `Integer.rotateLeft(II)I` 盐旋转
 /// 步）+ `ireturn`，全程纯算术。
 ///
 /// ## 为什么 ConstantCall 折不完全（本残留的存在理由）
 ///
-/// ConstantCall 的跨方法求值器（jsim 编排层递归）已把纯算术真体的门点调用
+/// ConstantCall 的跨方法求值器（jsim 编排层递归）已把纯算术真体的 gate 调用
 /// 折成常量，但 proc 体里的 `INVOKESTATIC java/lang/Integer.rotateLeft(II)I`
 /// 是 JDK 调用：libjsim 核心 / num 包都没有它，求值 EvalBadState 整站拒绝
-/// ——罐 A 供给链实测剩余 4282 个 const-fed 门点全部因此存活。本残留自带
+/// ，样本 A 供给链实测剩余 4282 个 const-fed gate 全部因此存活。本残留自带
 /// 同一枚举器并补 `Integer.rotateLeft(II)I` 接管（全序纯函数，位移掩码 5
 /// 位，常量实参下值唯一），把这一桶吃掉，再按 PredicateFold 的 TAKEN 形把
 /// 恒真比较折叠成 `[ICONST_0, IFEQ→Lreal]`。
@@ -48,13 +48,13 @@
 ///      processor 是 `(II)I`，不同构不进面）；
 ///   2. 目标解析在容器内 ∧ static ∧ 有码；
 ///   3. 逆向三个实参全为紧邻纯常量装载（`const_args` 工具箱，NOP 跳过）；
-///   4. 前窗为「compareValue 常量走廊 → IF_ICMPEQ..IF_ICMPLE」（NOP 跳过）：
-///      走廊 = `[INT; (INT; IMUL|IAND|IOR|IXOR)*]` 栈机折叠恰剩 1 个 i32——
+///   4. 前窗为compareValue 常量走廊 → IF_ICMPEQ..IF_ICMPLE（NOP 跳过）：
+///      走廊 = `[INT; (INT; IMUL|IAND|IOR|IXOR)*]` 栈机折叠恰剩 1 个 i32，
 ///      其它任何内容整站拒绝，其中停点引用 `ThreadLocalRandom` 的（TLR 窗
 ///      口变体，运行期随机）单独入 `tlrWindow` 桶明确排除；
-///   5. 类初始化门（constant_call 同源）：目标类 `<clinit>` 非中性时只留同
+///   5. 类初始化检查（constant_call 同源）：目标类 `<clinit>` 非中性时只留同
 ///      类调用（JVMS 5.5：本类方法执行时类已在初始化中，删调用不移时机；
-///      门点 proc 与门点同类是生成面事实）；
+///      gate proc 与 gate 同类是生成面事实）；
 ///   6. 跨方法求值（jsim 编排层，过程内递归进转发器/真体）：返回 known i32
 ///      ∧ 按分支语义裁决 taken（生成面恒真保证；判非 taken = 求值与生成面
 ///      脱钩，fail-closed 拒绝）。
@@ -73,13 +73,13 @@
 /// - **RandomBound / TLR（运行期随机）**：窗口变体（TLR.current 取数进前窗）
 ///   在前窗停点识别入 `tlrWindow` 桶；proc 体引用 `ThreadLocalRandom` 的
 ///   （RandomBound BitAction 变体）不在容器内、无 mock，求值 EvalBadState
-///   拒绝——运行期随机面永久排除，与本批验收口径一致。
-/// - **material-key 桶**：RuntimeMaterial 类里的门点蹬床体内 indy 走材料解
+///   拒绝，运行期随机面永久排除，与本批验收口径一致。
+/// - **material-key 桶**：RuntimeMaterial 类里的 gate 转发体内 indy 走材料解
 ///   密器（key = decryptKey ^ materialKey()，运行期材料），IndyRestore
-///   keyMissing 未还原，蹬床体内仍是 INVOKEDYNAMIC，求值 EvalBadState 拒绝
-///   ——解锁属 material_key_restore / indy_restore 本体（禁碰面），链序实验
-///   已证罐 A 上不可达。
-/// - 判非恒真 / 求值未知值 / 步数熔断 / 形状走样逐桶记账，字节不动。
+///   keyMissing 未还原，转发体内仍是 INVOKEDYNAMIC，求值 EvalBadState 拒绝
+///   ，解锁属 material_key_restore / indy_restore 本体（禁碰面），链序实验
+///   已证 样本 A 上不可达。
+/// - 判非恒真 / 求值未知值 / 步数熔断 / 形状走样逐桶计数，字节不动。
 #pragma once
 
 #include <string>
@@ -94,7 +94,7 @@
 
 namespace grunt::gate_processor_fold {
 
-/// @brief 一个可折叠门点。`callSrcPc` / `branchSrcPc` 跨会话稳定，rewrite 靠
+/// @brief 一个可折叠 gate。`callSrcPc` / `branchSrcPc` 跨会话稳定，rewrite 靠
 ///        它们重定位后复核再改。
 struct Site
 {
@@ -116,7 +116,7 @@ struct Site
     ca::i32       result       = 0;        ///< proc 求值结果（scan 求值段填）
 };
 
-/// @brief 拒绝原因（fail-closed 记账：原因进 trace，站点字节不动）。
+/// @brief 拒绝原因（fail-closed 计数：原因进 trace，站点字节不动）。
 enum class RejectReason : ca::u8
 {
     TargetOutside,          ///< (III)I 调用目标不在容器内
@@ -127,7 +127,7 @@ enum class RejectReason : ca::u8
     ForwardShape,           ///< 前窗不是 compareValue 走廊 → IF_ICMP* 逐字形
     TlrWindow,              ///< 前窗停点引用 ThreadLocalRandom（RandomBound
                             ///  窗口变体，运行期随机，明确排除）
-    ClassInitPresent,       ///< 目标类 clinit 非中性且跨类（初始化时机门）
+    ClassInitPresent,       ///< 目标类 clinit 非中性且跨类（初始化时机检查）
     EvalBadState,           ///< 跨方法求值 Bail（TLR/material/indy/堆访问面）
     EvalStepLimit,          ///< 求值步数熔断
     ValueKindUnsupported,   ///< 求值结果非 known i32
@@ -144,7 +144,7 @@ struct Reject
 };
 
 /// @brief 三段之间唯一的数据流。桶计数与 rejects 逐条同源（每拒一条两边各
-///        记一次），trace 行吃计数、trace 门吃逐条。
+///        记一次），trace 行吃计数、trace 检查吃逐条。
 struct ScanResult
 {
     std::vector<Site>   sites;
@@ -182,15 +182,15 @@ struct DirtySet
 {
     std::vector<std::string> uris;
 
-    ca::usize sites              = 0;  ///< 折叠成功的门点数
-    ca::usize attempted          = 0;  ///< 进入 rewrite 的门点数
-    ca::usize failed             = 0;  ///< 复核/标签门/erase 拦下的门点数
-    ca::usize skippedByRoundTrip = 0;  ///< 原样往返不了的方法上的门点数
+    ca::usize sites              = 0;  ///< 折叠成功的 gate 数
+    ca::usize attempted          = 0;  ///< 进入 rewrite 的 gate 数
+    ca::usize failed             = 0;  ///< 复核/标签检查/erase 拦下的 gate 数
+    ca::usize skippedByRoundTrip = 0;  ///< 原样往返不了的方法上的 gate 数
     std::vector<ca::usize> failedByReason;  ///< 按 RwResult 直方图（Ok 位恒 0）
 };
 
 /// @brief 验收结果。residual = 脏类集上重跑全判据（形状 + 求值 + 恒真裁决）
-///        仍成站点的数量——改写 fail-closed 放弃的站点如实入账，求值失败面
+///        仍成站点的数量，改写 fail-closed 放弃的站点如实入账，求值失败面
 ///        （TLR/material，从未进改写面）不计入。
 struct ProofResult
 {

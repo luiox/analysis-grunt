@@ -4,26 +4,26 @@
 /// ## 扫描（proxy_inline 同构三步）
 ///
 /// `buildDefs`：逐类逐 static 方法，`shapePlausible`（尾指令是 return、
-/// 次尾是字段访问）粗筛后 `decodeProxyBody` 精查——直线体（无标签、无
+/// 次尾是字段访问）粗筛后 `decodeProxyBody` 精查，直线体（无标签、无
 /// 异常表）+ `walkParams` 逐槽过手 + 中位指令 `memberOf` 解析为 Field 语义
-/// + `expectedDesc` 互证（描述符必须恰为该字段该有的形状）+ 返回指令匹配，
+/// + `expectedDesc` 核对（描述符必须恰为该字段该有的形状）+ 返回指令匹配，
 /// 成立者进 `ProxyIndex`。`collectSites`：全容器扫 `invokestatic` 调用点，
 /// callee 命中定义表者记 Site（`callSrcPc` 原始字节布局 pc，跨会话稳定），
-/// 按代理分组。初始化暴露门：调用点越出 owner 类的代理，owner `<clinit>`
+/// 按代理分组。初始化暴露检查：调用点越出 owner 类的代理，owner `<clinit>`
 /// 必须中性（`scan_tools::classInitNeutral`，owner 级缓存）；非中性整组
-/// 放弃并记 `OwnerInitExposed`。拒绝面只记「沾形状但不成立」的方法，
+/// 放弃并记 `OwnerInitExposed`。拒绝面只记沾形状但不成立的方法，
 /// 完全不沾形状的静默跳过（trace 不刷屏）。
 ///
 /// ## 改写
 ///
 /// 两遍式（与 proxy_inline / const_method 同构）：先收动作清单（按类分组），
-/// 再逐类「开会话 → `roundTripSafe` 探针（未改字节）→ 逐方法 promote →
-/// `rewriteSite` 原地换形 → lower → `writeClass` 回写」。`rewriteSite` 按
+/// 再逐类开会话 → `roundTripSafe` 探针（未改字节）→ 逐方法 promote →
+/// `rewriteSite` 原地换形 → lower → `writeClass` 回写。`rewriteSite` 按
 /// `srcPc` 定位 INVOKESTATIC，复核成员引用等于代理键，`insn->op =
-/// fieldOpOf(kind)` + `setMember(Kind::Field, ...)`——身份与 srcPc 不变
+/// fieldOpOf(kind)` + `setMember(Kind::Field, ...)`，身份与 srcPc 不变
 /// （锚上标签不必迁移），栈效应不变（getter 弹 0/1 参压 1 值、setter 弹参
 /// 不压值，与代理一致），栈帧无需修补；改不动就整条还原。任一方法 lower
-/// 失败整类放弃回写（粒度=类）。代理本体不删——改回后零引用，交
+/// 失败整类放弃回写（粒度=类）。代理本体不删，改回后零引用，交
 /// DeadMember（gateB + 引用普查）。
 ///
 /// ## Proof 与已知边界
@@ -31,8 +31,8 @@
 /// `classesIntact`：类数不增 + 脏类可重新解析。另加收敛哨兵测试：改写后的
 /// 容器再扫站点归零（代理体内是字段访问，不构成新的代理调用点）。
 ///
-/// - 字段 owner 在容器外（`System.out` 形态）：互证只用描述符与字段引用
-///   本身，不需要 owner 类在场；初始化门只钉代理 owner（容器内）。
+/// - 字段 owner 在容器外（`System.out` 形态）：核对只用描述符与字段引用
+///   本身，不需要 owner 类在场；初始化检查只钉代理 owner（容器内）。
 /// - 零引用代理、外置 `C$FieldProxy` 类的整类回收是 DeadMember 的业务；
 ///   本残留只动调用点。
 #include "grunt/field_access_proxy.hpp"
@@ -165,7 +165,7 @@ Op loadOpOf(char kind)
     }
 }
 
-/// 装载指令是否匹配「类型类 + 槽位」。两种编码都认：带操作数的
+/// 装载指令是否匹配类型类 + 槽位。两种编码都认：带操作数的
 /// `xload n`，与把槽位编码进操作码的紧凑形态 `xload_0..3`（CodeDom 不做
 /// 归一化，汇编器产出哪种就是哪种）。
 bool loadMatches(const ir::Insn& in, char kind, ca::u32 slot)
@@ -237,7 +237,7 @@ struct ProxyDef
 /// 定义表：owner\nname\ndesc -> 转发字段。
 using ProxyIndex = std::unordered_map<std::string, ProxyDef>;
 
-/// 该种类的代理描述符该有的形状（生成面按字段互证的构造）。
+/// 该种类的代理描述符该有的形状（生成面按字段核对的构造）。
 std::string expectedDesc(FieldKind kind, std::string_view fieldOwner,
                          std::string_view fieldDesc)
 {
@@ -252,7 +252,7 @@ std::string expectedDesc(FieldKind kind, std::string_view fieldOwner,
     return std::string();
 }
 
-/// 方法体是否沾「字段代理」形状：值得进拒绝面（trace 有用）；其余静默跳过。
+/// 方法体是否沾字段代理形状：值得进拒绝面（trace 有用）；其余静默跳过。
 bool shapePlausible(const ir::CodeUnit& cu)
 {
     const std::vector<ir::InsnId>& order = cu.dom.order();
@@ -321,7 +321,7 @@ bool decodeProxyBody(ir::ClassSession& s, ir::CodeUnit& cu, std::string_view des
         return false;
     }
 
-    // 字段与描述符互证：描述符必须恰为生成面按该字段该有的形状。
+    // 字段与描述符核对：描述符必须恰为生成面按该字段该有的形状。
     if (desc != expectedDesc(kind, enc.owner, enc.desc)) {
         why = RejectReason::FieldDescMismatch;
         return false;
@@ -383,7 +383,7 @@ void buildDefs(const mjbase::model::ResourceContainer& container, ProxyIndex& de
     });
 }
 
-/// 调用点普查 + 初始化暴露门。站点按代理分组收齐后以代理为单位裁决：
+/// 调用点普查 + 初始化暴露检查。站点按代理分组收齐后以代理为单位裁决：
 /// 调用点越出 owner 类的代理，owner `<clinit>` 必须中性，否则整组放弃。
 void collectSites(const mjbase::model::ResourceContainer& container, const ProxyIndex& defs,
                   ScanResult& result)
@@ -447,7 +447,7 @@ void collectSites(const mjbase::model::ResourceContainer& container, const Proxy
         }
     });
 
-    // 初始化暴露门（带 owner 级缓存）：非中性的代理整组放弃——只放一半
+    // 初始化暴露检查（带 owner 级缓存）：非中性的代理整组放弃，只放一半
     // 调用点会把初始化时机劈成两半。
     std::unordered_map<std::string, signed char> neutralCache;   // -1 未判 / 0 非 / 1 中性
     std::unordered_set<std::string>              dropped;
@@ -571,7 +571,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         touchedProxies.insert(scan_tools::keyOf(s.proxyOwner, s.proxyName, s.proxyDesc));
     }
 
-    // 两遍式：先收动作清单，再逐类「开会话 → 改写 → lower → 立即回写」，
+    // 两遍式：先收动作清单，再逐类开会话 → 改写 → lower → 立即回写，
     // 峰值内存是单类会话而不是整 jar 的改写字节（同 proxy_inline 的理由）。
     for (auto& [uri, sites] : byUri) {
         const std::vector<ca::u8>* bytes = findClassBytes(container, uri);

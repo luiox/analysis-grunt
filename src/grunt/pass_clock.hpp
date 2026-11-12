@@ -1,17 +1,17 @@
 /// @file        pass_clock.hpp
-/// @brief       pass 级 wall-clock 时间片：单 pass 在单罐上的时间墙与超时保守跳过。
+/// @brief       pass 级 wall-clock 时间片：单 pass 在单 jar 上的时间墙与超时保守跳过。
 ///
-/// 与 iter_budget（单类迭代预算）互补不重叠：iter_budget 按「操作数」封单类
-/// 迭代尾——个别类工作量失控时不许全罐陪葬；本文件按「wall-clock」封整段
-/// 时间墙——链式 13 pass 的广度成本（大罐单 pass 15~45s，Grunteon /
-/// UNO-indy / zenith 实测）在罐级超时（corpus-regress JAR_TIMEOUT=120s）面前
-/// 只能整罐 FAIL run；时间片让超限 pass 对余下类保守止步：已改写的类保留，
-/// 未到的类整类不动，罐 salvage 出部分产物而不是全罐陪葬。
+/// 与 iter_budget（单类迭代预算）互补不重叠：iter_budget 按操作数封单类
+/// 迭代尾，个别类工作量失控时不许全部 jar 连带失败；本文件按wall-clock封整段
+/// 时间墙，链式 13 pass 的广度成本（大 jar 单 pass 15~45s，Grunteon /
+/// UNO-indy / zenith 实测）在 jar 级超时（corpus-regress JAR_TIMEOUT=120s）面前
+/// 只能整个 jar FAIL run；时间片让超限 pass 对余下类保守止步：已改写的类保留，
+/// 未到的类整类不动，jar salvage 出部分产物而不是全部 jar 连带失败。
 ///
 /// 接线三单点：FailClosedPass::run 装配（全 pass 单点收口）、forEachClass
-/// 执行（类下发单点门）、countClasses 挂起（proof 类数门不许被截短）。
-/// 上限从 GRUNT_SLICE_SEC 读（秒；0 = 不设防）；默认 60s——语料实测正常
-/// 大罐单 pass 15~45s，60s 不触正常罐；salvage 场景由 harness 显式调小。
+/// 执行（类下发单点检查）、countClasses 挂起（proof 类数检查不许被截短）。
+/// 上限从 GRUNT_SLICE_SEC 读（秒；0 = 不设防）；默认 60s，语料实测正常
+/// 大 jar 单 pass 15~45s，60s 不触正常 jar；salvage 场景由 harness 显式调小。
 #pragma once
 
 #include <chrono>
@@ -24,11 +24,11 @@
 
 namespace grunt::pass_clock {
 
-/// @brief 一个 pass 在一个罐上的时间片记账器（管线串行，无并发）。
+/// @brief 一个 pass 在一个 jar 上的时间片计数器（管线串行，无并发）。
 class SegmentClock
 {
 public:
-    /// @brief 记账开始。@param pass pass 名（stderr 点名用）
+    /// @brief 计数开始。@param pass pass 名（stderr 点名用）
     ///                     @param limitSec wall-clock 上限秒；0 = 不设防
     void begin(const char* pass, ca::usize limitSec)
     {
@@ -47,8 +47,8 @@ public:
                static_cast<long long>(limit_);
     }
 
-    /// @brief 类下发门：未过期放行；过期后拒绝（首停类点名一次，逐类计数）。
-    ///         proof 类数门（挂起期）恒放行。
+    /// @brief 类下发检查：未过期放行；过期后拒绝（首停类点名一次，逐类计数）。
+    ///         proof 类数检查（挂起期）恒放行。
     bool admit(std::string_view uri)
     {
         if (!expired() || suspended > 0) return true;
@@ -67,7 +67,7 @@ public:
     /// @brief 已被保守跳过的类数。
     ca::usize skipped() const { return skipped_; }
 
-    /// @brief 挂起深度（countClasses 的 proof 类数门用）。
+    /// @brief 挂起深度（countClasses 的 proof 类数检查用）。
     ca::usize suspended = 0;
 
 private:
@@ -78,7 +78,7 @@ private:
     std::chrono::steady_clock::time_point start_                   = {};
 };
 
-/// @brief 活动时间片（nullptr = 无 pass 装配，forEachClass 不设门）。
+/// @brief 活动时间片（nullptr = 无 pass 装配，forEachClass 不设检查）。
 inline SegmentClock* gActiveClock = nullptr;
 
 /// @brief GRUNT_SLICE_SEC（秒；0 = 不设防）。读一次进程级固定。
@@ -130,7 +130,7 @@ private:
     SegmentClock  clock_;
 };
 
-/// @brief 挂起 RAII：proof 类数门（countClasses）计数期间不许被时间片截短。
+/// @brief 挂起 RAII：proof 类数检查（countClasses）计数期间不许被时间片截短。
 class Suspend
 {
 public:

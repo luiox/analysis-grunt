@@ -155,8 +155,8 @@ TEST(ProxyInlineScan, FindsStaticTargetProxy)
     EXPECT_EQ(site.targetOwner, "fixture/Calc");
     EXPECT_EQ(site.targetName, "calc");
     EXPECT_FALSE(site.virtualTarget);
-    // 两个定义成立：redirected_add 本体，以及 Caller.run——它的体恰好也是
-    // 「实参过手 + 单次 invokestatic + 返回」（代理的代理，下一轮收敛面）。
+    // 两个定义成立：redirected_add 本体，以及 Caller.run，它的体恰好也是
+    // 实参过手 + 单次 invokestatic + 返回（代理的代理，下一轮收敛面）。
     EXPECT_EQ(result.proxiesFound, 2u);
     EXPECT_TRUE(result.rejects.empty());
 }
@@ -214,7 +214,7 @@ TEST(ProxyInlineScan, FindsVirtualTargetProxy)
 
 TEST(ProxyInlineScan, WalksWideSlots)
 {
-    // (JD)I：long 占槽 0-1，double 占槽 2-3——槽走必须跳过半个宽类型。
+    // (JD)I：long 占槽 0-1，double 占槽 2-3，槽走必须跳过半个宽类型。
     model::ResourceContainer container = makeContainer({
         {"fixture/Proxies",
          ".super java/lang/Object\n"
@@ -389,7 +389,7 @@ TEST(ProxyInlineScan, RejectsExposedOwnerInit)
 TEST(ProxyInlineScan, AllowsExternalCallerWithNeutralOwner)
 {
     // 调用点在 owner 类外，但 owner 无 <clinit>（初始化无副作用）：
-    // 门放行——生成面的外置 `C$InvokeProxy` 类就是这个形态。
+    // 检查放行，生成面的外置 `C$InvokeProxy` 类就是这个形态。
     model::ResourceContainer container = makeContainer({
         {"fixture/Calc", kCalcSource},
         {"fixture/Proxies",

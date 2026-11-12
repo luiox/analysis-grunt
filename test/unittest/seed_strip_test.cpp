@@ -3,9 +3,9 @@
 ///
 /// 覆盖分工：
 /// - SCAN：NEWARRAY+PUTSTATIC 头 + GETSTATIC/IASTORE 组固定形状命中
-///   （spanCount 记账）；NOP 落点容忍；组内除法族拒绝；组先于头拒绝；
+///   （spanCount 计数）；NOP 落点容忍；组内除法族拒绝；组先于头拒绝；
 ///   Long 字面量组拒绝（组内只允许 Int/Float）；clinit 外有访问拒绝
-///   （访问面普查门）；
+///   （访问面普查检查）；
 /// - REWRITE：擦除后首条 NOP 保锚、其余指令消失的字节码断言；中段标签
 ///   放弃该字段（容器字节逐位不动）；
 /// - PROOF：类数不增 + 脏类可重解析。
@@ -269,7 +269,7 @@ TEST(SeedStripScan, RejectsLongLiteralInGroup)
 
 TEST(SeedStripScan, RejectsAccessOutsideClinit)
 {
-    // 访问面普查门：类内其他方法读、类外写，任一越出 clinit 即放弃。
+    // 访问面普查检查：类内其他方法读、类外写，任一越出 clinit 即放弃。
     const std::string f = "fixture/SeedHost.bfAT";
     model::ResourceContainer container = makeContainer({
         {"fixture/SeedHost",
@@ -322,8 +322,8 @@ TEST(SeedStripRewrite, StripsTableKeepingAnchorNops)
     ASSERT_EQ(dirty.uris.size(), 1u);
     EXPECT_EQ(dirty.uris.front(), uri);
 
-    // 字节码断言：头与两组全部拆除——唯余尺寸压栈、三枚锚 NOP（newarray 头 +
-    // 两个 getstatic 组锚；「首条 NOP 保锚保 srcPc」由 DOM 在擦除前记账，落盘
+    // 字节码断言：头与两组全部拆除，唯余尺寸压栈、三枚锚 NOP（newarray 头 +
+    // 两个 getstatic 组锚；首条 NOP 保锚保 srcPc 由 DOM 在擦除前计数，落盘
     // 重开后 srcPc 已按新布局重排，外部可观察面 = NOP 的数量与相对次序）与
     // return。
     const ClinitDump after = dumpClinit(classBytes(container, uri));
@@ -380,7 +380,7 @@ TEST(SeedStripRewrite, ToleratedNopsStayPutWhenStripping)
 TEST(SeedStripRewrite, MidSpanLabelAbandonsFieldBytesUntouched)
 {
     // 中段标签（合并点）→ 擦除放弃该字段；fail-closed 不落半截，容器字节
-    // 逐位不动。scan 仍产出站点（标签门在 rewrite 的擦除步执行）。
+    // 逐位不动。scan 仍产出站点（标签检查在 rewrite 的擦除步执行）。
     // 注意：jasm 丢弃无引用标签，标签必须由异常表边界实例化成真标签。
     const std::string f = "fixture/SeedHost.bfAT";
     const std::string uri = "fixture/SeedHost.class";
@@ -414,7 +414,7 @@ TEST(SeedStripRewrite, MidSpanLabelAbandonsFieldBytesUntouched)
     const std::vector<ca::u8> before = classBytes(container, uri);
 
     const ScanResult scanned = scan(container);
-    ASSERT_EQ(scanned.sites.size(), 1u) << "标签门在 rewrite 擦除步，scan 仍产出站点";
+    ASSERT_EQ(scanned.sites.size(), 1u) << "标签检查在 rewrite 擦除步，scan 仍产出站点";
 
     const DirtySet dirty = rewrite(container, scanned);
     EXPECT_EQ(dirty.attempted, 1u);

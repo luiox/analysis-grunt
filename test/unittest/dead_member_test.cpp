@@ -2,11 +2,11 @@
 /// @brief       残留 `dead_member` 的运行时引用面测试。
 ///
 /// CP 普查只有静态引用视野，两类运行时引用必须由保守面兜住：
-/// 1. BootstrapMethods——BSM 运行时经解密字符串 findStatic 本类成员
+/// 1. BootstrapMethods，BSM 运行时经解密字符串 findStatic 本类成员
 ///   （Grunt 形态，字节码里没有明文引用），命中则整类成员不删；
-/// 2. 注解字符串值——mixin 框架按注解值的方法名反射定位（@Redirect），
+/// 2. 注解字符串值，mixin 框架按注解值的方法名反射定位（@Redirect），
 ///    按名命中即不删。
-/// 无 BSM、无注解命中的私有方法照常删——pass 在无混淆面上仍然有效。
+/// 无 BSM、无注解命中的私有方法照常删，pass 在无混淆面上仍然有效。
 #include "grunt/dead_member.hpp"
 
 #include "jbc/core/attribute.hpp"
@@ -105,7 +105,7 @@ std::string hostPrelude()
            "    }\n"
            "  }\n"
            // 汇编器的栈分析按 indy 名解析栈形（indy 消费 (II)I 压回返回值），
-           // 同签名方法必须在场——也贴合真实 Grunt 形态：目标真实存在。
+           // 同签名方法必须在场，也贴合真实 Grunt 形态：目标真实存在。
            "  .method public static t (II)I {\n"
            "    code: {\n"
            "      iload 0\n"
@@ -137,7 +137,7 @@ std::string hostTail()
 TEST(DeadMemberRuntime, KeepsMethodsInClassWithBootstrapMethods)
 {
     // 类带 BootstrapMethods（jasm 的 invokedynamic 生成）：BSM 运行时解密出
-    // `secret` 并 findStatic——普查看不见，必须整类跳过成员删除。
+    // `secret` 并 findStatic，普查看不见，必须整类跳过成员删除。
     model::ResourceContainer container = makeContainer({
         {"Host",
          hostPrelude() +
@@ -180,7 +180,7 @@ TEST(DeadMemberRuntime, KeepsMethodsInClassWithBootstrapMethods)
 
 TEST(DeadMemberRuntime, KeepsMethodNamedByAnnotationValue)
 {
-    // @Redirect 形态：注解字符串值 "secret" 按名引用方法——mixin 框架运行时
+    // @Redirect 形态：注解字符串值 "secret" 按名引用方法，mixin 框架运行时
     // 反射定位，普查看不见，按名保留。
     model::ResourceContainer container = makeContainer({
         {"Host",
@@ -209,7 +209,7 @@ TEST(DeadMemberRuntime, KeepsMethodNamedByAnnotationValue)
 
 TEST(DeadMemberRuntime, DeletesUnreferencedPrivateMethodOnPlainClass)
 {
-    // 无 BSM、无注解命中：私有零引用方法照常删——pass 的本职工作不被
+    // 无 BSM、无注解命中：私有零引用方法照常删，pass 的本职工作不被
     // 保守面吞掉。
     model::ResourceContainer container = makeContainer({
         {"Host", hostPrelude() + hostTail()},
@@ -230,9 +230,9 @@ TEST(DeadMemberRuntime, DeletesUnreferencedPrivateMethodOnPlainClass)
 
 TEST(DeadMemberRuntime, KeepsSyntheticBridgeWhenBsmUnresolved)
 {
-    // 跨类 indy 目标形态：BSM 在 Host（此处不收敛——aconst_null 返回值不是
-    // CallSite，等价于语料里「解密方法体由运行时 agent 填充」的形态），目标
-    // 桥方法在 Mate——名字是解密产物，CP 零引用，静态上不可知。BSM 未收敛
+    // 跨类 indy 目标形态：BSM 在 Host（此处不收敛，aconst_null 返回值不是
+    // CallSite，等价于语料里解密方法体由运行时 agent 填充的形态），目标
+    // 桥方法在 Mate，名字是解密产物，CP 零引用，静态上不可知。BSM 未收敛
     // 时 synthetic/bridge 候选整档豁免；同类的 private 候选不豁免（findStatic
     // 跨类要求 public，private 永远不可能是跨类目标）。
     model::ResourceContainer container = makeContainer({
@@ -308,7 +308,7 @@ TEST(DeadMemberRuntime, KeepsSyntheticBridgeWhenBsmUnresolved)
 TEST(DeadMemberShell, RemovesUnreferencedProxyShellClass)
 {
     // 外置代理壳形态：C$InvokeProxy 全成员是死候选（零引用 private/合成），
-    // 删净后零成员零字段，且全容器无 CP 引用——整类摘除。
+    // 删净后零成员零字段，且全容器无 CP 引用，整类摘除。
     model::ResourceContainer container = makeContainer({
         {"Host", hostPrelude() + hostTail()},
         {"C$InvokeProxy",
@@ -336,7 +336,7 @@ TEST(DeadMemberShell, RemovesUnreferencedProxyShellClass)
 
 TEST(DeadMemberShell, KeepsShellClassReferencedByCp)
 {
-    // 反证：壳类形态但别类 CP 有引用（new/字段类型描述符）——不摘。
+    // 反证：壳类形态但别类 CP 有引用（new/字段类型描述符），不摘。
     model::ResourceContainer container = makeContainer({
         {"Host",
          hostPrelude() +
@@ -369,7 +369,7 @@ TEST(DeadMemberShell, KeepsShellClassReferencedByCp)
 
 TEST(DeadMemberShell, KeepsClassWithMainMethod)
 {
-    // 反证：main 所在类有成员（main 永不是删除候选），零成员门天然挡住；
+    // 反证：main 所在类有成员（main 永不是删除候选），零成员检查天然挡住；
     // 只有 main 一个成员的类不摘。
     model::ResourceContainer container = makeContainer({
         {"Main",
@@ -428,20 +428,20 @@ TEST(DeadMemberRuntime, ProofHoldsOnRuntimeReferencedClass)
 
 
 // ============================================================================
-// ==== 引用普查补全（K4 漏计修复的拒证面）======================================
+// ==== 引用普查补全（普查漏计修复的拒证面）======================================
 // ============================================================================
 //
-// K4 现场（doc/kasumi-verify.md §3）：Kasumi 专链产物 16 类带非零长 Raw 属性
+// 漏计现场（doc/kasumi-verify.rst §3）：Kasumi 专链产物 16 类带非零长 Raw 属性
 // （cp_compact 封闭集拒绝，AttrNotModeled），旧普查把这批类整体排除在引用方
-// 之外——调用方 `w` 池里对 `t.aa (III)I` 的 Methodref 从活引用集里蒸发，
+// 之外，调用方 `w` 池里对 `t.aa (III)I` 的 Methodref 从活引用集里蒸发，
 // `t` 类 93 方法全删，运行期 NoSuchMethodError。缩样拒证三态：
 //   A. 改写产物形态：引用方带未建模属性（压缩失败）+ 方法体 invokestatic
-//      —— 目标方法不删；
+//      ， 目标方法不删；
 //   B. 常量池间接引用形态：引用方方法体零引用、池里躺着 Methodref（压缩
-//      失败类上池不清死，pool-only 条目存活）—— 目标方法不删；
-//   C. census 盲区：某类连骨架解析都失败（引用证据不可得）—— 整轮零删除。
+//      失败类上池不清死，pool-only 条目存活）， 目标方法不删；
+//   C. census 盲区：某类连骨架解析都失败（引用证据不可得）， 整轮零删除。
 
-/// @brief 目标类夹具：private static secret（K4 的 `t` 类成员形态）。
+/// @brief 目标类夹具：private static secret（漏计案例里 `t` 类成员形态）。
 std::string mateSource()
 {
     return ".super java/lang/Object\n"
@@ -458,7 +458,7 @@ std::string mateSource()
 }
 
 /// @brief 给汇编产物挂一条非零长未建模类属性（RawAttr）→ cp_compact 封闭集
-///        拒绝（AttrNotModeled），类落 compactFailed、池不重编号——K4 改写
+///        拒绝（AttrNotModeled），类落 compactFailed、池不重编号，修复前改写
 ///        产物形态（jasm 表达不了任意属性，程序化补挂，metadata_strip 测试
 ///        同形）。@return 补挂后的类字节。
 std::vector<ca::u8> attachUnmodeledClassAttr(const std::string& name,
@@ -498,7 +498,7 @@ bool mateKeepsSecret(const model::ResourceContainer& container)
 
 TEST(DeadMemberCensus, KeepsTargetWhenReferencerFailsCompaction)
 {
-    // 形态 A（K4 主通道）：调用方 Host 方法体 invokestatic Mate.secret，但
+    // 形态 A（漏计主通道）：调用方 Host 方法体 invokestatic Mate.secret，但
     // Host 带未建模属性 → 压缩失败 → 旧普查把 Host 排除在引用方之外，
     // Mate.secret 被误删；补全后 Host 的池照常入普查，secret 不删。
     model::ResourceContainer container = makeContainerFromBytes({
@@ -521,7 +521,7 @@ TEST(DeadMemberCensus, KeepsTargetWhenReferencerFailsCompaction)
 
     const ScanResult scanned = scan(container);
     const DirtySet   dirty   = rewrite(container, scanned);
-    EXPECT_GE(dirty.rejectedByRef, 1u) << "引用门应拦下 Mate.secret";
+    EXPECT_GE(dirty.rejectedByRef, 1u) << "引用检查应拦下 Mate.secret";
     EXPECT_TRUE(mateKeepsSecret(container)) << "压缩失败调用方的引用必须入普查";
 }
 
@@ -529,7 +529,7 @@ TEST(DeadMemberCensus, KeepsTargetForPoolOnlyMethodref)
 {
     // 形态 B（普查原语的直接拒证）：Host 方法体零引用，池里只躺着一条
     // Methodref（压缩失败类池不清死，pool-only 条目存活到普查面）。只要池里
-    // 有指向，成员就不删——宁误留不误删。
+    // 有指向，成员就不删，宁误留不误删。
     model::ResourceContainer container = makeContainerFromBytes({
         {"Mate", assemble("Mate", mateSource())},
         {"Host",
@@ -577,7 +577,7 @@ TEST(DeadMemberCensus, KeepsTargetForPoolOnlyMethodref)
 
 TEST(DeadMemberCensus, CensusBlindStopsWholeRound)
 {
-    // 形态 C（fail-closed 底座）：一个类连骨架解析都失败——它的引用证据完全
+    // 形态 C（fail-closed 底座）：一个类连骨架解析都失败，它的引用证据完全
     // 不可得，任何候选都无法被证明死，本轮成员删除整体放弃（宁整轮不删）。
     std::vector<ca::u8> blind = assemble(
         "Blind",

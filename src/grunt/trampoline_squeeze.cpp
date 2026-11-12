@@ -2,8 +2,8 @@
 /// @brief       残留 `trampoline_squeeze` 的三段实现：SCAN / REWRITE / PROOF。
 ///
 /// `Site{uri, methodIndex, srcPc, wide}` → `DirtySet{uris, squeezed,
-/// attempted}`。SCAN：逐方法 promote 后按 order 遍历，「goto 目标即顺序
-/// 后继」即收站点。REWRITE：按 uri 聚合 → 逐方法一次 promote，按 `srcPc`
+/// attempted}`。SCAN：逐方法 promote 后按 order 遍历，goto 目标即顺序
+/// 后继即收站点。REWRITE：按 uri 聚合 → 逐方法一次 promote，按 `srcPc`
 /// 重定位站点，**复核判据**（同方法其他站点改写后布局可能变，句柄判据
 /// 重推）→ 清指令后置 `NOP` + 保 `srcPc` → 逐方法 `lowerMethod`（失败整类
 /// 放弃）→ `writeClass`。PROOF：`proof_tools::classesIntact`。
@@ -34,7 +34,7 @@ namespace {
 
 namespace ir = jbc::ir;
 
-/// @brief 单方法 SCAN：收集「目标即顺序后继」的 goto/goto_w。
+/// @brief 单方法 SCAN：收集目标即顺序后继的 goto/goto_w。
 /// @return false = 类级迭代预算超限（调用方放弃该类剩余方法）。
 bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& uri,
                 ScanResult& result, iter_budget::ClassBudget& budget)
@@ -47,7 +47,7 @@ bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
 
     const std::vector<ir::InsnId>& order = cu->dom.order();
     for (ca::usize i = 0; i < order.size(); ++i) {
-        if (!budget.tick()) return false;   ///< 逐位置记账：超限即停，类保守跳过
+        if (!budget.tick()) return false;   ///< 逐位置计数：超限即停，类保守跳过
         const ir::Insn* in = cu->dom.peek(order[i]);
         if (in == nullptr) continue;
         if (in->op != jbc::core::Op::GOTO && in->op != jbc::core::Op::GOTO_W) continue;
@@ -68,7 +68,7 @@ bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
 /// @brief 单方法 REWRITE：按 srcPc 重定位蹦床，原地置 NOP。
 /// @return 命中数。
 ///
-/// budget 逐站点按方法指令数记账（重定位是线性扫）；超限时剩余站点保守放弃。
+/// budget 逐站点按方法指令数计数（重定位是线性扫）；超限时剩余站点保守放弃。
 ca::usize rewriteMethod(ir::ClassSession& s, ca::usize methodIndex,
                         const std::vector<const Site*>& sites, ca::usize& skippedByBudget,
                         iter_budget::ClassBudget& budget)
@@ -82,7 +82,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ca::usize methodIndex,
     ca::usize hit   = 0;
     ca::usize tried = 0;   ///< 本方法已尝试的站点数（含复核失败的）
     for (const Site* site : sites) {
-        // 逐站点按方法指令数记账：重定位 + 定位都是对 order 的线性扫。
+        // 逐站点按方法指令数计数：重定位 + 定位都是对 order 的线性扫。
         const std::vector<ir::InsnId>& order = cu->dom.order();
         if (!budget.tick(order.size())) {
             skippedByBudget += sites.size() - tried;   ///< 余下站点保守放弃
@@ -138,7 +138,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
             ++result.classesSkipped;
             return;
         }
-        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置计数
         ir::ClassSession&        s      = *session;
         const ir::ClassUnit&     unit   = s.unit();
         for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
@@ -162,7 +162,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 {
     DirtySet dirty;
 
-    // 站点按 uri 聚类（一遍建索引；逐类线性筛全站点的做法在万类大罐上是
+    // 站点按 uri 聚类（一遍建索引；逐类线性筛全站点的做法在万类大 jar 上是
     // classes × sites 的平方账）。
     std::unordered_map<std::string, std::vector<const Site*>> byUri;
     for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
@@ -190,7 +190,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
-        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置计数
 
         ca::usize hit             = 0;
         ca::usize skippedByBudget = 0;

@@ -23,7 +23,7 @@ TEST(CliArgv, AsciiPassthrough)
 
 TEST(CliArgv, ChineseJarNameExactUtf8)
 {
-    // 语料 D 类代表罐名（GBK ANSI argv 的错配面）：「虚拟化混淆样本」。
+    // 语料 D 类代表 jar 名（GBK ANSI argv 的错配面）：虚拟化混淆样本。
     std::string out;
     ASSERT_TRUE(wideArgToUtf8(L"虚拟化混淆样本-target-obf-z6-obfuscated", out));
     EXPECT_EQ(out,

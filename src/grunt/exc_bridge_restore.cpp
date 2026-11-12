@@ -5,11 +5,11 @@
 /// `NEW; DUP; INVOKESPECIAL <init>; ATHROW`、handler 块 `POP` +
 /// Synthetic `GOTO`、`edge.to = trap` 改指、异常区 catchType =
 /// RuntimeException 且保护区恰为 trap 四条）；JvmFlowExporter
-/// emitExceptionRegions 按连续 run 出表——单块保护区 → 表项恰罩 trap；
+/// emitExceptionRegions 按连续 run 出表，单块保护区 → 表项恰罩 trap；
 /// emitGoto 仅在 `mode==Fallthrough && nextBlock==target` 时省略 GOTO，
 /// handler 位置由 exporter 显式补 GOTO 守卫（位置落入只发生在 trap 头）。
-/// 罐 A 实测（census_r1.py，校验器式可达普查）：严格形桥 13461 / 726 类，
-/// 覆盖门 / handler 碰撞门 / X 落点门命中全 0，位置落入前驱 =
+/// 样本 A 实测（census_r1.py，校验器式可达普查）：严格形桥 13461 / 726 类，
+/// 覆盖检查 / handler 碰撞检查 / X 落点检查命中全 0，位置落入前驱 =
 /// istore/iinc/ifle 三形。
 ///
 /// 改写全程句柄制：rewriteMethod 入口一次性把 plan 位置解析成 DOM 句柄
@@ -18,7 +18,7 @@
 ///
 /// ## SCAN（planMethod：scan/rewrite 共用一套判据）
 ///
-/// 单方法内先做全表锚位预解析，再逐表项过六道门：
+/// 单方法内先做全表锚位预解析，再逐表项过六道检查：
 ///
 /// 1. **形状钉**：catchType 一跳解析 = java/lang/RuntimeException；保护区
 ///    [start,end) 恰 4 条（end 锚 exclusive，end 哨兵 = 方法末合法）且逐字
@@ -27,30 +27,30 @@
 ///    法末 + handler goto 无字段引用（跳入 POP 空栈校验器拒）+ 非头受害者
 ///    （DUP/INVOKESPECIAL/ATHROW/POP/goto）无字段引用。任一缺席 =
 ///    shapeMiss（真实 try 区的反误伤面在这桶）。
-/// 2. **覆盖门**：其他表项保护区覆盖 trap 头或 handler 头 = 派发歧义拒
+/// 2. **覆盖检查**：其他表项保护区覆盖 trap 头或 handler 头 = 派发歧义拒
 ///    （covered；生成面自恰时为 0）。
-/// 3. **handler 碰撞门**：其他表项 handler 锚在本桥六个受害者位置上任一 =
+/// 3. **handler 碰撞检查**：其他表项 handler 锚在本桥六个受害者位置上任一 =
 ///    擦即侵占他人 handler，拒（handlerCollide）。
-/// 4. **X 落点门**：X 位置 ∈ 全量形状命中站点的受害者并集——被判拒的桥
+/// 4. **X 落点检查**：X 位置 ∈ 全量形状命中站点的受害者并集，被判拒的桥
 ///    原样保留，X 落进保留块同样是改指错位，拒（xInvalid）。
-/// 5. **位置落入门**：trap 头 = 方法头（入口位置边）或布局前驱非无条件终
+/// 5. **位置落入检查**：trap 头 = 方法头（入口位置边）或布局前驱非无条件终
 ///    结符 → needsPin，钉点 = 前驱（方法头变体 = insertAtStart）。
 /// 6. **吸附安排**：擦除面 = 已采纳站点受害者并集（被判拒站点不在擦除面，
 ///    锚不吸附）；存活表项 handler 锚落在擦除面上 → 整方法拒
-///    （rebindBlocked）；start 锚被擦 → 前移吸附（越界整方法拒——start 不
+///    （rebindBlocked）；start 锚被擦 → 前移吸附（越界整方法拒，start 不
 ///    能落方法末哨兵）；end 锚被擦 → 前移吸附（落方法末哨兵合法）。
 ///
 /// ## REWRITE 执行序（任一步失败整方法回滚）
 ///
-/// plan 在 mutate lambda 内做——此刻零改动，位置 ↔ 句柄一一对应；scan 侧
-/// plan 只记账。入口一次定位：plan 全部位置 → DOM 句柄（trap 头 / 六受害
+/// plan 在 mutate lambda 内做，此刻零改动，位置 ↔ 句柄一一对应；scan 侧
+/// plan 只计数。入口一次定位：plan 全部位置 → DOM 句柄（trap 头 / 六受害
 /// 者 / X / 钉前驱 / 本桥三标签），复核 handler goto 靶 = X（防 plan-DOM
 /// 漂移）。执行次序有两条硬约束：存活表项锚吸附必须**先于一切删除**
 /// （Boundary 标签保护锚点，`editor.bindLabel` 移锚；end 哨兵 = anchor
-/// kNoInsn）；本桥三个标签必须在 eraseBatch **之前** destroyLabel——表项
+/// kNoInsn）；本桥三个标签必须在 eraseBatch **之前** destroyLabel，表项
 /// 删除后标签失主，不先销毁擦除直接拒收。中间步：replaceAllUses(trap 头,
 /// X) 全体 jump/switch 字段直连（旧标签随改写销毁）→ 位置落入钉
-/// （createLabel(X) + GOTO 插前驱尾/方法头，插入前定靶——kNoLabel 靶过不
+/// （createLabel(X) + GOTO 插前驱尾/方法头，插入前定靶，kNoLabel 靶过不
 /// 了句柄校验）→ 本桥异常表项从 cu->exc 移除 → 单批 eraseBatch（六受害者
 /// /站，kRejectIfUsed 全有或全无）。诊断面：`GRUNT_EXC_BRIDGE_TRACE=1` 打
 /// rewrite-fail/method-fail 逐站行。
@@ -58,8 +58,8 @@
 /// ## PROOF
 ///
 /// 类数不增 + 脏类可重解析 + residual 复扫（脏类集上重跑 planMethod，仍
-/// 通过形状钉 + 互证门的站点数；语料单罐门要求 0）。**residual 口径 =
-/// 脏类集**：整类全方法失败时不进 dirtySet，其站点由外部 census 复核（罐
+/// 通过形状钉 + 核对检查的站点数；语料单 jar 检查要求 0）。**residual 口径 =
+/// 脏类集**：整类全方法失败时不进 dirtySet，其站点由外部 census 复核（jar
 /// A 实测独立可达普查 bridge=0，无遗漏类）。
 
 #include "grunt/exc_bridge_restore.hpp"
@@ -184,11 +184,11 @@ struct ShapeHit
 ///   [sp, sp+4) 恰四条：NEW cp(→java/lang/RuntimeException); DUP;
 ///                      INVOKESPECIAL cp(→RuntimeException.<init> ()V); ATHROW
 ///   [hp, hp+2) 恰两条：POP; GOTO|GOTO_W（Synthetic goto）→ 目标 X
-/// 互证（真实 throw 区不可能同构）：
+/// 核对（真实 throw 区不可能同构）：
 ///   - handler goto 无直接引用（跳入会 POP 空栈，校验器拒绝）；
-///   - 非头受害者（DUP/INVOKESPECIAL/ATHROW/POP/goto）无字段引用——生成面
+///   - 非头受害者（DUP/INVOKESPECIAL/ATHROW/POP/goto）无字段引用，生成面
 ///     块只从 trap 头进入，中段入口对校验器是栈形错位。
-/// 覆盖门 / handler 碰撞门 / X 落点门在 planMethod 里做（要看全表）。
+/// 覆盖检查 / handler 碰撞检查 / X 落点检查在 planMethod 里做（要看全表）。
 bool shapePin(const ir::ClassSession& s, const ir::CodeDom& dom, const PosMap& pm,
               const ir::CodeUnit::Exc& e, ShapeHit& hit, const char*& why)
 {
@@ -295,7 +295,7 @@ struct MethodPlan
     bool                  methodFail = false;  ///< 吸附不可行，整方法放弃
 };
 
-/// @brief 单方法桥站点计划。判据与桶记账全程 fail-closed。
+/// @brief 单方法桥站点计划。判据与桶计数全程 fail-closed。
 MethodPlan planMethod(const ir::ClassSession& s, const ir::CodeUnit& cu, ScanResult& out,
                       const std::string& uri, ca::usize mi)
 {
@@ -305,7 +305,7 @@ MethodPlan planMethod(const ir::ClassSession& s, const ir::CodeUnit& cu, ScanRes
     PosMap pm;
     pm.build(order);
 
-    // 全表锚位预解析（覆盖/碰撞/吸附三门都要看全表）。
+    // 全表锚位预解析（覆盖/碰撞/吸附三检查都要看全表）。
     const ca::usize        n = cu.exc.size();
     std::vector<ca::usize> posStarts(n, kNoPos), posEnds(n, kNoPos), posHandlers(n, kNoPos);
     for (ca::usize ei = 0; ei < n; ++ei) {
@@ -319,8 +319,8 @@ MethodPlan planMethod(const ir::ClassSession& s, const ir::CodeUnit& cu, ScanRes
         out.rejects.push_back(Reject{uri, mi, static_cast<ca::u32>(anchor), why});
     };
 
-    // ---- 一轮：形状钉 + 覆盖门 + handler 碰撞门。形状命中者受害位置全量
-    //      进 xUnion（无论后续门放不放行——被判拒的桥原样保留，别的桥目标
+    // ---- 一轮：形状钉 + 覆盖检查 + handler 碰撞检查。形状命中者受害位置全量
+    //      进 xUnion（无论后续检查放不放行，被判拒的桥原样保留，别的桥目标
     //      落进去同样是改指进保留块，一样拒）。
     std::vector<ShapeHit>         hits(n);
     std::vector<bool>             provisional(n, false);
@@ -369,7 +369,7 @@ MethodPlan planMethod(const ir::ClassSession& s, const ir::CodeUnit& cu, ScanRes
         provisional[ei] = true;
     }
 
-    // ---- 二轮：X 落点门（xUnion 全量就绪后判）。
+    // ---- 二轮：X 落点检查（xUnion 全量就绪后判）。
     for (ca::usize ei = 0; ei < n; ++ei) {
         if (!provisional[ei]) continue;
         if (xUnion.count(hits[ei].xPos) != 0) {
@@ -431,7 +431,7 @@ MethodPlan planMethod(const ir::ClassSession& s, const ir::CodeUnit& cu, ScanRes
         sp2.hp       = hits[ei].hp;
         sp2.xPos     = hits[ei].xPos;
         sp2.users    = hits[ei].users;
-        // 位置落入门：trap 头布局前驱可落入（生成面 goto 省略形）或 trap 头
+        // 位置落入检查：trap 头布局前驱可落入（生成面 goto 省略形）或 trap 头
         // 即方法头（入口位置边）。前驱为无条件终结符时无位置边。
         if (hits[ei].sp == 0) {
             sp2.needsPin   = true;
@@ -632,7 +632,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
     rewrite_tools::FrameContext frames(container);
 
-    // 计划按 uri 聚类（万类大罐上避免 classes × sites 平方账）。
+    // 计划按 uri 聚类（万类大 jar 上避免 classes × sites 平方账）。
     std::unordered_map<std::string, std::vector<const Site*>> byUri;
     for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
 
@@ -659,7 +659,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         if (!session) return;
         ir::ClassSession& s = *session;
 
-        // 前置门：原样往返不了的方法不进改写面。
+        // 前置检查：原样往返不了的方法不进改写面。
         const std::unordered_set<ca::usize> safe = proof_tools::roundTripSafe(
             *entry.bytes,
             std::vector<ca::usize>(methodIdxs.begin(), methodIdxs.end()));
@@ -669,7 +669,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             if (safe.count(mi) == 0) continue;
 
             // 单 promote 纪律：plan 在 mutate lambda 内做（此刻零改动），
-            // 改写落在同一 unit 上；scan 侧的 plan 只记账不参与改写。
+            // 改写落在同一 unit 上；scan 侧的 plan 只计数不参与改写。
             ca::usize planned    = 0;
             ca::usize plannedPins = 0;
             ca::usize bridges    = 0;
@@ -734,8 +734,8 @@ ProofResult proof(const mjbase::model::ResourceContainer& container, const Dirty
     result.ok     = intact.ok;
     result.failed = intact.failed;
 
-    // residual：改写过的类里仍能通过形状钉 + 互证门的桥站点数（含改写
-    // fail-closed 放弃的站点）。效力门挂起时间片，全量盘点。
+    // residual：改写过的类里仍能通过形状钉 + 核对检查的桥站点数（含改写
+    // fail-closed 放弃的站点）。效力检查挂起时间片，全量盘点。
     if (!dirty.uris.empty()) {
         const pass_clock::Suspend suspend;
         std::set<std::string>     dirtySet(dirty.uris.begin(), dirty.uris.end());

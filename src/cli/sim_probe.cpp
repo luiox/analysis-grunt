@@ -1,15 +1,15 @@
 /// @file        sim_probe.cpp
 /// @brief       CLI 探针实现：容器 → ClassSession → jsim::Method → 跑一次。
 ///
-/// 探针的判据是「行为可复现」：同一个方法、同一组输入，模拟执行的结果必须
+/// 探针的判据是行为可复现：同一个方法、同一组输入，模拟执行的结果必须
 /// 和真机一致。它不负责改写，也不参与 pass 链。
 ///
 /// 两条通路，**显式二选一**：
 ///
-/// - 默认：单方法裸跑。只经过桥 + 引擎，用来证明「真 CodeUnit 转出来的方法」
-///   行为正确。子调用一律 Bail——这正是单方法引擎的边界（设计 D9）。
+/// - 默认：单方法裸跑。只经过桥 + 引擎，用来证明真 CodeUnit 转出来的方法
+///   行为正确。子调用一律 Bail，这正是单方法引擎的边界（设计 D9）。
 /// - `--exec`：跨方法执行器。子调用被编排层接住、再开引擎实例跑下去，
-///   用来证明「clinit 建池 → decrypt 读池 → decrypt 里再调 decrypt」这条链。
+///   用来证明clinit 建池 → decrypt 读池 → decrypt 里再调 decrypt这条链。
 ///
 /// 两路必须分开报告，不能混：如果以为在验桥、其实跑的是执行器，结论就是错的。
 
@@ -81,7 +81,7 @@ std::vector<std::string> splitBy(const std::string& text, char sep)
 /// 只有十六进制形态能无损穿过命令行。
 ///
 /// `b:` 也是必需的：BSM 的最后一个静态参数是 `Integer`，体内 `aload; checkcast;
-/// intValue()` 之后立刻上分支。传 Unknown 过不去——分支条件不具体就 Bail，
+/// intValue()` 之后立刻上分支。传 Unknown 过不去，分支条件不具体就 Bail，
 /// 而这跟解密逻辑无关，纯是实参没给对类型。
 ///
 /// 装箱载荷复用 num 包的 `@v` 槽口径：`intValue()` 拆箱时按同一个键取，自己
@@ -119,8 +119,8 @@ jsim::SimValue makeArg(const std::string& spec, jsim::ValType type, jsim::Sessio
 
 /// @brief 实参文本按描述符声明的类型灌成 SimValue 序列。
 ///
-/// 需要会话：`b:` 要在堆上分配包装对象，而堆属于会话。所以「解析文本」与
-/// 「落成值」必须分开——先按描述符定类型，再由调用方拿自己的会话物化。
+/// 需要会话：`b:` 要在堆上分配包装对象，而堆属于会话。所以解析文本与
+/// 落成值必须分开，先按描述符定类型，再由调用方拿自己的会话物化。
 std::vector<jsim::SimValue> buildArgs(const std::vector<jsim::ValType>& types,
                                       const std::string& argsSpec, jsim::Session& session)
 {
@@ -157,7 +157,7 @@ void installTrace(jsim::Session& session)
 /// @brief 把连续重复的 Jasm 空白转义压成 `\u0020×N`。
 ///
 /// Grunt 的方法名是三万个空格，Jasm 按码点转义成三万个 `\u0020`，一行就 200KB。
-/// 压成计数后信息不丢、行还能读——否则 --dump 的输出没法看。
+/// 压成计数后信息不丢、行还能读，否则 --dump 的输出没法看。
 std::string collapseEscapes(const std::string& text)
 {
     static const std::string kEsc = "\\u0020";
@@ -184,14 +184,14 @@ std::string collapseEscapes(const std::string& text)
     return out;
 }
 
-/// @brief 用 mjbase 的 Jasm 门面反汇编单个方法。
+/// @brief 用 mjbase 的 Jasm 检查面反汇编单个方法。
 ///
 /// 不自己搓反汇编：mjbase 已经把 libjhasm 包成 `JvmJasmService`，输出是规范化
-/// Jasm（常量池、跳转标签、栈图都在），信息量比自制的「pc + 操作数」视图大得多，
-/// 而且与回写用的 `assemble` 是同一套口径——改写前后各 dump 一次可以逐行对比。
+/// Jasm（常量池、跳转标签、栈图都在），信息量比自制的pc + 操作数视图大得多，
+/// 而且与回写用的 `assemble` 是同一套口径，改写前后各 dump 一次可以逐行对比。
 ///
 /// 另一层好处：dump 直接吃**原始类字节**，不经过桥。桥转换失败时照样能看到
-/// 方法体，排查「是桥的问题还是引擎的问题」才有依据。
+/// 方法体，排查是桥的问题还是引擎的问题才有依据。
 bool dumpMethodWithJasm(const std::vector<ca::u8>& classBytes, const std::string& name,
                         const std::string& desc)
 {
@@ -215,7 +215,7 @@ bool dumpMethodWithJasm(const std::vector<ca::u8>& classBytes, const std::string
 
 /// @brief 桥产物的指令序列（只有 opcode，没有操作数）。
 ///
-/// 这不是反汇编器——反汇编是 Jasm 的活。这里只做**对表**：Jasm 给出的指令数与
+/// 这不是反汇编器，反汇编是 Jasm 的活。这里只做**对表**：Jasm 给出的指令数与
 /// 桥给出的条数不一致，就说明 `promoteMethod` 的产物和字节码原貌有出入，
 /// 而桥是按前者建 pc 的。没有这一行，pc 偏移错位会被当成引擎的行为差异。
 void printBridgeShape(const jsim::Method& m)
@@ -293,8 +293,8 @@ int runSimProbe(const SimProbeOptions& options)
 
     const jbc::ir::ClassUnit& unit = session->unit();
 
-    // `#*` 列出全部带码方法——探针要能自己找到目标，不该靠外部猜方法名。
-    // 方法名本身可能是「三万个空格」或带不可见字符，所以 `#<数字>` 直接按
+    // `#*` 列出全部带码方法，探针要能自己找到目标，不该靠外部猜方法名。
+    // 方法名本身可能是三万个空格或带不可见字符，所以 `#<数字>` 直接按
     // 方法下标取，配合 `#*` 的输出来定位。
     if (methodSpec == "*") {
         for (ca::usize i = 0; i < unit.methods.size(); ++i) {
@@ -335,7 +335,7 @@ int runSimProbe(const SimProbeOptions& options)
     const std::string name(unit.symbols().str(unit.methods[found].name));
 
     // dump 直接走 Jasm，不经桥：桥转换失败时照样能看到方法体，才能分清
-    // 「桥的问题」还是「引擎的问题」。桥视图跟在后面，供对表。
+    // 桥的问题还是引擎的问题。桥视图跟在后面，供对表。
     jsim::Method simMethod;
     std::string  why;
     const auto   bridgedResult = jsim::jbcbridge::toSimMethod(*session, found);
@@ -365,8 +365,8 @@ int runSimProbe(const SimProbeOptions& options)
     // ── 跨方法执行器 ────────────────────────────────────────────────────────
     //
     // 扩展包由**探针**装，不由执行器装（分层红线）：执行器只认 jsim 核心，
-    // String 怎么拼、Integer 怎么解析，是调用方的事。要证明「拿掉扩展包
-    // 也能跑」，删掉下面两行即可。
+    // String 怎么拼、Integer 怎么解析，是调用方的事。要证明拿掉扩展包
+    // 也能跑，删掉下面两行即可。
     if (executor) {
         std::printf("方法 %s%s（执行器）\n", name.c_str(), desc.c_str());
 

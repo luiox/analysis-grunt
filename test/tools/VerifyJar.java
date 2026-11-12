@@ -14,7 +14,7 @@ import java.util.zip.ZipFile;
  * 方法体的错误往往落在没被执行到的分支上。
  *
  * initialize=false 是刻意的：链接（含校验）先于初始化完成，所以校验照跑，但不会
- * 触发静态初始化——语料里的样本可能开窗口、调 System.exit，初始化会挂住。
+ * 触发静态初始化，语料里的样本可能开窗口、调 System.exit，初始化会挂住。
  *
  * 用法：java -Xverify:all VerifyJar.java <jar> [--quiet]
  * 输出：classes=N ok=N failed=N；失败明细打 stderr；退出码 1 表示有失败。

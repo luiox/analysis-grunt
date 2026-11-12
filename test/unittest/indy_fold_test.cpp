@@ -1,8 +1,8 @@
 /// @file        indy_fold_test.cpp
 /// @brief       残留 `indy_fold` 的三段判据测试。
 ///
-/// 夹具是「缩小版 Grunt indy 形态」：BSM 不读前三个 JVM 合成形参（Lookup/name/
-/// MethodType——折叠灌的是 Unknown），目标信息全部来自静态参数表；体感与真
+/// 夹具是缩小版 Grunt indy 形态：BSM 不读前三个 JVM 合成形参（Lookup/name/
+/// MethodType，折叠灌的是 Unknown），目标信息全部来自静态参数表；体感与真
 /// 混淆器一致：forName → findStatic → ConstantCallSite。
 ///
 /// 覆盖分工：
@@ -80,7 +80,7 @@ const std::vector<ca::u8>& classBytes(const model::ResourceContainer& container,
     return cls->get();
 }
 
-/// BSM 前三个形参是 JVM 合成的（Lookup/name/MethodType），折叠灌 Unknown——
+/// BSM 前三个形参是 JVM 合成的（Lookup/name/MethodType），折叠灌 Unknown，
 /// 所以夹具 BSM 只从静态参数取信息：静态参数 = 目标名 / 目标类名 / 目标描述符。
 /// 目标类经 Class.forName 造 Class 对象，findStatic 出句柄，包 ConstantCallSite。
 std::string hostSource(const std::string& bsmBody)
@@ -138,7 +138,7 @@ std::string foldableBsmBody()
 
 std::string divergentBsmBody()
 {
-    // BSM 返回 null：收敛但不是 CallSite——另一类拒绝面（载荷不完整）。
+    // BSM 返回 null：收敛但不是 CallSite，另一类拒绝面（载荷不完整）。
     return "      aconst_null\n"
            "      areturn\n";
 }
@@ -180,7 +180,7 @@ TEST(IndyFoldScan, RejectsSiteWhenBsmDoesNotConverge)
     EXPECT_FALSE(site.why.empty());
 }
 
-/// 双调用点变体：同一类里再加一个 indy 调用方法（scan 预算按类记账的夹具）。
+/// 双调用点变体：同一类里再加一个 indy 调用方法（scan 预算按类计数的夹具）。
 std::string hostSourceTwoCalls(const std::string& bsmBody)
 {
     const std::string base = hostSource(bsmBody);
@@ -207,12 +207,12 @@ TEST(IndyFoldScan, OverBudgetStopsBsmRunsConservatively)
     model::ResourceContainer container =
         makeContainer({{"IndyHost", hostSourceTwoCalls(foldableBsmBody())}});
 
-    // 默认预算：两个站点都跑（正常罐不触限）。
+    // 默认预算：两个站点都跑（正常 jar 不触限）。
     const ScanResult normal = scan(container);
     EXPECT_EQ(normal.sites.size(), 2u);
     EXPECT_EQ(normal.classesSkippedByBudget, 0u);
 
-    // 预算 1：首站点跑完，次站点起超限——余下站点保守跳过。
+    // 预算 1：首站点跑完，次站点起超限，余下站点保守跳过。
     const ScanResult starved = scan(container, iter_budget::ClassBudget{1});
     EXPECT_EQ(starved.sites.size(), 1u);
     EXPECT_EQ(starved.classesSkippedByBudget, 1u);

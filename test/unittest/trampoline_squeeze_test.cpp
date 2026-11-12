@@ -129,7 +129,7 @@ TEST(TrampolineRewrite, OverBudgetLeavesTrampolineUntouched)
     const ScanResult scanned = scan(container);
     ASSERT_EQ(scanned.sites.size(), 1u);
 
-    // 复核记账单位是方法指令数（本夹具 3 条）；预算 1 必在首站点即超限。
+    // 复核计数单位是方法指令数（本夹具 3 条）；预算 1 必在首站点即超限。
     const DirtySet dirty = rewrite(container, scanned, iter_budget::ClassBudget{1});
     EXPECT_EQ(dirty.uris.size(), 0u) << "超限类不许被改写";
     EXPECT_EQ(dirty.skippedByBudget, 1u);

@@ -1,22 +1,22 @@
 /// @file        metadata_strip.cpp
-/// @brief       残留 `metadata_strip` 三段实现：SCAN（三面盘查 + Era 门）→
+/// @brief       残留 `metadata_strip` 三段实现：SCAN（三面盘查 + Era 检查）→
 ///              REWRITE（资源先删 + 注解三面摘除 + 水印字段删除 + 压池写回）
-///              → PROOF（双门 + 三面 residual）。
+///              → PROOF（两道检查 + 三面 residual）。
 ///
 /// 判据分级与资源动词见头文件；骨架对齐 booger_anno_strip（注解槽 decodeAttr
-/// 直调位 + 深度预检 + 压池收尾）与 K2 string_cache_fold（Era 门在 scan、
+/// 直调位 + 深度预检 + 压池收尾）与 K2 string_cache_fold（Era 检查在 scan、
 /// proof 挂起全量）。
 ///
 /// ## SCAN 三面与判据谓词
 ///
-/// 判据谓词三段共用单源（参考实现逐字对齐）。S3 Era 门在 scan 开头：
-/// era != Kasumi 整面关闭（eraBlocked，fail-closed）——未判时一个字节都不
-/// 看内容判据（非 Kasumi 罐挂同前缀资源时 scan 空手而归，产物资源逐字节
+/// 判据谓词三段共用单源（参考实现逐字对齐）。S3 Era 检查在 scan 开头：
+/// era != Kasumi 整面关闭（eraBlocked，fail-closed），未判时一个字节都不
+/// 看内容判据（非 Kasumi jar 挂同前缀资源时 scan 空手而归，产物资源逐字节
 /// 原样）。注解面走 decodeAttr 直调位（booger_anno_strip 同一通路）普查
 /// 类/字段/方法三张挂载面的 @Metadata 条目；深度预检（attrSafeToDecode）
-/// 拦下的槽计 annoBlocked——解不开的 fail-closed 不摘、不猜条目数。水印
+/// 拦下的槽计 annoBlocked，解不开的 fail-closed 不摘、不猜条目数。水印
 /// 字段面：字段带 @Metadata 或 ConstantValue 为水印串都计入；ConstantValue
-/// 双形态都收——jbc 原生 ConstantValueAttr 解码产物与 RawAttr 2 字节载荷
+/// 双形态都收，jbc 原生 ConstantValueAttr 解码产物与 RawAttr 2 字节载荷
 /// （const_value_promote 新建形态）。资源面 visitResources 全量走一遍，
 /// 只看 UnknownResource 载荷（参考实现同口径），URI 前缀 + `.md` + 内容探针
 /// 三证齐才进删除清单；形状命中而证据不全 → resourceCandidates 盘点不删
@@ -27,20 +27,20 @@
 /// 资源先删（参考实现序）：只消费 scan 清单，删除时刻复核同判据（scan 之后字
 /// 节可能已变，不盲删）；复核不齐计 resourceCandidates。类清理与
 /// booger_anno_strip 同骨架：类面/方法面只摘条目（摘空属性槽整槽移除）；
-/// 字段面摘条目后按「摘到过条目 ∨ ConstantValue 水印」整字段删除（注解
-/// 字段与水印字段都是混淆器署名位，参考实现直接删，不做引用普查——病态引用
+/// 字段面摘条目后按摘到过条目 ∨ ConstantValue 水印整字段删除（注解
+/// 字段与水印字段都是混淆器署名位，参考实现直接删，不做引用普查，病态引用
 /// 形态由类加载校验兜底）。方法体不碰。压池收尾：classAnnoDepthSafe 预检
 /// + compactConstantPool 带走死条目；预检拒绝或压缩失败就跳过压缩，清理
-/// 过的字节照常落盘——CP 不压缩只是少带走死条目。条目数在类写回成功后归
+/// 过的字节照常落盘，CP 不压缩只是少带走死条目。条目数在类写回成功后归
 /// 账；编码失败计 failed。
 ///
 /// ## PROOF
 ///
-/// pass_clock::Suspend 挂起全量，三道门：类数门（classesIntact）；资源对
-/// 账门（resourcesShrunk：资源数只减 + 删除清单逐条不在场，虚报删减即
-/// FAILED）；三面 residual（与 scan 同判据重钉，语料单罐门要求全 0）。深
-/// 度预检拦下的敌意槽不在 residual 视野内——不可解面不是清理缺陷，
-/// annoBlocked 已记账。
+/// pass_clock::Suspend 挂起全量，三道检查：类数检查（classesIntact）；资源对
+/// 账检查（resourcesShrunk：资源数只减 + 删除清单逐条不在场，虚报删减即
+/// FAILED）；三面 residual（与 scan 同判据重钉，语料单 jar 检查要求全 0）。深
+/// 度预检拦下的敌意槽不在 residual 视野内，不可解面不是清理缺陷，
+/// annoBlocked 已计数。
 ///
 /// ## 已知边界
 ///
@@ -48,7 +48,7 @@
 /// 量与 `kasumi_` 前缀会话 key）是 indy 链路运行时数据，参考实现不触方法体，
 /// 本仓对齐；全链收口后由 DeadMember 压池/死码面自然带走解引用的死串。
 /// 换代面（注解描述符 / 水印三判据 / 资源前缀与五探针都钉自当前 Kasumi
-/// 版本）由 Era 门整面拒绝兜底。
+/// 版本）由 Era 检查整面拒绝兜底。
 
 #include "grunt/metadata_strip.hpp"
 
@@ -127,14 +127,14 @@ bool resourcePrefixHit(std::string_view uri)
 // ============================================================================
 
 /// @brief 一张属性表里的 @Metadata 条目普查。深度预检拦下的槽计 blocked
-///        （fail-closed：解不开的不算「没有」，如实记账但不产出条目）。
+///        （fail-closed：解不开的不算没有，如实计数但不产出条目）。
 ca::usize countMetadataTable(jbc::core::ClassFile& cf, std::vector<jbc::core::AttrSlot>& slots,
                              ca::usize& blocked)
 {
     ca::usize n = 0;
     for (jbc::core::AttrSlot& slot : slots) {
         // 注解族解码互递归无界（mjbase #158）：预检拒绝 = 解不开，fail-closed
-        // 记账跳过——条目数不猜（参考实现无此敌意面；本仓守卫优先于参考实现静默）。
+        // 计数跳过，条目数不猜（参考实现无此敌意面；本仓守卫优先于参考实现静默）。
         if (!mjbase::util::attrSafeToDecode(cf, slot)) {
             ++blocked;
             continue;
@@ -263,7 +263,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
 {
     ScanResult result;
 
-    // ---- S3 Era 门：三面判据全是 Kasumi 版本知识，Era 分支唯一合法落点。
+    // ---- S3 Era 检查：三面判据全是 Kasumi 版本知识，Era 分支唯一合法落点。
     //      未判即整面关闭（fail-closed）：资源一个不看内容，类一个不进站。
     if (input.era != knowledge::Era::Kasumi) {
         result.eraBlocked = true;
@@ -271,7 +271,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
     }
 
     // ---- 资源清单（参考实现序：资源先于类）。UnknownResource 条目逐个三证
-    //      判定；形状命中而证据不全的如实盘点（参考实现保留，本仓记账）。
+    //      判定；形状命中而证据不全的如实盘点（参考实现保留，本仓计数）。
     container.visitResources([&](std::string_view uri, const mjbase::model::IResource& res) {
         const auto* unknown =
             ca::core::tag_cast::dyn_cast<const mjbase::model::UnknownResource>(&res);
@@ -310,16 +310,16 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     DirtySet dirty;
 
     // ---- 资源先删（参考实现序）。只消费 scan 清单；删除时刻复核同判据
-    //      （scan 之后字节可能已变，不盲删——K2 rewriteSite 复核同纪律）。
+    //      （scan 之后字节可能已变，不盲删，K2 rewriteSite 复核同纪律）。
     for (const std::string& uri : result.resources) {
         const mjbase::model::IResource* raw = container.getResource(uri);
         const auto* unknown = ca::core::tag_cast::dyn_cast<const mjbase::model::UnknownResource>(raw);
         if (unknown == nullptr || !isAntiLlmResource(uri, unknown->get())) {
-            ++dirty.resourceCandidates;   // 复核不齐：不删，如实记账
+            ++dirty.resourceCandidates;   // 复核不齐：不删，如实计数
             continue;
         }
         if (!rewrite_tools::removeResource(container, uri)) {
-            ++dirty.resourceCandidates;   // 条目已不在：对账面由 proof 判
+            ++dirty.resourceCandidates;   // 条目已不在：核对面由 proof 判
             continue;
         }
         dirty.removedResources.push_back(uri);
@@ -378,7 +378,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         if (annos == 0 && fields == 0) return;   // 复核零命中：不写回（字节不动）
         auto encoded = jbc::core::writeClass(cf);
         if (encoded.is_err()) {
-            dirty.failed += annos + fields;   // 未归账如实记账
+            dirty.failed += annos + fields;   // 未归账如实计数
             return;
         }
         pending.push_back(PendingWrite{uri, std::move(encoded).unwrap(), annos, fields});
@@ -413,7 +413,7 @@ namespace {
 /// @brief 容器里仍可判定的三面残留（residual 口径，与 scan 同判据重钉）。
 ///
 /// 深度预检拦下的敌意槽不在视野内（解不开 = 不可判，不是清理缺陷；
-/// scan 的 annoBlocked 已记账）。
+/// scan 的 annoBlocked 已计数）。
 void countResidual(const mjbase::model::ResourceContainer& container, ProofResult& result)
 {
     forEachClass(container, [&](const ClassEntry& entry) {
@@ -449,15 +449,15 @@ void countResidual(const mjbase::model::ResourceContainer& container, ProofResul
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,
                   ca::usize classesBefore, ca::usize resourcesBefore)
 {
-    // proof 是效力门（不变量复核），不许被 pass 级时间片截短——挂起期间
+    // proof 是效力检查（不变量复核），不许被 pass 级时间片截短，挂起期间
     // forEachClass 全量放行（residual 统计同样要看到全量类）。
     pass_clock::Suspend suspend;
 
-    // ---- 类门（与全部残留同门）：类数不增 + 脏类可重解析。
+    // ---- 类检查（与全部残留同一检查）：类数不增 + 脏类可重解析。
     const proof_tools::ClassIntactResult intact =
         proof_tools::classesIntact(container, dirty.uris, classesBefore);
 
-    // ---- 资源对账门（资源动词验收面）：资源数不增（只减）+ 删除清单逐条
+    // ---- 资源核对检查（资源动词验收面）：资源数不增（只减）+ 删除清单逐条
     //      不在场。
     const proof_tools::ResourceShrunkResult shrunk =
         proof_tools::resourcesShrunk(container, dirty.removedResources, resourcesBefore);

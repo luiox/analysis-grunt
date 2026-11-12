@@ -2,31 +2,31 @@
 /// @brief       invokedynamic 解密折叠：跑 BSM 求目标，就地改指令。
 ///
 /// 三段（SCAN / REWRITE / PROOF）与其余残留同一副骨架：scan 只读、rewrite 只写、
-/// proof 只判。差别在于 scan 里多了一步**模拟执行**——目标不是从字节码模式里
+/// proof 只判。差别在于 scan 里多了一步**模拟执行**，目标不是从字节码模式里
 /// 推出来的，是把引导方法真跑一遍算出来的。
 ///
 /// BSM 模拟骑的 jsim 桥已迁官方 `jsim/jbc.hpp`（jsim::jbcbridge::toSimMethod，
 /// 自建桥退役）；含 indy 的方法官方桥面整方法拒绝（UnsupportedOp），没有占
-/// 位兜底。模拟时 BSM 前三个形参（Lookup/name/MethodType）灌 Unknown——
-/// 「不知道」比「编一个」安全；静态参数灌实值，跑到底后读返回 CallSite 载
+/// 位兜底。模拟时 BSM 前三个形参（Lookup/name/MethodType）灌 Unknown，
+/// 不知道比编一个安全；静态参数灌实值，跑到底后读返回 CallSite 载
 /// 荷里的 MethodHandle 与其 reference_kind。模拟失败（跑不动 / 不是
 /// ConstantCallSite / 读不出句柄）计 bsmFailed。
 ///
-/// Site.insnPc 是 DOM order 下标而不是原始 pc——rewrite 按 order[insnPc]
+/// Site.insnPc 是 DOM order 下标而不是原始 pc，rewrite 按 order[insnPc]
 /// 定位后复核 op 仍是 INVOKEDYNAMIC 再动（同方法前站改写不位移 DOM 下标，
 /// 复核是防御性的）。scan 产出全部调用点并给不可折叠的记 why，便于观测失
 /// 败面；折叠三条件见头文件，任一不成立记 why 不猜。
 ///
 /// REWRITE 就地换指令（invokestatic/invokevirtual + setMember 换目标方法引
-/// 用，CP 只追加 intern），换不动把 op 还原——失败不留半截指令。无删除无
+/// 用，CP 只追加 intern），换不动把 op 还原，失败不留半截指令。无删除无
 /// 插入，pc 布局不变，调试属性与栈帧无需重定位；lowerMethod 失败整类放弃
 /// 回写。不压缩常量池：BootstrapMethods 仍引用 BSM 句柄与密文参数，压缩会
 /// 把活条目当死数据搬走；清属性是另一个 pass 的事。
 ///
 /// 已知边界：Special/Interface 句柄不折（换指令要动 this 槽栈语义，收益配
-/// 不上风险）；非 ConstantCallSite（可变调用点）不折——目标可能被运行期
+/// 不上风险）；非 ConstantCallSite（可变调用点）不折，目标可能被运行期
 /// 换掉，静态改写不安全。BSM 引用容器内解密方法时，先跑整链前序
-/// （ConstantCall 折解密体）不改变本残留结论——BSM 模拟自带 str/num/
+/// （ConstantCall 折解密体）不改变本残留结论，BSM 模拟自带 str/num/
 /// reflect/indy 扩展，解密在模拟里直接算出来，不依赖调用点侧折叠。单轮不
 /// 迭代：改写产出的普通 invoke 若又被混淆器包 indy（不存在此生成面），靠
 /// 整链重复。判据面向换代样本：现有语料 BSM 形态不在纯目标子集内时折叠
@@ -126,7 +126,7 @@ BsmValue readBsmArg(const jbc::core::ConstantPool& cp, ca::u32 index)
 }
 
 /// 把 BSM 的静态参数灌成 SimValue。前三个形参（Lookup/name/MethodType）给 Unknown
-/// ——折叠不需要它们，而「不知道」比「编一个」安全。
+/// ，折叠不需要它们，而不知道比编一个安全。
 bool materializeBsmArgs(const std::vector<jsim::ValType>& params,
                         const std::vector<BsmValue>& args, jsim::Session& session,
                         std::vector<jsim::SimValue>& out, std::string& why)
@@ -260,7 +260,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
 
         bool any = false;
         bool overBudget = false;   ///< 本类站点数超预算：余下站点不再跑 BSM
-        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置计数
         for (ca::usize mi = 0; mi < unit.methods.size() && !overBudget; ++mi) {
             if (!jbc::ir::hasCode(*session, mi)) continue;
             auto promoted = jbc::ir::promoteMethod(*session, mi);
@@ -272,7 +272,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
             for (ca::usize pc = 0; pc < order.size() && !overBudget; ++pc) {
                 const jbc::ir::Insn* in = cu->dom.peek(order[pc]);
                 if (in == nullptr || in->op != jbc::core::Op::INVOKEDYNAMIC) continue;
-                // 站点记账（1 站点 = 一次 BSM 模拟，引擎内部另有 4096 步上限）。
+                // 站点计数（1 站点 = 一次 BSM 模拟，引擎内部另有 4096 步上限）。
                 if (!budget.tick()) {
                     overBudget = true;
                     ++result.classesSkippedByBudget;
@@ -409,7 +409,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                 if (!session->setMember(*in, jbc::ir::ClassSession::MemberSem::Kind::Method,
                                         site->target.owner, site->target.name,
                                         site->target.desc)) {
-                    // 改不动就把 op 还原，保证「失败不留半截指令」。
+                    // 改不动就把 op 还原，保证失败不留半截指令。
                     in->op = jbc::core::Op::INVOKEDYNAMIC;
                     continue;
                 }

@@ -1,23 +1,23 @@
 /// @file        exc_bridge_restore_test.cpp
 /// @brief       残留 `exc_bridge_restore` 的三段判据测试（真值往返 + 反误伤
-///              互证 + 拒绝面字节恒等 + JVM -Xverify:all 实跑）。
+///              核对 + 拒绝面字节恒等 + JVM -Xverify:all 实跑）。
 ///
-/// 夹具是「缩小版 Grunt v3 ControlflowJump 异常桥产物形态」（jasm 现场汇编，
-/// 源算法锚 grunt3@e41e852 FlowExceptionBridgeInserter.kt，罐 A 13461 站点
-/// 实证同构）：合成 trap 块 `NEW java/lang/RuntimeException; DUP;
+/// 夹具是缩小版 Grunt v3 ControlflowJump 异常桥产物形态（jasm 现场汇编，
+/// 源算法锚 grunt3@e41e852 FlowExceptionBridgeInserter.kt，样本 A 13461 站点
+/// 验证同构）：合成 trap 块 `NEW java/lang/RuntimeException; DUP;
 /// INVOKESPECIAL <init>()V; ATHROW`（布局尾追加、相邻成排）、handler 块
 /// `POP; GOTO`（随机落位）、异常表项 catchType=RuntimeException 且保护区
 /// 恰罩 trap 四条；位置落入变体 = 生成面 goto 省略形（前驱 istore 落入
 /// trap 头）。
 ///
-/// 反误伤互证的证据链：真实 `catch (RuntimeException)` 的保护区是用户代码
-/// 段（非四条 trap 形）或 handler 带异常槽存储（ASTORE 非 POP）——形状钉
-/// 天然拒绝；桥间互证 = X 落点不得进任何候选桥受害者集。
+/// 反误伤核对的证据链：真实 `catch (RuntimeException)` 的保护区是用户代码
+/// 段（非四条 trap 形）或 handler 带异常槽存储（ASTORE 非 POP），形状钉
+/// 天然拒绝；桥间核对 = X 落点不得进任何候选桥受害者集。
 ///
 /// 覆盖分工：
 /// - SCAN：跳转边桥 / 位置落入桥（needsPin）/ 相邻双 trap 多站点 / 桥与
 ///   真实 try 区共存四形态定案；真实 RTE 区（区间长 + ASTORE handler）、
-///   外层保护区罩 trap 头（covered）、双桥互指 X（xInvalid）拒绝面逐桶记账；
+///   外层保护区罩 trap 头（covered）、双桥互指 X（xInvalid）拒绝面逐桶计数；
 /// - REWRITE：replaceAllUses 直连 + 位置落入 GOTO 钉 + 表项剔除 + 六指令
 ///   单批擦除；真实表项 end 锚吸附（snap forward）；拒绝面上容器字节逐位
 ///   不动；
@@ -325,8 +325,8 @@ std::string adjacentSource(const std::string& name)
            "}\n";
 }
 
-/// 覆盖门拒绝面：外层 Throwable 保护区罩住桥 trap 头（真实 try 区延伸到
-/// 追加 trap 上的变形）——派发歧义，桥整条拒。covered(0)=8；covered(x!=0)=6
+/// 覆盖检查拒绝面：外层 Throwable 保护区罩住桥 trap 头（真实 try 区延伸到
+/// 追加 trap 上的变形），派发歧义，桥整条拒。covered(0)=8；covered(x!=0)=6
 /// （外层 handler 先接住桥 trap 抛出的 RTE）。
 std::string coveredSource(const std::string& name)
 {
@@ -363,7 +363,7 @@ std::string coveredSource(const std::string& name)
            "}\n";
 }
 
-/// X 落点门拒绝面：双桥 handler 互指对方 trap 头（X 落进候选桥受害者集），
+/// X 落点检查拒绝面：双桥 handler 互指对方 trap 头（X 落进候选桥受害者集），
 /// 两桥全拒、字节原样。不可达面（夹具只做判据数据）。
 std::string mutualXSource(const std::string& name)
 {
@@ -409,7 +409,7 @@ std::string mutualXSource(const std::string& name)
 }
 
 /// JVM 实跑夹具：mixed + main（-Xverify:all 下跑还原前后，stdout 对照真值
-/// "105/7/5"——三条路径各一条：桥 / 真实 throw / 直落）。
+/// "105/7/5"，三条路径各一条：桥 / 真实 throw / 直落）。
 std::string jvmMixedSource(const std::string& name)
 {
     std::string src = mixedSource(name);
@@ -767,7 +767,7 @@ TEST(ExcJvm, RestoredBridgesRunAndVerify)
     model::ResourceContainer container =
         makeContainer({{"ExcJvmMixed", jvmMixedSource("ExcJvmMixed")}});
 
-    // 还原前夹具自证：桥形态在 -Xverify:all 下实跑即真值（105/7/5——桥路 /
+    // 还原前夹具自证：桥形态在 -Xverify:all 下实跑即真值（105/7/5，桥路 /
     // 直落路 / 真实 throw 路）。
     const auto [rc0, out0] = runJavaVerify(classBytes(container, "ExcJvmMixed.class"),
                                            "ExcJvmMixed");

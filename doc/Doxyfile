@@ -3,11 +3,11 @@
 # 分层口径同家族（mjbase/libjbc）：/// 注释是单个 pass/单个符号的背景与定位，
 # doc/*.rst 是行为账与 pass 规格。两站各自构建，RST 站不归 Doxygen 管。
 #
-# 路径按「从仓根执行 doxygen doc/Doxyfile」写；Doxygen 的相对路径以当前
+# 路径按从仓根执行 doxygen doc/Doxyfile写；Doxygen 的相对路径以当前
 # 工作目录为基准，不以本文件位置为基准。
 #
-# 告警面：WARN_AS_ERROR=YES，但「未写注释」不算告警（EXTRACT_ALL +
-# WARN_IF_UNDOCUMENTED=NO）——门禁挡的是写错的文档（坏 @ref、坏命令、
+# 告警面：WARN_AS_ERROR=YES，但未写注释不算告警（EXTRACT_ALL +
+# WARN_IF_UNDOCUMENTED=NO），门禁挡的是写错的文档（坏 @ref、坏命令、
 # 参数名对不上），不是没写的文档。
 
 PROJECT_NAME           = "analysis-grunt"
@@ -26,7 +26,7 @@ WARN_AS_ERROR          = YES
 WARN_IF_UNDOCUMENTED   = NO
 WARN_IF_DOC_ERROR      = YES
 # 参数注释齐全度暂不进门禁（同 mjbase 口径）：WARN_IF_INCOMPLETE_DOC
-# （1.18 起默认 YES）挡的是「文档写了但漏了某个 @param」，存量注释非为
+# （1.18 起默认 YES）挡的是文档写了但漏了某个 @param，存量注释非为
 # doxygen 参数契约而写。收紧就改这一行为 YES 并逐模块补齐，不许半档。
 WARN_IF_INCOMPLETE_DOC = NO
 WARN_FORMAT            = "$file:$line: $text"

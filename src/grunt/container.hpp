@@ -1,7 +1,7 @@
 /// @file        container.hpp
 /// @brief       家族无关的画布：容器遍历、类会话开启、类字节回写。
 ///
-/// 这里只做「拿到字节 / 交出字节」这一层，不含任何 Grunt 知识，也不含任何
+/// 这里只做拿到字节 / 交出字节这一层，不含任何 Grunt 知识，也不含任何
 /// 残留判据。三个工具箱与各残留都从本文件取画布，避免各自写一遍
 /// `getResources` + `tag_cast` + `makeSessionFromBytes` 的三连。
 #pragma once
@@ -35,7 +35,7 @@ struct ClassEntry
 
 /// @brief 按资源序回调容器内全部非空类条目；非类资源与空条目直接跳过。
 ///
-/// pass 级时间片门（pass_clock，见该头注）：有活动片且已超墙时，余下类
+/// pass 级时间片检查（pass_clock，见该头注）：有活动片且已超墙时，余下类
 /// 不再下发（整类保守跳过），首停类 stderr 点名 + 逐类计数。
 template <class Fn>
 void forEachClass(const mjbase::model::ResourceContainer& container, Fn&& fn)
@@ -64,11 +64,11 @@ inline std::shared_ptr<jbc::ir::ClassSession> openSession(const std::vector<ca::
 ///
 /// jbc::ir::cp_compact 会对全部属性槽（类/字段/方法 + Code 嵌套）decodeAttr
 /// 以重映射注解内的 CP 引用，而 libjbc attr_codec 注解族解码互递归无界
-/// （mjbase #158 同源，上游挂账）：敌意深嵌注解不走 Result 错误通道，直接
+/// （mjbase #158 同源，上游遗留）：敌意深嵌注解不走 Result 错误通道，直接
 /// 栈溢出。故 compact 前对同一批槽位过一遍 attrSafeToDecode，任一注解族槽
-/// 越限即返回 false——调用方按既有 compact 失败通道「原样保真」跳过该类
+/// 越限即返回 false，调用方按既有 compact 失败通道原样保真跳过该类
 /// （CP 不重编号，字节不动）。Code 槽本身解码有界（非注解族），仅借它下探
-/// 嵌套属性；Code 解不开时放行——cp_compact 对它回 MalformedAttr，优雅。
+/// 嵌套属性；Code 解不开时放行，cp_compact 对它回 MalformedAttr，优雅。
 inline bool classAnnoDepthSafe(jbc::core::ClassFile& cf)
 {
     const auto slotsOk = [&](const std::vector<jbc::core::AttrSlot>& slots) {
@@ -113,9 +113,9 @@ inline const std::vector<ca::u8>* findClassBytes(
     return cls == nullptr ? nullptr : &cls->get();
 }
 
-/// @brief 容器内类条目数（proof 的类数门用）。
+/// @brief 容器内类条目数（proof 的类数检查用）。
 ///
-/// 计数挂起时间片：类数不增门必须看到全量类，不许被超墙截短。
+/// 计数挂起时间片：类数不增检查必须看到全量类，不许被超墙截短。
 inline ca::usize countClasses(const mjbase::model::ResourceContainer& container)
 {
     ca::usize           n = 0;

@@ -2,8 +2,8 @@
 /// @brief       SCAN 工具箱：纯常量装载识别与实参区收集。
 ///
 /// CONVENTION §7：跨残留复用只允许发生在工具箱。constant_call / predicate_fold
-/// 等残留共用「紧邻纯常量装载」这一区域判定；constant_call.cpp 内的同形私有
-/// 副本待迁移收敛（挂账）。collectArgs 跳过 NOP：本管线 squeeze 先行，蹦床
+/// 等残留共用紧邻纯常量装载这一区域判定；constant_call.cpp 内的同形私有
+/// 副本待迁移收敛（遗留）。collectArgs 跳过 NOP：本管线 squeeze 先行，蹦床
 /// NOP 化后遗留落点不驻栈，跳过即可让被压住的操作数区重新可见。
 #pragma once
 
@@ -31,7 +31,7 @@ using jbc::core::Op;
 ///        Integer）。原 7 个 pass 各自的 `constIntAt` 私有副本单源化至此。
 ///
 /// 只认 int 形装载：LDC2_W 是 long 形不收，String/Class 等引用形一律拒绝。
-/// 两种签名变体保形共存——Insn 变体是判定本体；CodeUnit 位置变体
+/// 两种签名变体保形共存，Insn 变体是判定本体；CodeUnit 位置变体
 /// （indy_restore / indy_decode 原形）只做位置界检与取指，随即落回 Insn 变体。
 inline bool decodeConstInt(const ir::ClassSession& s, const ir::Insn& in, ca::i32& out)
 {

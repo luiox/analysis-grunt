@@ -2,7 +2,7 @@
 /// @brief       残留 `constant_call` 的三段判据测试。
 ///
 /// 夹具一律用 jasm 源码现场汇编（`JvmJasmService::assemble`），不落二进制：
-/// 断言看的是「这段代码该不该折、折完长什么样」，源码形态比字节数组可读。
+/// 断言看的是这段代码该不该折、折完长什么样，源码形态比字节数组可读。
 ///
 /// 覆盖分工：
 /// - SCAN：折的条件逐条反证（非 static / void / synchronized / 实参非常量 /
@@ -114,7 +114,7 @@ model::ResourceContainer standardFixture()
     });
 }
 
-/// 子串出现次数。断言「只剩一条 X」必须用计数——`find("bipush 4")` 会被
+/// 子串出现次数。断言只剩一条 X必须用计数，`find("bipush 4")` 会被
 /// `bipush 49` 命中，前缀匹配在反汇编文本上不可靠。
 ca::usize countOf(const std::string& text, const std::string& needle)
 {
@@ -196,7 +196,7 @@ TEST(ConstantCallScan, FoldsValueThatNeedsConstantPool)
 TEST(ConstantCallScan, EvaluatesTargetBodyThatLoadsPoolConstants)
 {
     // 目标方法体自身带 ldc（值超 bipush/sipush 域）：求值器必须经会话常量池
-    // 解析出 100000，才能算出 3 * 100000。这条钉的是**前置能力**——求值器
+    // 解析出 100000，才能算出 3 * 100000。这条钉的是**前置能力**，求值器
     // 不支持 ldc 的话，所有方法体里带池常量的目标都会被静默拒掉。
     model::ResourceContainer container = makeContainer({
         {"fixture/Util",
@@ -355,7 +355,7 @@ TEST(ConstantCallScan, RejectsImpureTarget)
 
 TEST(ConstantCallScan, IgnoresTargetsOutsideContainer)
 {
-    // 容器外的目标是常态（JDK 方法遍地都是），连候选都不该进——不进 sites，
+    // 容器外的目标是常态（JDK 方法遍地都是），连候选都不该进，不进 sites，
     // 也不该刷进 rejects（否则拒绝面被无关调用淹没）。
     model::ResourceContainer container = makeContainer({
         {"fixture/Caller",
@@ -372,7 +372,7 @@ TEST(ConstantCallScan, IgnoresTargetsOutsideContainer)
 TEST(ConstantCallScan, RejectsTargetWhoseClassInitHasBody)
 {
     // invokestatic 是类的主动使用：删掉调用会改变 <clinit> 的执行时机。
-    // 目标类初始化器非空时必须拒绝——**跨类**调用照旧。
+    // 目标类初始化器非空时必须拒绝，**跨类**调用照旧。
     model::ResourceContainer container = makeContainer({
         {"fixture/Util",
          ".super java/lang/Object\n"
@@ -409,9 +409,9 @@ TEST(ConstantCallScan, RejectsTargetWhoseClassInitHasBody)
     EXPECT_NE(findReject(result, RejectReason::ClassInitPresent), nullptr);
 }
 
-/// proc 形夹具（boar 蹬床的最小闭环）：类带非中性 clinit，本类 helper 体是
+/// proc 形夹具（boar 转发的最小闭环）：类带非中性 clinit，本类 helper 体是
 /// `[iload a; iload b; invokestatic java/lang/Math.max (II)I; ireturn]`，
-/// 本类 caller 喂双常量——同类门豁免 + Math.max 接管两条扩面各钉一半。
+/// 本类 caller 喂双常量，同类检查豁免 + Math.max 接管两条扩面各钉一半。
 std::string procSource(const std::string& helperBody)
 {
     return ".super java/lang/Object\n"
@@ -444,8 +444,8 @@ std::string procSource(const std::string& helperBody)
 TEST(ConstantCallScan, KeepsSameClassCallWhenClassInitHasBody)
 {
     // 同类调用不触发初始化（JVMS 5.5：本类方法执行时类已在初始化中/已完成），
-    // 删调用不移时机——非中性 clinit 只豁免同类站点，跨类照旧拒绝。
-    // 这是 processor 键解锁链的门面：boar 全部可折蹬床站点都在非中性类里。
+    // 删调用不移时机，非中性 clinit 只豁免同类站点，跨类照旧拒绝。
+    // 这是 processor 键解锁链的检查面：boar 全部可折转发站点都在非中性类里。
     model::ResourceContainer container = makeContainer({
         {"fixture/Proc", procSource("      iload a\n"
                                     "      iload b\n"
@@ -476,7 +476,7 @@ TEST(ConstantCallScan, KeepsSameClassCallWhenClassInitHasBody)
 
 TEST(ConstantCallScan, FoldsMaxBackedHelper)
 {
-    // 蹬床体还原成 Math.max 调用（IndyRestore 后的 boar 形态）：求值器必须有
+    // 转发体还原成 Math.max 调用（IndyRestore 后的 boar 形态）：求值器必须有
     // Math.max 接管才算得出；否则整面在 EvalBadState 拒。
     model::ResourceContainer container = makeContainer({
         {"fixture/Proc", procSource("      iload a\n"
@@ -493,7 +493,7 @@ TEST(ConstantCallScan, FoldsMaxBackedHelper)
 
 TEST(ConstantCallRewrite, FoldsSameClassMaxHelperInPlace)
 {
-    // 同类 + 非中性 clinit + Math.max 蹬床：三条扩面合流的 boar 最小闭环，
+    // 同类 + 非中性 clinit + Math.max 转发：三条扩面合流的 boar 最小闭环，
     // 折完调用消失、字面量出现、脏类是本类。
     model::ResourceContainer container = makeContainer({
         {"fixture/Proc", procSource("      iload a\n"
@@ -513,7 +513,7 @@ TEST(ConstantCallRewrite, FoldsSameClassMaxHelperInPlace)
     const std::string after = disassemble(classBytes(container, "fixture/Proc.class"));
     EXPECT_EQ(countOf(after, "invokestatic fixture/Proc.proc"), 0u) << after;
     EXPECT_NE(after.find("bipush 9"), std::string::npos) << after;
-    // proc 蹬床本体与 clinit 不在本次改写面（折叠只动调用点区间）。
+    // proc 转发本体与 clinit 不在本次改写面（折叠只动调用点区间）。
     EXPECT_NE(after.find("invokestatic java/lang/Math.max"), std::string::npos) << after;
 }
 
@@ -547,7 +547,7 @@ TEST(ConstantCallRewrite, ClearsEveryArgumentPush)
     ASSERT_EQ(dirty.applied, 1u);
 
     const std::string after = disassemble(classBytes(container, "fixture/Caller.class"));
-    // 折完方法体只剩「装载字面量 + ireturn」：原来那两条 bipush 必须全没了。
+    // 折完方法体只剩装载字面量 + ireturn：原来那两条 bipush 必须全没了。
     EXPECT_EQ(after.find("invokestatic"), std::string::npos) << after;
     EXPECT_EQ(after.find("iadd"), std::string::npos) << after;
     EXPECT_EQ(countOf(after, "bipush"), 1u) << after;
@@ -624,7 +624,7 @@ TEST(ConstantCallProof, FailsWhenClassCountChanges)
     const ScanResult         scanned   = scan(container);
     const DirtySet           dirty     = rewrite(container, scanned);
 
-    // 传一个与现状不符的基线：类数门必须拒。
+    // 传一个与现状不符的基线：类数检查必须拒。
     const ProofResult verdict = proof(container, dirty, 1);
     EXPECT_FALSE(verdict.ok);
     ASSERT_FALSE(verdict.failed.empty());

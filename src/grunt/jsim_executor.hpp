@@ -3,27 +3,27 @@
 ///
 /// 引擎按设计 D9 只跑一个方法、不递归。但真实解密链不是单方法：
 /// `<clinit>` 建池 → decrypt 读池 → decrypt 里又 `invokestatic` 另一个解密
-/// 方法（Grunt 的 BSM 就是这么调的）。这条链只能由编排层把「调用」接住、
-/// 再开一个引擎实例跑下去——**引擎不递归，编排递归**。
+/// 方法（Grunt 的 BSM 就是这么调的）。这条链只能由编排层把调用接住、
+/// 再开一个引擎实例跑下去，**引擎不递归，编排递归**。
 ///
-/// 接法用 Session 的兜底解析口（callMockResolver）：认领「容器内、有码、
-/// 不是 `<init>`/`<clinit>`」的调用，弹实参、跑子方法、压回返回值。认不出就放行，
-/// 交回核心 Bail——不把缺环境吞成 Unknown。
+/// 接法用 Session 的兜底解析口（callMockResolver）：认领容器内、有码、
+/// 不是 `<init>`/`<clinit>`的调用，弹实参、跑子方法、压回返回值。认不出就放行，
+/// 交回核心 Bail，不把缺环境吞成 Unknown。
 ///
 /// 三条纪律：
 /// 1. **同一个 Session**：堆与静态字段跨方法共享，`clinit` 建的池子才能被
-///    decrypt 读到（这正是「接力棒」的语义）。
+///    decrypt 读到（这正是接力棒的语义）。
 /// 2. **深度与步数预算**：解密方法之间可能互相调用，没有闸门就是栈溢出。
 /// 3. **失败即失败**：子方法 Bail 直接向上传，不返回半截值。
 ///
 /// 分层红线：本文件**只依赖 jsim 核心**，不认识任何扩展包。String 怎么拼、
-/// Integer 怎么解析，是调用方的事——`exec.session()` 交出去，谁需要谁装：
+/// Integer 怎么解析，是调用方的事，`exec.session()` 交出去，谁需要谁装：
 ///
 ///     SimExecutor exec(container);
 ///     jsim::str::install(exec.session());     // 需要 String 才装
 ///     jsim::num::install(exec.session());     // 需要 Integer 才装
 ///
-/// 编排层如果替调用方装包，就等于把扩展包钉进了框架——那样「可选」是假的。
+/// 编排层如果替调用方装包，就等于把扩展包钉进了框架，那样可选是假的。
 #pragma once
 
 #include <cstdlib>
@@ -46,7 +46,7 @@ namespace grunt {
 /// @brief 方法描述符 → 参数值类型序列（引用类型含数组一律折 Ref）。
 ///
 /// 解析用 libjbc 官方描述符解析器（jbc::type，JVMS 4.3 语法真源）打底，这里
-/// 只做 TypeDesc → jsim::ValType 的映射——自建的逐字符解析已随 jsim_bridge
+/// 只做 TypeDesc → jsim::ValType 的映射，自建的逐字符解析已随 jsim_bridge
 /// 退役。解析失败返回 false，不产出半份序列。
 inline bool paramTypesOfDesc(std::string_view desc, std::vector<jsim::ValType>& out)
 {
@@ -99,7 +99,7 @@ public:
     };
 
     // 单参委托形：`Limits{}` 放 mem-initializer（完整类上下文）而非默认实参
-    // ——后者在外围类定义内取嵌套类默认成员初始化器，ill-formed（MSVC 放行，
+    // ，后者在外围类定义内取嵌套类默认成员初始化器，ill-formed（MSVC 放行，
     // gcc/clang 拒，CI 实锤）。
     explicit SimExecutor(const mjbase::model::ResourceContainer& container)
         : SimExecutor(container, Limits{})
@@ -195,7 +195,7 @@ private:
     /// @brief 取（或建）一个方法的模拟视图。方法体自持字符串，会话可随即释放。
     ///
     /// 桥口径 = libjsim 官方（jsim::jbcbridge::toSimMethod）：含 invokedynamic /
-    /// athrow / jsr/ret 的方法整方法不桥（UnsupportedOp）——此前自建桥对 indy
+    /// athrow / jsr/ret 的方法整方法不桥（UnsupportedOp），此前自建桥对 indy
     /// 是占位 CallRef、对 athrow 原样搬运，都要等运行期触达才拒；官方口径把
     /// 拒绝提前到桥面，仍是失败即失败，只是失败得更早、原因更显式。
     const jsim::Method* buildMethod(jbc::ir::ClassSession& s, ca::usize index)
@@ -258,7 +258,7 @@ private:
     /// @brief 认领条件：容器内有这个类、这个方法、且有码。
     ///
     /// `<init>`/`<clinit>` 不认领：跑构造器等于把对象状态编一半，跑类初始化
-    /// 会把 clinit 的副作用提前——两者都不是「求一个返回值」的语义。
+    /// 会把 clinit 的副作用提前，两者都不是求一个返回值的语义。
     jsim::CallMock* resolve(const jsim::CallRef& callee, jsim::Frame& frame)
     {
         (void)frame;
@@ -272,7 +272,7 @@ private:
 
         const jsim::Method* target = methodOf(callee.owner, callee.name, callee.desc);
         if (target == nullptr) {
-            mocks_.emplace(key, std::nullopt);   // 记下「不可认领」，避免重复解析
+            mocks_.emplace(key, std::nullopt);   // 记下不可认领，避免重复解析
             return nullptr;
         }
 
@@ -317,7 +317,7 @@ private:
         }
         const jsim::Method& code = it->second.method;
 
-        // 结果缓存：只对「参数全 Known 且不含堆对象」的调用缓存——objId 是会话
+        // 结果缓存：只对参数全 Known 且不含堆对象的调用缓存，objId 是会话
         // 内的单调序号，拿它当键会命中错对象。
         const std::string cacheKey = makeCacheKey(key, args);
         if (!cacheKey.empty()) {
