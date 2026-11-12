@@ -1,5 +1,20 @@
 /// @file        flags_strip.cpp
 /// @brief       残留 `flags_strip` 的三段实现：SCAN / REWRITE / PROOF。
+///
+/// 判据等级：S2 结构事实（编译器不可能生成的标志组合）。Scan 纯读：逐类
+/// 开只读会话直接看 backing 的 `ClassFile`（不 promote，方法体与本残留
+/// 无关），成员判据见 `memberFlagsClearable`；站点用 backing 索引定位，
+/// 掩码在 scan 定死。保守面（不收站点）：实例方法的 `ACC_BRIDGE`（可能是
+/// 真实泛型桥接器）、实例成员的 `ACC_SYNTHETIC`（`this$0` 等）、类级
+/// `ACC_SYNTHETIC`。
+///
+/// Rewrite 纯写：按 uri 分组，逐类开会话 → **按 scan 给的掩码清位**（不
+/// 回看判据，rewrite 只消费 ScanResult）→ `writeClass` → 回写容器。无
+/// promote/lower：不改方法体，没有重定位面。索引越界的站点计数
+/// （`sitesOutOfRange`）不猜。
+///
+/// Proof：类数不增 + 脏类逐个可重新解析（与 constant_call 同一口径）。标志
+/// 清理不改字节码结构，无帧重算面，逐类加载校验由语料回归覆盖。
 #include "grunt/flags_strip.hpp"
 
 #include <string_view>

@@ -1,5 +1,36 @@
 /// @file        predicate_fold.cpp
 /// @brief       残留 `predicate_fold` 的三段实现：SCAN / REWRITE / PROOF。
+///
+/// ## 数据流与裁决
+///
+/// `Site{uri, methodIndex, branchSrcPc, branchOp}` → `DirtySet{uris, sites,
+/// attempted, failed, skippedByRoundTrip}`。裁决表：if 系按操作数与 0（或
+/// 双操作数互比，深槽 vs 顶槽）裁决；tableswitch 取 `lo ≤ key < lo+span`
+/// 的臂否则 default；lookupswitch 命中 `keys[i]` 取臂否则 default。
+///
+/// ## 复核纪律与写回
+///
+/// rewrite 不信 scan 的区域收集结果：按 `srcPc+op` 重定位分支后**重新收
+/// 操作数区、重新裁决**——同方法前面的站点改写后（首条变 ICONST_0 / NOP）
+/// 后续站点的紧邻关系可能已变，盲改就是半截改写。
+///
+/// 写回是类级批驱动：逐方法 promote → DOM 改写 → 全部方法 lower 成功才
+/// `writeClass`（任一失败整类放弃，session 丢弃，半改写态不外泄）。**不走
+/// `mutateMethodWithFrames` 的 Strict 帧再生**：改写不新增合并点、不新增
+/// 帧位（TAKEN 的 `IFEQ` 目标是原分支目标，本来就有帧；延续段经条件跳转
+/// 的 fallthrough 保持可达），旧 SMT 由 lower 的 pcmap 重定位即真值——被
+/// 擦区域对栈的净效应为零（操作数全部被分支消费），后继帧内容无需变更。
+///
+/// 这条契约的前提是形状纪律：**改写不得引入无条件跳转、不得新增合并点**。
+/// HotSpot 线性走查要求无条件跳转之后的段首带帧，而本 pass 不再生 SMT——
+/// 一旦破例插 `goto`，被擦延续段的段首无帧，导出即
+/// `Expecting a stack map frame`。NOT-TAKEN 折叠留下的分支目标死块带原帧，
+/// 中间态合法，由下游 `grunt.DeadCode` 清理。
+///
+/// ## 已知边界
+///
+/// - `ifnull/ifnonnull/if_acmp*`：引用判空不可静态确定，不在范围。
+/// - 操作数区中段有标签 = 合并点，整站放弃。
 #include "grunt/predicate_fold.hpp"
 
 #include <set>

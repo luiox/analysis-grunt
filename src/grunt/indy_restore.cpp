@@ -2,9 +2,61 @@
 /// @brief       残留 `indy_restore` 三段实现：键链三路（S2）→ 参数解密
 ///              （纯算术直解）→ S1 互证 → heavy Era 门 → 三态原地改写。
 ///
-/// 判据分级、键链三路与材料通道边界见头文件；骨架对齐 indy_decode /
+/// 形态、判据分级、键链三路与材料通道边界见头文件；骨架对齐 indy_decode /
 /// string_pool_fold：scan 只读、rewrite 只写（mutateMethodWithFrames 正统
 /// 帧链写回）、proof 只判（类数不增 + 脏类可重解析 + residual 统计）。
+///
+/// ## 扫描管线（每类一遍，纯读）
+///
+/// collectClassKeys 先建类内键表：(String;)String 方法 promote 后
+/// scanDecryptKey 提窗口（i2c 回溯两层，布局序 = DOM order，与 indy_decode
+/// 同源）——单层 `LDC K; IXOR` 记 Plain；`LDC K; INVOKESTATIC <self> ()I;
+/// IXOR; IXOR` 记 Material（记原始 K）；`LDC A; LDC B; IXOR; IXOR`（reobf
+/// 折叠键）记 Plain(A^B)。无方法体 / promote 失败 / 无窗口进
+/// deadStringMethods（族推导 c2 的家族证据）。BSM 方法体在场才进表：
+/// simple 取体首条直调本类 (String;)String 的解密器；heavy 取
+/// (String;I)String 紧前的 int 常量 generalKey。judgeSite 粗找 =
+/// INVOKEDYNAMIC 全量起锚，细找按 S2 desc 指纹 → 键链 → S1 解密 + desc 互
+/// 证 → S3 heavy Era 门 + magic 自证 → 接口旁证（容器普查优先 / `--jdk`
+/// 注入的 JDK 接口集双向作证 / 两无 fail-closed）。JDK 接口集由 adapter 在
+/// Era 非 Unknown 时注入（scanJdkInterfaces 与 indy_decode 单源），残留本
+/// 体零文件系统副作用。
+///
+/// ## 族推导只认 c1/c2 两条边
+///
+/// c1：解密器名 D 满足 len(D) = len(BSM名) - 3 且 BSM 名 substr(2) 前缀 ==
+/// D。c2（plain BSM 壳被 NativePipeline 摘成 ACC_NATIVE 空壳时）：材料
+/// BSM 名 N 与解密器名 M 满足 len(M) = len(N)+1 且 M 去尾 == N 去头，且
+/// deadStringMethods 里有同名死方法佐证。c2 的 key 正确性源锚是生成面两分
+/// 支烧同一 decryptKey 常量（材料通道 LDC 是异或前的原始 key，plain 站点
+/// 可直接用）。**不认** plainDecryptName（len-4）这条边：它由路由 1 的同
+/// 名面覆盖，混进族推导会把材料 BSM 的站点误接到 plain 解密器上——解出垃
+/// 圾死在 S1 虽然不会误改，但拒绝记账口径被污染。
+///
+/// ## 解密与编码
+///
+/// 密文是逐 UTF-16 码元自逆 XOR，纯算术 C++ 转写直解（无 jsim 面）。
+/// MUTF-8 直解不过严格 UTF-8：密文里合法存在 Java 孤立代理码元（classfile
+/// 以 3 字节 CESU-8 形承载），严格解码器会拒真；与 indy_decode 的同名面同
+/// 形独立实现。heavy 的 `data1 % 59557` 自证按 parseIntStrict 后取模复算
+/// （data1 恒非负，JVM IREM 与 C++ % 在同号域语义一致）。
+///
+/// ## REWRITE
+///
+/// 站点按 uri 聚类，roundTripSafe 前置门；rewriteSite 按 indySrcPc 重定位
+/// 并复核仍是 INVOKEDYNAMIC，然后纯原地换 op + setMember——不插指令（v2/
+/// v3 无 spill 面，virtual 的 receiver 槽就是 indy 首参）。换指令失败把 op
+/// 还原，不留半截。形态计数在类写回成功后归账（类级放弃不许虚报站点，
+/// 对齐 indy_decode 口径）。
+///
+/// ## 边界与不做
+///
+/// 材料通道不猜（见头文件）。v2 专面不建：heavy 的 @GruntMetadata 注解名
+/// 可配置、heavy 关闭时注解类不生成，不能当版本判据——probeEra 的 Grunt2
+/// 判据因此在 era.hpp 明文挂缺（缺口 #15 口径），v2 现场的 heavy 面不激
+/// 活（simple 面两代同源自证，不挂 Era）。BSM / 解密器 / @Metadata 注解清
+/// 理不做：改写只动调用点，指纹条目交 DeadMember 引用普查与 metadata-strip
+/// 类面。
 
 #include "grunt/indy_restore.hpp"
 

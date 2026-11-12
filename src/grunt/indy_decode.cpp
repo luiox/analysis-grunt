@@ -2,9 +2,52 @@
 /// @brief       残留 `indy_decode` 三段实现：key 提取（S2）→ mode/extra 表
 ///              分派（S3，knowledge 表）→ desc 互证（S1）→ 7 形态改写。
 ///
-/// 判据分级与插入式改写的锚保留/槽位面设计见头文件；骨架对齐 indy_fold /
-/// number_fold：scan 只读、rewrite 只写（mutateMethodWithFrames 正统帧链
-/// 写回）、proof 只判（类数不增 + 脏类可重解析 + residual 统计）。
+/// 形态、判据分级与插入式改写的锚保留/槽位面设计见头文件；骨架对齐
+/// indy_fold / number_fold：scan 只读、rewrite 只写（mutateMethodWithFrames
+/// 正统帧链写回）、proof 只判（类数不增 + 脏类可重解析 + residual 统计）。
+///
+/// ## 注入面
+///
+/// 文件系统副作用（JDK 接口普查）收敛在 scan 之前：CLI `--jdk` 传入 JDK
+/// 根，adapter 在 probeEra 判为 Kasumi 时才扫描注入；残留本体零文件系统遍
+/// 历。jdkInterfaces 为空 = 无任何旁证——virtual 站点目标不在容器时整站
+/// fail-closed 拒绝（invokevirtual 误调接口方法运行时
+/// IncompatibleClassChangeError，fail-closed 优先于覆盖率）。
+///
+/// ## SCAN
+///
+/// 两轮：第一轮全容器普查（各类 access 位收接口集、逐方法收解密器 key 与
+/// BSM→解密器映射），第二轮逐方法逐 INVOKEDYNAMIC 判定；key 按内部类名归
+/// 账。S2 双钉选面：BSM 8 参描述符指纹（scan_tools::bsmEntries 读
+/// BootstrapMethods）+ 解密器体形（i2c 回溯两层 ixor 取常量异或，兼容单
+/// 层）；指纹不钉的 indy 静默跳过——非本家调用点不记账。Era 门：probeEra
+/// ≠ Kasumi 整站拒绝；mode/extra 表是 S3 换代面，Era 分支是它唯一合法的
+/// 落点。key 链 bsmDecrypt[bsm] → dec → decryptors[dec] = key（BSM 体里第
+/// 一条直调本类 (String;)String 的 invokestatic 即映射），任一环断 =
+/// keyMissing。bsmArgs 恰 5 个 [Integer,String,String,String,Integer]，不
+/// 符 = malformedArguments。
+///
+/// 解密是自写 MUTF-8 码元解码：孤立代理是合法形态（库的严格 UTF-8 解码会
+/// 拒真），逐码元 XOR key 低 16 位后按 Java 规则重编码；owner 点分转内部
+/// 名。ctor 的 encDesc 解出空 → init desc 由 indy 描述符参数段合成（描述
+/// 符里 `)` 只在参数段尾出现一次，取最后一个）。S1 互证见头文件，不符 =
+/// descMismatch 桶。
+///
+/// ## REWRITE
+///
+/// 按 uri 聚合，roundTripSafe 前置门（未改会话先往返，跑不完整方法整方法
+/// 跳过）。纯原地三形态（static/getstatic/putstatic）换 op + setMember 换
+/// CP 引用（先 intern 后动 DOM），srcPc 保留；换不动则 op 还原——失败不
+/// 留半截指令。插入式四形态见头文件：indy 本体原地换指令，spill/reload
+/// （或 NEW;DUP）序列插在 indy 之前，spill 槽从 cu->maxLocals 起排、成功
+/// 后抬到新水位（超 u16 整站放弃）；插入失败 eraseBatch 回滚再报 failed。
+/// 帧链失败粒度 = 类，7 形态分列计数只在类写回成功后归账。
+///
+/// ## 已知边界
+///
+/// 解密产物空 owner / 非 ctor 空 name → decodeFailed 拒绝，不猜。解密器形
+/// 状变体（i2c 前多一层算术等）不认——换代面，Era 门兜底整站拒绝。
+/// ConstantCallSite 假设：可变调用点形态不在面内。
 
 #include "grunt/indy_decode.hpp"
 

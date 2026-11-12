@@ -42,10 +42,31 @@
 ///
 /// ## 改写（rewrite）
 ///
-/// 锚点（跨度首条装载）原地改成结果常量装载（保 srcPc），跨度其余非 NOP
-/// 指令擦除（eraseBatch kRejectIfUsed：受害者被异常表引用即整站放弃）。
-/// 不新增合并点、不插跳转；帧链走 mutateMethodWithFrames 正统写回。改写不
-/// 在本轮展开嵌套跨度（rewrite 只消费 ScanResult），整链重复跑收敛。
+/// 按 `srcPc+op` 重定位锚点后**全量复核**：重新钉形状、重新求值、值与站点
+/// 一致才动——同方法前站改写后不盲改。锚点（跨度首条装载）原地改成结果
+/// 常量装载（保 srcPc，下游 pcmap/调试行落点不变），跨度其余非 NOP 指令
+/// 擦除（eraseBatch kRejectIfUsed：受害者被异常表引用即整站放弃）。NOP
+/// 遗留落点不动，DeadCode 收尾。帧链走 mutateMethodWithFrames 正统写回
+/// （prepare → lower → Strict 帧再生；前置门 `roundTripSafe`——原样往返
+/// 不了的方法不进改写面）。改写不在本轮展开嵌套跨度（rewrite 只消费
+/// ScanResult），整链重复跑收敛。
+///
+/// 类字节**流式就地回写**：折叠成功即 `ClassResource::set` 原位换字节
+/// （容器映射不动），不设待写缓冲——万类大罐上全量脏类字节驻留是 GB 级
+/// 账，流式写回削平峰值；`uris` 聚类条目处理后即弃。
+///
+/// ## 已知边界
+///
+/// - `parseUnsignedLong` 的 `+`/`-` 号前缀语义（Java 8+）不收：生成面不
+///   产出，收了反而给判据开口子。
+/// - NaN 位形不特判：`intBitsToFloat` 对 NaN 载荷的规范化 JVM 有自由度，
+///   LDC 位形与运行期换算在载荷位上可差——控制流不受影响，不设门。
+/// - 嵌套跨度（折叠产物再成跨度）靠整链重复跑到站点归零，不在单轮内迭代。
+/// - fconst/dconst 起头的跨度不存在（生成面只从整型/字符串键起锚）——
+///   锚点类型门直接排除。
+/// - GETSTATIC 喂给位拼不收：v2 语料的跨度常量被 ConstPoolEncrypt 改写成
+///   伴生池字段读取，跨度不再封闭（值在池字段里），缺口 #5 实现前
+///   fail-closed；语料余量逐桶记账见 corpus-ledger §2 #8。
 #pragma once
 
 #include <string>

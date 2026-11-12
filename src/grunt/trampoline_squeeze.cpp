@@ -1,5 +1,18 @@
 /// @file        trampoline_squeeze.cpp
 /// @brief       残留 `trampoline_squeeze` 的三段实现：SCAN / REWRITE / PROOF。
+///
+/// `Site{uri, methodIndex, srcPc, wide}` → `DirtySet{uris, squeezed,
+/// attempted}`。SCAN：逐方法 promote 后按 order 遍历，「goto 目标即顺序
+/// 后继」即收站点。REWRITE：按 uri 聚合 → 逐方法一次 promote，按 `srcPc`
+/// 重定位站点，**复核判据**（同方法其他站点改写后布局可能变，句柄判据
+/// 重推）→ 清指令后置 `NOP` + 保 `srcPc` → 逐方法 `lowerMethod`（失败整类
+/// 放弃）→ `writeClass`。PROOF：`proof_tools::classesIntact`。
+///
+/// ## 为什么 NOP 而不是擦除
+///
+/// NOP 化零布局扰动：帧/行号锚不动，不触发 lower 的属性重定位失败路径。
+/// 缩布局的收益留给 dead_code（非 indy 擦除）统一拿。目标在方法末尾之外
+/// （`t.isEnd()`）不是蹦床，跳过。
 #include "grunt/trampoline_squeeze.hpp"
 
 #include <set>
