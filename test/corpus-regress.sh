@@ -6,8 +6,8 @@
 #
 # 用法：CORPUS=<dir> ./test/corpus-regress.sh
 #      NO_VERIFY=1 跳过校验器（无 JDK 环境）
-#      JAR_TIMEOUT=120 单罐上限秒数（0 = 不限时）；超时记 FAIL run 继续下一罐
-#      ONLY=<glob> 只跑名字匹配的罐（bash case 语义：? * [] 都是通配符，全名匹配 basename；
+#      JAR_TIMEOUT=120 单 jar 上限秒数（0 = 不限时）；超时记 FAIL run 继续下一 jar
+#      ONLY=<glob> 只跑名字匹配的 jar（bash case 语义：? * [] 都是通配符，全名匹配 basename；
 #                  字面 [ 要转义成 \[，或设 ONLY_LITERAL=1 按字面匹配免转义）；空 = 全跑
 #      EXTRA_ARGS="--jdk <path>" 追加给 CLI 的额外参数（空格分隔，如 IndyDecode
 #                  的接口旁证注入面）；路径含空格不支持
@@ -37,8 +37,8 @@ total=0
 for jar in "$CORPUS"/*.jar; do
     [ -e "$jar" ] || continue
     name="$(basename "$jar" .jar)"
-    # 续跑过滤：只跑名字匹配 ONLY 的罐（空 = 全跑）。
-    # ONLY_LITERAL=1 时按字面整名比较（不走 case 通配），罐名自带
+    # 续跑过滤：只跑名字匹配 ONLY 的 jar（空 = 全跑）。
+    # ONLY_LITERAL=1 时按字面整名比较（不走 case 通配），jar 名自带
     # [ ] * ? 等字符时不用转义；默认走 case 通配（? * [] 都是元字符）。
     if [ -n "${ONLY:-}" ]; then
         if [ "${ONLY_LITERAL:-0}" = "1" ]; then
@@ -54,13 +54,13 @@ for jar in "$CORPUS"/*.jar; do
     name="$(basename "$jar" .jar)"
     dst="$OUT/$name.out.jar"
 
-    # 单罐上限：循环互卡 / 死循环罐用 timeout 兜底，超时记 FAIL run 继续。
-    # shellcheck disable=SC2086 —— EXTRA_ARGS 有意按空白拆分。
+    # 单 jar 上限：循环互卡 / 死循环 jar 用 timeout 兜底，超时记 FAIL run 继续。
+    # shellcheck disable=SC2086 ， EXTRA_ARGS 有意按空白拆分。
     if ! timeout "${JAR_TIMEOUT:-0}" "$CLI" -i "$jar" -o "$dst" -p "$PASSES" ${EXTRA_ARGS:-} 2>"$OUT/$name.err"; then
         # 噪声分离：文件在场但 CLI 报 NotFound 是 Windows ANSI argv 对非 ASCII
-        # 罐名的编码错配（导入口拿错路径），不是本链的 run 失败——记 SKIP 不计账。
+        # jar 名的编码错配（导入口拿错路径），不是本链的 run 失败，记 SKIP 不计账。
         if grep -q "NotFound" "$OUT/$name.err" 2>/dev/null && [ -e "$jar" ]; then
-            echo "SKIP argenc $name（罐名编码错配，文件在场）"
+            echo "SKIP argenc $name（jar 名编码错配，文件在场）"
             continue
         fi
         echo "FAIL run   $name"
@@ -69,7 +69,7 @@ for jar in "$CORPUS"/*.jar; do
         continue
     fi
 
-    # 类数不增（空壳类摘除允许减少，减少打 INFO 台账）：用 unzip -l 数 .class 条目
+    # 类数不增（空壳类摘除允许减少，减少打 INFO 统计）：用 unzip -l 数 .class 条目
     before=$(unzip -l "$jar" 2>/dev/null | grep -c '\.class$')
     after=$(unzip -l "$dst" 2>/dev/null | grep -c '\.class$')
     if [ "$after" -gt "$before" ]; then
@@ -84,7 +84,7 @@ for jar in "$CORPUS"/*.jar; do
     if [ "${NO_VERIFY:-0}" != "1" ] && command -v java >/dev/null 2>&1; then
         # 不带 --quiet：FAIL 类名行是基线对比的原料。
         if ! timeout "${JAR_TIMEOUT:-0}" java -Xverify:all "$ROOT/test/tools/VerifyJar.java" "$dst" >"$OUT/$name.verify" 2>&1; then
-            # 噪声分离：对原始输入预检，只把「新增失败」记 FAIL verify——
+            # 噪声分离：对原始输入预检，只把新增失败记 FAIL verify，
             # 混淆产物原生不可验证（基线同挂）不算本链的账。
             timeout "${JAR_TIMEOUT:-0}" java -Xverify:all "$ROOT/test/tools/VerifyJar.java" "$jar" \
                 >"$OUT/$name.verify0" 2>&1

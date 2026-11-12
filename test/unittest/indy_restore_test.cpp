@@ -1,25 +1,25 @@
 /// @file        indy_restore_test.cpp
 /// @brief       残留 `indy_restore` 的三段判据测试（真值往返 + 键链三路 +
-///              heavy @Metadata 互证 + 拒绝面反证）。
+///              heavy @Metadata 核对 + 拒绝面反证）。
 ///
-/// 夹具是「缩小版 Grunt v2/v3 indy 形态」（jasm 现场汇编，不落二进制、不
+/// 夹具是缩小版 Grunt v2/v3 indy 形态（jasm 现场汇编，不落二进制、不
 /// 依赖语料目录）：每类自带 7 参 BSM（desc 逐字取 knowledge 的
 /// kGruntSimpleBsmDesc / kGruntHeavyBsmDesc）+ `(String;)String` XOR 解密器
 /// （单层 `charAt; LDC K; IXOR; i2c` 窗口）；密文串以 \uXXXX 转义落 jasm 源
 /// （encrypt 自逆：夹具侧用同一 XOR 造密文，C++ 侧解出真值 owner/name/desc）。
 ///
 /// 键链三路各一夹具：BSM 体跟随（v2/v3 常态）、同名直连（v3 plainDecryptName
-/// == plainBsmName）、名字族推导（BSM 名 B 的解密器名 = B[2, len-1)——grunt3
+/// == plainBsmName）、名字族推导（BSM 名 B 的解密器名 = B[2, len-1)，grunt3
 /// e41e852 ReferenceObfuscate.kt L216 生成面）+ c2 材料捐赠（plain 解密器壳
-/// 死、material 解密器 LDC 同一原始 key——源锚 createDecryptMethod 两分支同
+/// 死、material 解密器 LDC 同一原始 key，源锚 createDecryptMethod 两分支同
 /// 一 decryptKey）。heavy 夹具：owner 类挂 @Metadata（mv=100 + d1/d2 数组，
 /// d1 = encrypt("59557*q+magic2", magic2)、d2 = encrypt("name<>desc", magic1)），
 /// BSM 体 LDC generalKey。
 ///
 /// 覆盖分工：
-/// - SCAN：键链三路 + 解密 + desc 互证 → 站点成立（static/virtual 两态）；
-///   参数畸形 / kind 位越界 / desc 互证不符 / Era 未判 / magic 互证失配 /
-///   owner 无 @Metadata / 接口无旁证 → 拒绝面逐桶记账；
+/// - SCAN：键链三路 + 解密 + desc 核对 → 站点成立（static/virtual 两态）；
+///   参数畸形 / kind 位越界 / desc 核对不符 / Era 未判 / magic 核对失配 /
+///   owner 无 @Metadata / 接口无旁证 → 拒绝面逐桶计数；
 /// - REWRITE：static 原地换 invokestatic；virtual 原地换 invokevirtual /
 ///   invokeinterface（纯原地：receiver 槽就是 indy 首参）；拒绝面上容器字节
 ///   逐位不动；
@@ -53,7 +53,7 @@ constexpr ca::i32 kKey = 0x2A17;
 constexpr ca::i32 kGeneralKey = 777;
 constexpr ca::i32 kMagic1     = 4242;
 constexpr ca::i32 kMagic2     = 2345;
-/// data1 = 59557 * q + magic2（q=7）——d1 解出后 `data1 % 59557 == magic2`
+/// data1 = 59557 * q + magic2（q=7），d1 解出后 `data1 % 59557 == magic2`
 /// 必须自证命中。
 constexpr ca::i64 kData1 = 59557LL * 7 + kMagic2;
 
@@ -133,7 +133,7 @@ const std::vector<ca::u8>& classBytes(const model::ResourceContainer& container,
 ///        plain    = 单层窗口 `charAt; LDC K; IXOR; I2C`；
 ///        material = v3 材料通道 `charAt; LDC K; INVOKESTATIC mk ()I; IXOR;
 ///                   IXOR; I2C`（K 是异或前的原始 decryptKey）；
-///        dead     = 无窗口体（family 推导的「壳死家族证据」）；
+///        dead     = 无窗口体（family 推导的壳死家族证据）；
 ///        none     = 方法不在场。
 std::string decMethod(const std::string& hostName, const std::string& decName,
                       const std::string& shape)
@@ -165,7 +165,7 @@ std::string decMethod(const std::string& hostName, const std::string& decName,
            "  }\n";
 }
 
-/// @brief v3 材料键方法（`LUSHR 32; LXOR; IXOR` 的运行期材料面——静态不可解，
+/// @brief v3 材料键方法（`LUSHR 32; LXOR; IXOR` 的运行期材料面，静态不可解，
 ///        夹具只供形状归属）。
 std::string mkMethod()
 {
@@ -260,7 +260,7 @@ std::string virtualArgsOk(ca::i32 key = kKey)
            + "\", \"" + xorEscape("()Z", key) + "\", 1";
 }
 
-/// @brief heavy BSM + heavy 解密器（体面不参与判据——generalKey 在 BSM 体
+/// @brief heavy BSM + heavy 解密器（体面不参与判据，generalKey 在 BSM 体
 ///        `LDC K; INVOKESTATIC (String;I)String` 窗口里）。
 std::string heavyMethods(const std::string& hostName, const std::string& bsmName)
 {
@@ -298,7 +298,7 @@ std::string heavyCaller(const std::string& hostName, const std::string& bsmName,
 }
 
 /// @brief heavy 实参（真值：owner=MetaOwner 经 generalKey 一层；magic 对由
-///        kData1/kMagic1/kMagic2 互证）。
+///        kData1/kMagic1/kMagic2 核对）。
 std::string heavyArgsOk(ca::i32 generalKey = kGeneralKey)
 {
     return "\"" + xorEscape("MetaOwner", generalKey) + "\", " + std::to_string(kMagic1)
@@ -338,7 +338,7 @@ std::string metaOwnerSource(ca::i64 data1 = kData1, ca::i32 magic1 = kMagic1,
 }
 
 /// @brief @Metadata 注解类（mv/d1/d2 抽象方法三件套）。判据只看方法形状
-///        （名字 + 描述符），ACC_ANNOTATION 位不在 gate 内——夹具用普通类
+///        （名字 + 描述符），ACC_ANNOTATION 位不在 gate 内，夹具用普通类
 ///        承载（jasm 面等价：方法表逐字同源）。
 std::string metadataAnnoClassSource()
 {
@@ -440,7 +440,7 @@ TEST(IndyRestoreScan, SimpleSiteRestoredThroughBsmBodyFollow)
 
 TEST(IndyRestoreScan, SimpleSiteRestoredThroughSameNameDecryptor)
 {
-    // 路由 1（v3 material 配对类）：plainDecryptName == plainBsmName——BSM 与
+    // 路由 1（v3 material 配对类）：plainDecryptName == plainBsmName，BSM 与
     // 解密器同名，体不跟随也成立。
     SimpleFixture fx;
     fx.bsmName    = "dec";
@@ -457,7 +457,7 @@ TEST(IndyRestoreScan, SimpleSiteRestoredThroughSameNameDecryptor)
 TEST(IndyRestoreScan, SimpleSiteRestoredThroughNameFamily)
 {
     // 路由 3 c1（NativePipeline 壳现场）：BSM 体不暴露解密器，族推导
-    // decryptName = BSM 名 B[2, len-1)——BSM "zzQAbcd" ↔ 解密器 "QAbc"。
+    // decryptName = BSM 名 B[2, len-1)，BSM "zzQAbcd" ↔ 解密器 "QAbc"。
     SimpleFixture fx;
     fx.bsmName    = "zzQAbcd";
     fx.decName    = "QAbc";
@@ -475,7 +475,7 @@ TEST(IndyRestoreScan, PlainSiteRestoredThroughMaterialDonor)
 {
     // 路由 3 c2（plain 解密器壳死 + material 解密器在场）：BSM 名 N="qbaBc"
     // 与壳死 (String;)String 同名，material 解密器 M="baBcXY" 满足
-    // len(M)==len(N)+1 且 M[0,len(N)-1)==N[1,)——M 的 LDC 即原始 decryptKey
+    // len(M)==len(N)+1 且 M[0,len(N)-1)==N[1,)，M 的 LDC 即原始 decryptKey
     // （源锚 createDecryptMethod 两分支同一 decryptKey）。
     SimpleFixture fx;
     fx.bsmName    = "qbaBc";
@@ -496,7 +496,7 @@ TEST(IndyRestoreScan, PlainSiteRestoredThroughMaterialDonor)
 TEST(IndyRestoreScan, MaterialLaneSiteFailsClosed)
 {
     // v3 材料通道（BSM 名 B="qqAbcd" 的族解密器 D=B[2,len-1)="Abc"）：有效
-    // key 依赖运行期材料字段——fail-closed 记 materialLane，不猜。
+    // key 依赖运行期材料字段，fail-closed 记 materialLane，不猜。
     SimpleFixture fx;
     fx.bsmName    = "qqAbcd";
     fx.decName    = "Abc";
@@ -552,7 +552,7 @@ TEST(IndyRestoreScan, VirtualSiteDispatchesInvokeinterfaceViaJdkSet)
 TEST(IndyRestoreScan, HeavySiteRestoredThroughMetadataInterlock)
 {
     // heavy 面：generalKey 解 owner → owner 类 @Metadata（mv=100）→
-    // data1 % 59557 == magic2 自证命中 → d2 解出 name<>desc → desc 互证。
+    // data1 % 59557 == magic2 自证命中 → d2 解出 name<>desc → desc 核对。
     model::ResourceContainer container = makeContainer(
         {{"GruntHeavyHost",
           ".super java/lang/Object\n.class public super GruntHeavyHost {\n"
@@ -603,7 +603,7 @@ TEST(IndyRestoreScan, RejectsSiteWhenKindBitIllegal)
 
 TEST(IndyRestoreScan, RejectsSiteWhenDescCrossCheckFails)
 {
-    // 解密 desc 与 indy desc 互证不符（(II)V vs (I)I）：S1 拒绝。
+    // 解密 desc 与 indy desc 核对不符（(II)V vs (I)I）：S1 拒绝。
     SimpleFixture fx;
     fx.staticArgs = "\"" + xorEscape("java.lang.Math", kKey) + "\", \""
                     + xorEscape("abs", kKey) + "\", \"" + xorEscape("(II)V", kKey) + "\", 0";
@@ -630,7 +630,7 @@ TEST(IndyRestoreScan, RejectsVirtualSiteWithoutInterfaceEvidence)
 
 TEST(IndyRestoreScan, RejectsHeavySiteWhenEraNotGrunt3)
 {
-    // heavy 面挂 Era 门：Era 未判 Grunt3（此处 Kasumi）整面关闭。
+    // heavy 面挂 Era 检查：Era 未判 Grunt3（此处 Kasumi）整面关闭。
     model::ResourceContainer container = makeContainer(
         {{"GruntHeavyHost",
           ".super java/lang/Object\n.class public super GruntHeavyHost {\n"
@@ -647,7 +647,7 @@ TEST(IndyRestoreScan, RejectsHeavySiteWhenEraNotGrunt3)
 
 TEST(IndyRestoreScan, RejectsHeavySiteWhenMagicCrossCheckFails)
 {
-    // d1 解出 100000：100000 % 59557 == 40443 != magic2——完整性自证不命中。
+    // d1 解出 100000：100000 % 59557 == 40443 != magic2，完整性自证不命中。
     model::ResourceContainer container = makeContainer(
         {{"GruntHeavyHost",
           ".super java/lang/Object\n.class public super GruntHeavyHost {\n"
@@ -687,7 +687,7 @@ TEST(IndyRestoreScan, RejectsHeavySiteWhenGeneralKeyMissing)
          {"MetaOwner", metaOwnerSource()},
          {"net/spartanb312/grunteon/internal/Metadata", metadataAnnoClassSource()}});
     // 把 heavy BSM 体换成无 key 窗口的形状（重开容器直接改字节面太绕：这里
-    // 用第二类承载「BSM 体不暴露 generalKey」的形状）。
+    // 用第二类承载BSM 体不暴露 generalKey的形状）。
     model::ResourceContainer shell = makeContainer(
         {{"GruntHeavyShell",
           ".super java/lang/Object\n.class public super GruntHeavyShell {\n"
@@ -805,7 +805,7 @@ TEST(IndyRestoreRewrite, SwapsHeavyIndyForInvokestatic)
 
 TEST(IndyRestoreRewrite, LeavesContainerUntouchedOnRejections)
 {
-    // 拒绝面四态（参数畸形 / kind 位越界 / desc 互证不符 / 接口无旁证）：
+    // 拒绝面四态（参数畸形 / kind 位越界 / desc 核对不符 / 接口无旁证）：
     // 字节逐位不动。
     const SimpleFixture bad = [] {
         SimpleFixture f;
@@ -877,7 +877,7 @@ TEST(IndyRestoreRewrite, LeavesContainerUntouchedOnRejections)
 TEST(IndyRestoreProof, KeepsClassCountReparsesAndResidualZero)
 {
     // static + virtual + heavy 三态全还原：类数不增、脏类可重解析、residual 0
-    // （Grunt 指纹 BSM 已无 indy 引用——BSM 条目本身留在罐里交下游清理面）。
+    // （Grunt 指纹 BSM 已无 indy 引用，BSM 条目本身留在 jar 里交下游清理面）。
     model::ResourceContainer container = makeContainer(
         {{"GruntHost",
           [&] {

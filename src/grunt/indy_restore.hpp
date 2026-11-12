@@ -16,7 +16,7 @@
 ///             owner 是点分名（java.lang.Math），virtual 时 indy desc 首参
 ///             补 Object receiver；
 ///     heavy:  encOwner 经 BSM 体内 LDC generalKey 解一层；name&lt;&gt;desc 编在
-///             owner 类 @Metadata 注解的 d1/d2 数组里——遍历 d1，第 i 项经
+///             owner 类 @Metadata 注解的 d1/d2 数组里，遍历 d1，第 i 项经
 ///             magic2 解出 data1 整数串，`data1 % 59557 == magic2` 命中即取
 ///             d2[i] 经 magic1 解出 `name&lt;&gt;desc`。
 ///
@@ -28,14 +28,14 @@
 /// - **S2 结构事实**：BSM desc 指纹（simple/heavy 7 参，v2/v3 逐字同源）+
 ///   解密器形状（`charAt; LDC K; IXOR; I2C` 单层窗口，或 v3 材料通道双层
 ///   `LDC K; INVOKESTATIC ()I; IXOR; IXOR; I2C`）；
-/// - **S1 语义后果**：解密产物与调用点吻合——simple 三段串解出合法
-///   owner/name/desc 且与 indy desc 互证（static 全等；virtual 首参
+/// - **S1 语义后果**：解密产物与调用点吻合，simple 三段串解出合法
+///   owner/name/desc 且与 indy desc 核对（static 全等；virtual 首参
 ///   Object receiver + 其余逐位一致）；heavy 的 `data1 % 59557 == magic2`
-///   完整性自证 + `name&lt;&gt;desc` 拆分 + 同一道 indy desc 互证。isVirtual 只
+///   完整性自证 + `name&lt;&gt;desc` 拆分 + 同一道 indy desc 核对。isVirtual 只
 ///   认 0/1，越界即拒。
-/// - **S3 版本敏感面**：heavy 的 `@Metadata` 数组解释（mv 门 + 59557 模数）
-///   挂 Era 门（probeEra 判 Grunt3 才激活）；simple 面判据全部结构自证，
-///   不挂 Era（理由：key 静态在场 + 产物互证，误判需要"随机密文恰好解出
+/// - **S3 版本敏感面**：heavy 的 `@Metadata` 数组解释（mv 检查 + 59557 模数）
+///   挂 Era 检查（probeEra 判 Grunt3 才激活）；simple 面判据全部结构自证，
+///   不挂 Era（理由：key 静态在场 + 产物核对，误判需要"随机密文恰好解出
 ///   与 indy desc 吻合的合法描述符"，概率上排除）。
 ///
 /// ## v3 RuntimeMaterial 联动（材料通道边界）
@@ -43,42 +43,42 @@
 /// v3 `createDecryptMethod` 在类带 RuntimeMaterial 草稿时生成材料通道解密器
 /// （`LDC key; INVOKESTATIC <self> ()I; IXOR; IXOR`），有效 key =
 /// `decryptKey ^ materialKey()`，而 materialKey 读 canonicalKey/poison 静态
-/// 字段——boar 实证其运行期值由解密后的字符串池经 parseLong 转出（clinit
+/// 字段，boar 验证其运行期值由解密后的字符串池经 parseLong 转出（clinit
 /// 内 CFF 摊平），纯静态不可解（须模拟执行 + 上游供给链，原语缺失）。
 /// 本批材料通道一律 fail-closed（`materialLane` 桶），只在解密器体形状能
-/// 自证时记账，不猜。
+/// 自证时计数，不猜。
 ///
 /// ## BSM→解密器键链（三路，按现场可达性）
 ///
 /// 1. **同名直连**（v3 material 配对类，源锚 `plainDecryptName ==
-///    plainBsmName`——两者同为 `bsmName1.substring(1, len-3)`）：simple BSM
+///    plainBsmName`，两者同为 `bsmName1.substring(1, len-3)`）：simple BSM
 ///    名与一个在场 `(String;)String` 解密器同名 → 直取其 LDC key；
 /// 2. **BSM 体跟随**（v2/v3 常态，BSM 体在场）：BSM 体内首条
 ///    `INVOKESTATIC <self> (String;)String` 即解密器；
-/// 3. **名字族推导**（v3，BSM 被 NativePipeline 摘成 ACC_NATIVE 空壳时——
+/// 3. **名字族推导**（v3，BSM 被 NativePipeline 摘成 ACC_NATIVE 空壳时，
 ///    boar 全量现场）：同代生成面把解密器名派生自 BSM 名
 ///    （`decryptName = bsmName1.substring(2, len-1)`）：候选解密器名 D 满足
 ///    `len(D) == len(BSM名) - 3 && BSM名.substr(2) 前缀 == D` 且体为
 ///    解密器窗口时认亲；heavy 的 generalKey 在 BSM 体内（LDC），壳死则
-///    heavy 面无键（fail-closed，boar 实证 heavy 站点为 0）。
+///    heavy 面无键（fail-closed，boar 验证 heavy 站点为 0）。
 ///
 /// ## 改写（插入式站点的锚保留与槽位面）
 ///
 /// v2/v3 只重定向方法调用（无字段/构造器形态），分派只有三态：
 /// static → INVOKESTATIC（纯原地）；virtual → INVOKEVIRTUAL /
-/// INVOKEINTERFACE（纯原地，receiver 槽不插不删——indy desc 的 Object 首参
+/// INVOKEINTERFACE（纯原地，receiver 槽不插不删，indy desc 的 Object 首参
 /// 就是原 receiver 槽，JVM 校验语义与原 INVOKEVIRTUAL 一致）。原地换指令
 /// 保 srcPc，锚保留/帧链写回与 indy_decode 同源（`mutateMethodWithFrames`
 /// 正统帧链）。接口落点靠旁证：容器普查优先，CLI `--jdk` 注入的 JDK 接口集
 /// 双向作证（在集 = 接口；不在集 = 类；两处皆无 = fail-closed）。
 ///
-/// ## 台账
+/// ## 统计
 ///
 /// DirtySet 按 static/virtual 分列 + failed/skippedByRoundTrip；ProofResult
-/// 在类数门之外统计 residual（改写后容器里仍带 Grunt simple/heavy BSM desc
-/// 指纹的 indy 调用点数）。residual 只计指纹命中站点——LambdaMetafactory
+/// 在类数检查之外统计 residual（改写后容器里仍带 Grunt simple/heavy BSM desc
+/// 指纹的 indy 调用点数）。residual 只计指纹命中站点，LambdaMetafactory
 /// / StringConcatFactory 等非 Grunt indy 与材料通道站点不在 residual 口径
-/// （前者非本家、后者本批明确 fail-closed 记账在 ScanResult）。
+/// （前者非本家、后者本批明确 fail-closed 计数在 ScanResult）。
 #pragma once
 
 #include <string>
@@ -107,7 +107,7 @@ struct ScanInput
     std::unordered_set<std::string> jdkInterfaces;   ///< JDK 接口内部名全集（穷举旁证）
 };
 
-/// @brief 站点形态（v2/v3 只有方法调用两态——字段/构造器是 Kasumi 面）。
+/// @brief 站点形态（v2/v3 只有方法调用两态，字段/构造器是 Kasumi 面）。
 enum class Form : ca::u8
 {
     Static = 0,   ///< isVirtual == 0 → INVOKESTATIC
@@ -127,7 +127,7 @@ struct Site
     bool        ownerIsInterface = false;   ///< virtual 落点分派
 };
 
-/// @brief 拒绝（fail-closed 记账：拒绝原因进 trace，站点逐位不动）。
+/// @brief 拒绝（fail-closed 计数：拒绝原因进 trace，站点逐位不动）。
 struct Reject
 {
     std::string uri;
@@ -169,7 +169,7 @@ struct DirtySet
 };
 
 /// @brief 验收结果。residual = 改写后容器里仍带 Grunt simple/heavy BSM 指纹
-///        的 indy 调用点数（还原不彻底的残留，语料单罐门要求 0）。
+///        的 indy 调用点数（还原不彻底的残留，语料单 jar 检查要求 0）。
 struct ProofResult
 {
     bool                     ok = true;

@@ -199,7 +199,7 @@ TEST(ConstMethodScan, RejectsNonTypeGetstatic)
     });
 
     const ScanResult result = scan(container);
-    // TYPE 取值器本身没有调用点（Caller 只调 box）——定义在 defs 里但不产站点。
+    // TYPE 取值器本身没有调用点（Caller 只调 box），定义在 defs 里但不产站点。
     EXPECT_TRUE(result.sites.empty());
     EXPECT_NE(findReject(result, RejectReason::GetstaticUnsupported), nullptr);
 }
@@ -243,7 +243,7 @@ TEST(ConstMethodScan, RejectsImpureOwnerClinit)
 
 TEST(ConstMethodScan, AcceptsPureSelfWritingOwnerClinit)
 {
-    // 所有者 <clinit> 只做「常量算术 + 写本类字段」：白名单内，允许内联。
+    // 所有者 <clinit> 只做常量算术 + 写本类字段：白名单内，允许内联。
     model::ResourceContainer container = makeContainer({
         {"fixture/TypeUtil",
          ".super java/lang/Object\n"
@@ -392,7 +392,7 @@ TEST(ConstMethodRewrite, OverBudgetLeavesCallUntouched)
     const ScanResult scanned = scan(container);
     ASSERT_EQ(scanned.sites.size(), 1u);
 
-    // 复核记账单位是方法指令数（调用方法 2 条）；预算 1 必在首站点即超限。
+    // 复核计数单位是方法指令数（调用方法 2 条）；预算 1 必在首站点即超限。
     const DirtySet dirty = rewrite(container, scanned, iter_budget::ClassBudget{1});
     EXPECT_EQ(dirty.applied, 0u) << "超限类不许被改写";
     EXPECT_EQ(dirty.skippedByBudget, 1u);

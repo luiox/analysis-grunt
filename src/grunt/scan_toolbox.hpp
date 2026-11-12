@@ -2,13 +2,13 @@
 /// @brief       SCAN 工具箱：跨残留共享的扫描判定、码元面编解码与方法索引。
 ///
 /// CONVENTION §7：跨残留复用只允许发生在工具箱。当前收口五件：
-/// `classInitNeutral`——owner 类 `<clinit>` 的「中性」判定，被
-/// constant_call（求值前的类初始化门）与 proxy_inline（owner 中性门）共用；
-/// `bsmEntries`——类级 BootstrapMethods 条目表读取，被 indy_fold /
-/// indy_decode 共用；`mutf8ToUnits`/`decryptXor`——MUTF-8 码元面解码与逐码
+/// `classInitNeutral`，owner 类 `<clinit>` 的中性判定，被
+/// constant_call（求值前的类初始化检查）与 proxy_inline（owner 中性检查）共用；
+/// `bsmEntries`，类级 BootstrapMethods 条目表读取，被 indy_fold /
+/// indy_decode 共用；`mutf8ToUnits`/`decryptXor`，MUTF-8 码元面解码与逐码
 /// 元自逆 XOR，被 indy_restore / indy_decode / material_key_restore 共用
 /// （原三 pass 各持同形私有副本，B2 单源化）；`MethodIndex`/
-/// `buildMethodIndex`——容器方法索引（keyOf 复合键），constant_call 与
+/// `buildMethodIndex`，容器方法索引（keyOf 复合键），constant_call 与
 /// gate_processor_fold 同源共用（原两 pass 各持副本，B2 单源化），
 /// `keyOf` 另被 proxy_inline / field_access_proxy / const_method 的定义表
 /// 共用（原五 pass 各持同形副本）。
@@ -34,7 +34,7 @@
 namespace grunt::scan_tools {
 
 /// @brief MUTF-8 → UTF-16 码元（不经严格 UTF-8 解码：密文里合法地存在
-///        Java 孤代理码元——classfile 以 CESU-8 形 3 字节承载，严格 UTF-8
+///        Java 孤代理码元，classfile 以 CESU-8 形 3 字节承载，严格 UTF-8
 ///        解码器会拒收，而加密语义只在码元层面异或）。MUTF-8 的 NUL 特例
 ///        （0xC0 0x80）一并处理；4 字节形 / 挂续字节（classfile Utf8 不出现）
 ///        返回 false。
@@ -73,8 +73,8 @@ inline bool mutf8ToUnits(std::string_view in, std::vector<ca::u16>& out)
 }
 
 /// @brief 逐码元自逆 XOR（每 UTF-16 码元 XOR key 低 16 位，Java `char ^ int`
-///        后 `i2c` 的语义），产物落 UTF-8——异常码元按 3 字节原样承载，垃圾
-///        解密结果会死在下游 desc 互证，不在这里猜。@return false = MUTF-8
+///        后 `i2c` 的语义），产物落 UTF-8，异常码元按 3 字节原样承载，垃圾
+///        解密结果会死在下游 desc 核对，不在这里猜。@return false = MUTF-8
 ///        解码失败。
 inline bool decryptXor(std::string_view encrypted, ca::i32 key, std::string& out)
 {
@@ -101,7 +101,7 @@ inline bool decryptXor(std::string_view encrypted, ca::i32 key, std::string& out
 /// @brief 取类级 BootstrapMethods 的条目表（没有属性就是空表）。
 ///
 /// 解码前先过注解族深度预检（mjbase #158）：BootstrapMethods 本身不在注解族，
-/// 守卫对它恒放行；挂同一道门是让一切 decodeAttr 直调位保持单一形状——将来
+/// 守卫对它恒放行；挂同一道检查是让一切 decodeAttr 直调位保持单一形状，将来
 /// 若有注解族解码落进来，守卫已在位。
 inline const std::vector<jbc::core::BootstrapMethodsAttr::Entry>* bsmEntries(
     jbc::ir::ClassSession& s)
@@ -118,7 +118,7 @@ inline const std::vector<jbc::core::BootstrapMethodsAttr::Entry>* bsmEntries(
     return attr == nullptr ? nullptr : &attr->entries;
 }
 
-/// @brief 判 owner 类 `<clinit>` 是否「中性」（缺失，或只剩 NOP/RETURN 且无
+/// @brief 判 owner 类 `<clinit>` 是否中性（缺失，或只剩 NOP/RETURN 且无
 ///        异常表）。
 ///
 /// 这是保守面而不是判据：折叠掉指向 owner 的某次主动使用（invokestatic 调
@@ -191,7 +191,7 @@ using MethodIndex = std::unordered_map<std::string, MethodLoc>;
 /// @brief 重名类（两个容器条目 `thisName` 撞同一 `keyOf` 键）的取舍口径。
 ///
 /// 两 pass 原生有别且不可猜统一：constant_call 是 `emplace`（先到先得），
-/// gate_processor_fold 是 `insert_or_assign`（后到后得）——B2 单源化时以
+/// gate_processor_fold 是 `insert_or_assign`（后到后得），B2 单源化时以
 /// 本枚举逐处钉住原口径，行为逐位不动。
 enum class IndexDup : ca::u8 { KeepFirst, KeepLast };
 
@@ -200,7 +200,7 @@ enum class IndexDup : ca::u8 { KeepFirst, KeepLast };
 ///
 /// guard 是调用方带入的 per-class fail-closed 包裹（本仓 scanGuard 面，
 /// stderr 前缀随 pass 各异，不在此固化）：guard 返回 false = 该类跳过、
-/// 余类继续。遍历走 container.hpp 的 `forEachClass`，pass 级时间片门语义
+/// 余类继续。遍历走 container.hpp 的 `forEachClass`，pass 级时间片检查语义
 /// 与原两份副本逐位同。
 template <class Guard>
 inline void buildMethodIndex(const mjbase::model::ResourceContainer& container,

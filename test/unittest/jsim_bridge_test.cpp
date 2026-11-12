@@ -1,10 +1,10 @@
 /// @file        jsim_bridge_test.cpp
 /// @brief       官方桥（jsim::jbcbridge）迁移后的两颗雷钉形测试。
 ///
-/// 背景：自建 jsim_bridge 对 NEWARRAY / MULTIANEWARRAY 的搬运坐标错位——
+/// 背景：自建 jsim_bridge 对 NEWARRAY / MULTIANEWARRAY 的搬运坐标错位，
 /// libjbc 把 newarray 的 atype 与 multianewarray 的维数放在 `a` 槽，jsim 引擎
 /// 却读 `b` 槽（engine.hpp executeArray）。错位后果两样：NEWARRAY 的 b 恒空
-/// → 引擎「atype 非 primitive」恒 Bail（意外 fail-closed）；MULTIANEWARRAY
+/// → 引擎atype 非 primitive恒 Bail（意外 fail-closed）；MULTIANEWARRAY
 /// 不剥类名的 `[` 前缀且维数错位 → **静默求值错误**（全仓唯一非 fail-closed
 /// 分歧）。迁官方桥后两者走官方搬运，本文件把行为钉成显式正形。
 ///
@@ -12,7 +12,7 @@
 /// - 桥形面：NEWARRAY 的 atype 落 b、MULTIANEWARRAY 剥 dims 落 b + 元素类型
 ///   进 allocTypes、CHECKCAST/INSTANCEOF 不占 allocTypes（官方 no-op 口径）；
 /// - 拒绝面：INVOKEDYNAMIC / ATHROW 整方法不桥（UnsupportedOp，此前自建桥
-///   是占位/原样搬运、运行期才拒——官方口径把拒绝提前到桥面）；
+///   是占位/原样搬运、运行期才拒，官方口径把拒绝提前到桥面）；
 /// - 引擎求值面：桥出的数组方法经 SimExecutor 正确求值（长度、元素往返、
 ///   多维分配）+ 未知/负长度显式拒（NotConcrete / BadOperand）。
 ///
@@ -141,7 +141,7 @@ std::string arrSource()
            "}\n";
 }
 
-/// indy 拒绝面夹具：调用点含 invokedynamic（BSM 返回 null 也无所谓——
+/// indy 拒绝面夹具：调用点含 invokedynamic（BSM 返回 null 也无所谓，
 /// 拒绝发生在桥面，跑不到 BSM）。
 std::string indySource()
 {
@@ -211,7 +211,7 @@ std::string badDimSource()
 }
 
 /// allocTypes 占位口径夹具：NEW 的类进表，CHECKCAST/INSTANCEOF 不进（官方
-/// 语义 checkcast 恒等 / instanceof 压 Unknown，操作数无需落位——自建桥曾
+/// 语义 checkcast 恒等 / instanceof 压 Unknown，操作数无需落位，自建桥曾
 /// 把它们也推进表，属无害但多余的占位，官方口径统一为 no-op）。
 std::string allocSource()
 {
@@ -276,7 +276,7 @@ TEST(JsimBridgeShape, NewarrayCarriesAtypeInSlotB)
     const jsim::Insn*   na = insnOf(m, static_cast<ca::u8>(jbc::core::Op::NEWARRAY));
     ASSERT_NE(na, nullptr);
     // JVMS 6.5：newarray atype=10 是 int[]。libjbc 把 atype 放 a，jsim 引擎读
-    // b（primitiveArrayClass(b)）——官方桥在桥内显式搬运（a 归零、b = atype）。
+    // b（primitiveArrayClass(b)），官方桥在桥内显式搬运（a 归零、b = atype）。
     EXPECT_EQ(na->a, 0);
     EXPECT_EQ(na->b, 10);
     // 原始类型数组的 atype 不进 allocTypes（那是引用类常量的表）。
@@ -294,7 +294,7 @@ TEST(JsimBridgeShape, MultianewarrayStripsDimsAndCarriesDimCount)
     const jsim::Method m   = bridgeMethodOrThrow(*s, methodIndexByName(*s, "multi"));
     const jsim::Insn*  man = insnOf(m, static_cast<ca::u8>(jbc::core::Op::MULTIANEWARRAY));
     ASSERT_NE(man, nullptr);
-    // 类名剥掉 dims 个 '['：[[[? 不存在——[[I 的元素类型是 I；维数 2 落 b
+    // 类名剥掉 dims 个 '['：[[[? 不存在，[[I 的元素类型是 I；维数 2 落 b
     //（引擎按 b 弹两份 count）。自建桥的错位（类名不剥 + b 恒空）在此钉死。
     ASSERT_EQ(m.allocTypes.size(), 1u);
     EXPECT_EQ(m.allocTypes.front(), "I");
@@ -330,7 +330,7 @@ TEST(JsimBridgeReject, InvokedynamicIsWholeMethodUnsupportedOp)
     const auto bridged = jsim::jbcbridge::toSimMethod(*s, methodIndexByName(*s, "call"));
     ASSERT_FALSE(bridged.isOk());
     EXPECT_EQ(bridged.error().stage, jsim::jbcbridge::BridgeError::Stage::UnsupportedOp);
-    // 同类的 BSM 方法体不含 indy，桥照常成功——拒绝是方法级，不是类级。
+    // 同类的 BSM 方法体不含 indy，桥照常成功，拒绝是方法级，不是类级。
     const auto bsm = jsim::jbcbridge::toSimMethod(*s, methodIndexByName(*s, "a"));
     EXPECT_TRUE(bsm.isOk());
 }
@@ -350,7 +350,7 @@ TEST(JsimBridgeReject, AthrowIsWholeMethodUnsupportedOp)
 TEST(JsimBridgeReject, MultianewarrayDimMismatchIsBadClass)
 {
     // JVMS 6.5：multianewarray 的类常量维数必须 >= dims。[I 配 dims=2 是
-    // 畸形字节码——官方桥在桥面拒绝（BadClass），不产出静默错形。
+    // 畸形字节码，官方桥在桥面拒绝（BadClass），不产出静默错形。
     model::ResourceContainer container =
         makeContainer({{"fixture/BadDim", badDimSource()}});
     const std::vector<ca::u8>* bytes = findClassBytes(container, "fixture/BadDim.class");
@@ -445,7 +445,7 @@ TEST(JsimEngineEval, IndyMethodFailsClosedAtBridge)
     model::ResourceContainer container = makeContainer({{"IndyHost", indySource()}});
     SimExecutor              exec      = arrExecutor(container);
 
-    // 官方口径：含 indy 的方法整方法不桥，invoke 显式报「桥转换失败」——
+    // 官方口径：含 indy 的方法整方法不桥，invoke 显式报桥转换失败，
     // 自建桥时代是占位 CallRef 运行期才 Bail，两路都拒但原因可读性不同。
     const SimOutcome out = exec.invoke("IndyHost", "call", {});
     EXPECT_EQ(out.kind, SimOutcome::Kind::Bailed);

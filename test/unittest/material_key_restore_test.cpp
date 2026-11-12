@@ -1,36 +1,36 @@
 /// @file        material_key_restore_test.cpp
 /// @brief       残留 `material_key_restore` 的三段判据测试（真值往返 +
-///              S1 互证咬合 + 拒绝面反证）。
+///              S1 核对咬合 + 拒绝面反证）。
 ///
-/// 夹具是「缩小版 Grunt v3 RuntimeMaterial 形态」（jasm 现场汇编，不落
+/// 夹具是缩小版 Grunt v3 RuntimeMaterial 形态（jasm 现场汇编，不落
 /// 二进制、不依赖语料目录）：材料字段 `kf J` / `po I`（private static）+
 /// `mk ()I` 逐字 9 条体（createMaterialKeyMethod 生成面）+ 材料解密器
 /// `Dec (String;)String`（窗口 `charAt; LDC K; INVOKESTATIC mk ()I; IXOR;
 /// IXOR; I2C`）+ simple BSM（名字族配对：解密器名 = BSM 名 B[2, len-1)，
-/// grunt3 e41e852 ReferenceObfuscate 生成面，boar zA 实证同形）。
+/// grunt3 e41e852 ReferenceObfuscate 生成面，boar zA 验证同形）。
 ///
 /// 初值链与 boar 逐形同源（number-reobf + SPF/IndyRestore 供给链产物）：
 /// - keyField：`ldc <基32串>; bipush 32; invokestatic <蹦床>(String;I)J;
 ///   ldc2_w C; lxor; putstatic kf`（Form B）；蹦体恰为
 ///   `aload_0; iload_1; invokestatic Long.parseUnsignedLong; lreturn`；
 /// - poison：`ldc X; i2l; ldc X; i2l; lxor; l2i; putstatic po`（X^X ≡ 0
-///   走廊，boar 实证形）；
+///   走廊，boar 验证形）；
 /// - 扰动面：clinit 里守卫支路（`INVOKESTATIC gd()I; dup; ifeq clean`）+
-///   可疑窗口（keyField LXOR 尾 / poison IOR 尾）——清洁口径下不参与
+///   可疑窗口（keyField LXOR 尾 / poison IOR 尾），清洁口径下不参与
 ///   effective key（源锚 RuntimeMaterial.kt perturbation：可疑路径才写
 ///   keyField/poison；清洁 delta 只碰 shareA/shareB，不进 materialKey）。
 ///
-/// jasm 汇编坑（存证）：`ldc2_w` 长字面量必须带 `L` 后缀——裸十进制被按
+/// jasm 汇编坑（存证）：`ldc2_w` 长字面量必须带 `L` 后缀，裸十进制被按
 /// int 解析，`lxor` 求值即 stack underflow（帧分析报错点位在初值跨度，极
 /// 难归因；本文件所有 `ldc2_w` 均带后缀）。
 ///
 /// 覆盖分工：
-/// - SCAN（真值）：链求值 → 候选 key = fold(keyInit) ^ poisonInit → S1 互证
-///   （BSM 族路由的全部 indy 站点按候选 key 解密 + desc 互证）→ 站点成立；
-/// - SCAN（S1 咬合反证）：poison 求值面被人为抬高（候选 ≠ 真钥）→ 互证解出
+/// - SCAN（真值）：链求值 → 候选 key = fold(keyInit) ^ poisonInit → S1 核对
+///   （BSM 族路由的全部 indy 站点按候选 key 解密 + desc 核对）→ 站点成立；
+/// - SCAN（S1 咬合反证）：poison 求值面被人为抬高（候选 ≠ 真钥）→ 核对解出
 ///   垃圾 → keyRefuted 桶；
 /// - SCAN（拒绝面）：初值链断（池读未折回）/ 多写冲突 / 字段外写 / 可疑写
-///   缺守卫指纹 / mk 体 native 化（boar 70 类同形）→ 逐桶记账；
+///   缺守卫指纹 / mk 体 native 化（boar 70 类同形）→ 逐桶计数；
 /// - REWRITE：解密器窗口 INVOKESTATIC 原地换 LDC（srcPc 保留）；拒绝面上
 ///   容器字节逐位不动；
 /// - PROOF：类数不增 + 脏类可重解析 + residual 归零。
@@ -59,7 +59,7 @@ namespace model = mjbase::model;
 
 /// 解密器窗口 LDC K（异或前原始 decryptKey；任意值）。
 constexpr ca::i32 kRawKey = 0x2A17;
-/// keyField 初值 = parseUnsignedLong(基32串, 32) ^ C——夹具侧随意选 M/C，
+/// keyField 初值 = parseUnsignedLong(基32串, 32) ^ C，夹具侧随意选 M/C，
 /// 真值链在测试里 C++ 直解（parseUnsignedLong 语义固定，与 pass 内
 /// parseRadixDigits 同一 JVM 语义）。
 constexpr ca::u64 kParseMag = 0x3EAD1C0FFEE12345ULL;
@@ -76,7 +76,7 @@ constexpr ca::i64 keyInitValue()
 }
 
 /// @brief `(seed ^ (seed ushr 32)).toInt()`（Long.foldToInt，与 pass 内
-///        materialFold 同式独立实现——真值面）。
+///        materialFold 同式独立实现，真值面）。
 ca::i32 foldToInt(ca::i64 seed)
 {
     const ca::u64 x = static_cast<ca::u64>(seed);
@@ -278,7 +278,7 @@ std::string keyInitSpan(const std::string& host, const std::string& kf)
            "      putstatic " + host + "." + kf + " J\n";
 }
 
-/// @brief poison 初值写（X^X ≡ 0 走廊，boar 实证形）。
+/// @brief poison 初值写（X^X ≡ 0 走廊，boar 验证形）。
 std::string poisonInitSpan(const std::string& host, const std::string& po)
 {
     return "      ldc 305419896\n"
@@ -292,7 +292,7 @@ std::string poisonInitSpan(const std::string& host, const std::string& po)
 
 /// @brief clinit 尾段：守卫支路 + 可疑窗口（keyField LXOR 尾 / poison IOR 尾）
 ///        + clean 收口（RuntimeMaterial.kt perturbation 同形）。guarded =
-///        true 时守卫 DUP 的余值由 poison 窗口 SWAP 形吞并（boar 实证形）；
+///        true 时守卫 DUP 的余值由 poison 窗口 SWAP 形吞并（boar 验证形）；
 ///        false 时省 DUP、poison 窗口用无余值形（守卫指纹缺席 →
 ///        writerUnguarded 桶）。
 std::string perturbationTail(const std::string& host, const std::string& kf,
@@ -342,8 +342,8 @@ struct MatFixture
 
     std::string source() const
     {
-        // 站点实参按「真钥」加密：真钥 = K ^ fold(keyInit)（清洁口径，
-        // poison ≡ 0）；候选错时互证必翻车。
+        // 站点实参按真钥加密：真钥 = K ^ fold(keyInit)（清洁口径，
+        // poison ≡ 0）；候选错时核对必翻车。
         const ca::i32 realKey     = kRawKey ^ foldToInt(keyInitValue());
         const std::string args = "\"" + xorEscape("java.lang.Math", realKey) + "\", \""
                                + xorEscape("abs", realKey) + "\", \""
@@ -434,7 +434,7 @@ TEST(MaterialKeyRestoreScan, TrueValueRoundtripFoldsMaterialKey)
     EXPECT_EQ(site.uri, "MatHost.class");
     EXPECT_EQ(site.decryptorRawKey, kRawKey);
     EXPECT_EQ(site.materialKey, foldToInt(keyInitValue()));
-    // S1 互证：族路由 BSM 的 indy 站点按候选 key 解出真值并过 desc 互证。
+    // S1 核对：族路由 BSM 的 indy 站点按候选 key 解出真值并过 desc 核对。
     EXPECT_EQ(site.sitesVerified, 1u);
 }
 

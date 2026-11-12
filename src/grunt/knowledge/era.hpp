@@ -28,7 +28,7 @@ namespace grunt::knowledge {
 /// @brief 家族版本。
 enum class Era : ca::u8 {
     Unknown = 0,  ///< 判据不足：fail-closed，不做猜测性改写
-    Grunt2,       ///< Gruntpocalypse 2.x（判据仍缺，如实挂账——见 probeEra 注）
+    Grunt2,       ///< Gruntpocalypse 2.x（判据仍缺，如实遗留，见 probeEra 注）
     Grunt3,       ///< Grunteon（`@Metadata` 注解 + Grunt BSM desc 双指纹）
     Kasumi,       ///< Kasumi Obfuscator（indy 全量改写 + `@Metadata` + 反 LLM 资源）
 };
@@ -39,35 +39,35 @@ enum class Era : ca::u8 {
 ///        全部落空返回 `Unknown`。
 ///
 /// - **Kasumi 命名空间**：容器内有 `dev/kasumi/obfuscator` 前缀的类（混淆器
-///   运行时类必然在场——Main-Class 即在其中，25 类样本全貌见 notes §1）；
+///   运行时类必然在场，Main-Class 即在其中，25 类样本全貌见 notes §1）；
 /// - **Kasumi 8 参 BSM 指纹**：任一 BootstrapMethods 条目的 MethodHandle
 ///   方法描述符等于 `kKasumiBootstrapDesc`（Kasumi 的 indy 形态唯一签名）；
 /// - **Kasumi `@Metadata` 注解**：类/字段/方法任一挂载点带
 ///   `@Ldev/kasumi/internal/Metadata;`（每类一个，Kasumi 特有）。
 /// - **Grunt3 `@Metadata` 指纹**：类级可见注解类型等于
 ///   `kGrunt3MetadataAnnoDesc`（`Lnet/spartanb312/grunteon/internal/Metadata;`，
-///   v3 默认 metadataClass——`grunteon` 字样 v2 不产，v2 默认是
+///   v3 默认 metadataClass，`grunteon` 字样 v2 不产，v2 默认是
 ///   `net/spartanb312/grunt/GruntMetadata`）；
 /// - **Grunt3 命名空间指纹**：容器内有 `net/spartanb312/grunteon/` 前缀的
 ///   类（v3 现场生成的注解类与 NativeLoader 都落在此命名空间）；
 /// - **Grunt BSM desc 指纹**：任一 BootstrapMethods 条目的 MethodHandle
 ///   方法描述符等于 `kGruntSimpleBsmDesc` 或 `kGruntHeavyBsmDesc`
-///   （v2/v3 两代逐字同源，只证明「Grunt 家族 indy 机器在场」）。
+///   （v2/v3 两代逐字同源，只证明Grunt 家族 indy 机器在场）。
 ///
 /// `Era::Grunt3` = Grunt 家族指纹（BSM desc）**且**（`@Metadata` 注解或
-/// grunteon 命名空间）——双半边钉版本，单一半边不判。
+/// grunteon 命名空间），双半边钉版本，单一半边不判。
 ///
-/// **Grunt2 判据仍缺，如实挂账**：`U+200E` 尾缀两代同源、调用点模板无稳定
-/// 差异、indy BSM desc 两代逐字同源——当前没有任何「只在 v2 产物出现」的
+/// **Grunt2 判据仍缺，如实遗留**：`U+200E` 尾缀两代同源、调用点模板无稳定
+/// 差异、indy BSM desc 两代逐字同源，当前没有任何只在 v2 产物出现的
 /// 稳定指纹（v2 默认 `GruntMetadata` 注解名可配置、且 heavy 关闭时注解类
 /// 不生成，不能当判据）。v2 专面出现需求时再补（缺口 #15 的 v2 半边）。
 ///
 /// `constant_call` 不消费 Era：它的判据是语义事实（纯函数 + 常量实参 +
 /// 求值成功），与混淆器版本无关。`string_pool_fold` 不消费 Era（v2/v3 形态
 /// 是配置不是版本键）。`indy_restore` 消费口径：simple 面按 BSM 参数结构
-/// 自证（key 静态在场 + 解密产物与 indy desc 互证，不挂 Era 门——理由见
-/// doc/indy-restore.md）；heavy 面只在本函数判出 `Era::Grunt3` 时激活
-/// （`@Metadata` 数组的解释依赖 v3 语义：mv 门 + `data1 % 59557 == magic2`
+/// 自证（key 静态在场 + 解密产物与 indy desc 核对，不挂 Era 检查，理由见
+/// doc/indy-restore.rst）；heavy 面只在本函数判出 `Era::Grunt3` 时激活
+/// （`@Metadata` 数组的解释依赖 v3 语义：mv 检查 + `data1 % 59557 == magic2`
 /// 自证模数是两代同源，但注解指纹半边只有 v3 在场，故按保守口径只放 v3）。
 inline Era probeEra(const mjbase::model::ResourceContainer& container)
 {

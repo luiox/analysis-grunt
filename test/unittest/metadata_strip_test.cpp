@@ -6,7 +6,7 @@
 /// 落二进制、不依赖语料目录）：
 /// - @Metadata 注解夹具：类/字段/方法三张挂载面各一条
 ///   `@dev/kasumi/internal/Metadata`（mv/d1/d2），另挂一条异名注解与一个
-///   无注解 keeper 方法验证「只摘本家条目、其余原样」；
+///   无注解 keeper 方法验证只摘本家条目、其余原样；
 /// - 水印字段夹具：jasm 表达不了 ConstantValue，汇编后程序化给 static
 ///   String 字段补挂 RawAttr 形态的 ConstantValue（const_value_promote 同形，
 ///   值 = 水印串 / 非水印串各一）；
@@ -17,9 +17,9 @@
 ///
 /// 覆盖分工：
 /// - SCAN：三面普查 + 水印字段普查 + 资源清单/盘点；Era 未判整面关闭；
-///   敌意槽 blocked 记账不产出站点；
+///   敌意槽 blocked 计数不产出站点；
 /// - REWRITE：三面摘注解 + 水印字段删除 + 资源删除；拒绝面容器逐位不动；
-/// - PROOF：类数门 + 资源对账门（数不增 + 清单逐条不在场）+ 三面 residual。
+/// - PROOF：类数检查 + 资源核对检查（数不增 + 清单逐条不在场）+ 三面 residual。
 #include "grunt/metadata_strip.hpp"
 
 #include "jbc/core/attribute.hpp"
@@ -186,7 +186,7 @@ std::string watermarkHostSource()
 }
 
 /// @brief 给汇编产物的若干 static String 字段程序化补挂 ConstantValue
-///        （RawAttr 2 字节 CP 索引，const_value_promote 新建同形——jasm
+///        （RawAttr 2 字节 CP 索引，const_value_promote 新建同形，jasm
 ///        表达不了 ConstantValue 属性）。@return 补挂后的类字节。
 std::vector<ca::u8> attachConstantValues(
     const std::string& name, const std::string& source,
@@ -402,7 +402,7 @@ TEST(MetadataStripScan, BlocksEverythingWhenEraUnknown)
 
 TEST(MetadataStripScan, HostileAnnoSlotBlockedNotASite)
 {
-    // 深嵌敌意注解槽：深度预检拦下（fail-closed 记账），不产出站点。
+    // 深嵌敌意注解槽：深度预检拦下（fail-closed 计数），不产出站点。
     model::ResourceContainer container;
     addRawClass(container, "Hostile", hostileClassBytes());
 
@@ -493,8 +493,8 @@ TEST(MetadataStripRewrite, DeletesInventoryResourcesKeepsCandidates)
 
 TEST(MetadataStripRewrite, KeepsEveryByteOnEraUnknownAndHostile)
 {
-    // 拒绝面全景：Era 未判（整面关闭）——类与资源逐位保持；敌意注解类
-    // 同罐在场不产出站点、字节原样。
+    // 拒绝面全景：Era 未判（整面关闭），类与资源逐位保持；敌意注解类
+    // 同 jar 在场不产出站点、字节原样。
     model::ResourceContainer container;
     addClass(container, "AnnoHost", annoHostSource());
     addRawClass(container, "Hostile", hostileClassBytes());
@@ -561,8 +561,8 @@ TEST(MetadataStripProof, DoubleGateAndResidualZero)
 
 TEST(MetadataStripProof, ResidualCountsWhenNothingRewritten)
 {
-    // 没跑 rewrite：residual 如实报告三面残留（双门不受牵连：类数不变 +
-    // 空清单对账通过）。
+    // 没跑 rewrite：residual 如实报告三面残留（两道检查不受牵连：类数不变 +
+    // 空清单核对通过）。
     model::ResourceContainer container;
     addClass(container, "AnnoHost", annoHostSource());
     addResource(container, "META-INF/Kasumi/cybersecurity/analysis-0-deadbeef.md", "anti-llm\n");

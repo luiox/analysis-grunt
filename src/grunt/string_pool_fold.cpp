@@ -11,52 +11,52 @@
 ///
 /// ## SCAN
 ///
-/// 池链三件套钉形（buildPoolChain）：clinit 内全量滑窗扫「<int poolLen>;
+/// 池链三件套钉形（buildPoolChain）：clinit 内全量滑窗扫<int poolLen>;
 /// ANEWARRAY java/lang/String; PUTSTATIC <self String[] static>;
-/// INVOKESTATIC <self> ()V」前导四连，多个不同解 fail-closed（多个池分配
+/// INVOKESTATIC <self> ()V前导四连，多个不同解 fail-closed（多个池分配
 /// 前导）；池字段必须在场且 static。前导引用的 ()V 允许是直线静态蹦床（体
-/// 恰 `INVOKESTATIC <self> ()V; RETURN`，深度封 2、目标异于自身防环）——
+/// 恰 `INVOKESTATIC <self> ()V; RETURN`，深度封 2、目标异于自身防环），
 /// Grunteon 全链把 arrayInit 调用藏进 indy 机器，上游 IndyDecode/IndyFold
 /// 还原后即此形；`[INVOKEDYNAMIC; RETURN]` 形态报独立拒绝原因（arrayInit
 /// 调用被 indy 蹦床隐藏），不评 BSM。parseArrayInit 钉整段直线（无标签/无
-/// 异常表/无分支）的逐块 store 序列，块数与前导池长互证；形态判别按常量
+/// 异常表/无分支）的逐块 store 序列，块数与前导池长核对；形态判别按常量
 /// KIND：密文位是 String 常量 → literal（钉 toCharArray 形），int 常量 →
 /// arrayed（len 经 iconst/bipush/ldc 任意装载，NEWARRAY T_CHAR 钉 a==5，
 /// 码元组 `DUP; <int e>; <int code>; CASTORE` 下标乱序即拒）。解密器三窗
 /// 口（核窗口 52 条逐字 + init 窗口 + 循环头窗口）：核窗口唯一命中才放
-/// 行，槽位 state/counter 自捕获互证；旋转掩码钉常量值 255 而不是 opcode
-/// ——汇编码归一后 `sipush 255` 可能成 `ldc 255`，钉 opcode 会失配。
+/// 行，槽位 state/counter 自捕获核对；旋转掩码钉常量值 255 而不是 opcode
+/// ，汇编码归一后 `sipush 255` 可能成 `ldc 255`，钉 opcode 会失配。
 ///
 /// 读取点三元组：全类方法扫 `GETSTATIC <池>; <int idx>; AALOAD`。跨度内
 /// NOP 跳过（squeeze 遗留落点不驻栈，number_fold 同口径）；含标签（合并
 /// 点）即 fail-closed；下标非常量 = 非本家三元组静默跳过（idxMissing）；
-/// 池链失败的类整类记账，无前导的 String[] 字段类（Kasumi 缓存同形）静默
-/// 跳过——家族门由池链结构自证：Kasumi 同形三元组不带 Grunt 池分配前导与
+/// 池链失败的类整类计数，无前导的 String[] 字段类（Kasumi 缓存同形）静默
+/// 跳过，家族检查由池链结构自证：Kasumi 同形三元组不带 Grunt 池分配前导与
 /// `([CJI)` 填池链，结构上不可命中。
 ///
 /// ## REWRITE
 ///
-/// 按 uri 聚类 + roundTripSafe 前置门。锚点（getstatic）原地换 ldc 明文
+/// 按 uri 聚类 + roundTripSafe 前置检查。锚点（getstatic）原地换 ldc 明文
 /// （CodeEditor::loadConst 按索引选 LDC/LDC_W，srcPc 保留，pcmap/调试行落
 /// 点不变）。明文落池先 findUtf8 / 线性扫 String 复用，miss 才 addUtf8 /
 /// addString（先 intern 后动 DOM）。池字段 / arrayInit / 解密器不在此删：
 /// 供给链仍被 clinit 前导引用而存活（运行期空转填池，无读方），整体摘除
-/// 属压池面的后续批次。失败粒度 = 类：帧链/编码失败整类放弃。
+/// 属压池面的后续工作。失败粒度 = 类：帧链/编码失败整类放弃。
 ///
 /// ## PROOF
 ///
 /// pass_clock::Suspend + 类数不增 + 脏类可重新解析 + residual：改写后容器
 /// 里池链仍成立且读取点仍为三元组的站点数（scan 同判据 countOnly 重算）。
-/// 语料单罐门要求 residual = 0。
+/// 语料单 jar 检查要求 residual = 0。
 ///
 /// ## 已知边界
 ///
-/// Grunteon 全链罐上全量池类的 arrayInit 调用被 indy 蹦床隐藏，本 pass 单
+/// Grunteon 全链 jar 上全量池类的 arrayInit 调用被 indy 蹦床隐藏，本 pass 单
 /// 跑整体 fail-closed 是正确行为不是缺陷：判据要求供给链静态在场，调用目
 /// 标藏在加密 BSM 里时证据链不完整，不猜；上游 IndyRestore/IndyDecode 还
-/// 原蹦床后直线跟随即可接通（单测 FoldsThroughStaticTrampoline 实证该形可
+/// 原蹦床后直线跟随即可接通（单测 FoldsThroughStaticTrampoline 验证该形可
 /// 折）。经局部变量/方法调用间接取下标的形态不在面内（Grunt 生成面不产此
-/// 形）。interface 池类（PUBLIC+FINAL 字段变体）未钉 access 差异——desc/
+/// 形）。interface 池类（PUBLIC+FINAL 字段变体）未钉 access 差异，desc/
 /// owner/static 已足够定案，access 面留待有样本时再收窄。
 
 #include "grunt/string_pool_fold.hpp"
@@ -102,7 +102,7 @@ constexpr ca::usize kNoSlot    = static_cast<ca::usize>(-1);
 // ============================================================================
 
 /// @brief UTF-16 码元序列 → classfile modified UTF-8（NUL 走 0xC0 0x80；
-///        代理对按码元各落 3 字节形——javac 写常量池的同构口径）。全码元
+///        代理对按码元各落 3 字节形，javac 写常量池的同构口径）。全码元
 ///        可表示，无失败面。
 void u16ToMutf8(const std::vector<ca::u16>& units, std::string& out)
 {
@@ -125,7 +125,7 @@ void u16ToMutf8(const std::vector<ca::u16>& units, std::string& out)
 }
 
 /// @brief UTF-16 码元序列 → UTF-8 记录形（有效代理对重组 4 字节；孤立代理
-///        返回 false）。记录形进 Site.plaintext（trace/台账/单测），孤立
+///        返回 false）。记录形进 Site.plaintext（trace/统计/单测），孤立
 ///        代理不可表示即整站拒绝（javac ldc 源语言面不含孤立代理，语料
 ///        不受影响；fail-closed 不猜）。
 bool u16ToUtf8Record(const std::vector<ca::u16>& units, std::string& out)
@@ -162,7 +162,7 @@ bool u16ToUtf8Record(const std::vector<ca::u16>& units, std::string& out)
 }
 
 /// @brief 常量池 Utf8（modified UTF-8）→ UTF-16 码元序列。3 字节代理形按
-///        码元直取不重组——literal 密文串的 `toCharArray` 就是码元语义。
+///        码元直取不重组，literal 密文串的 `toCharArray` 就是码元语义。
 ///        字节形非法（挂续/过短编码）返回 false，整块拒绝。
 bool mutf8ToU16(std::string_view bytes, std::vector<ca::u16>& out)
 {
@@ -209,7 +209,7 @@ bool mutf8ToU16(std::string_view bytes, std::vector<ca::u16>& out)
 ///        `StringEncryptTransformer.kt` 的 `encrypt(cArray, seed, key,
 ///        classKey)` 逐行转写；grunt3 分支 e41e852
 ///        `StringArrayedEncrypt.kt` 的 `encrypt` 逐字相同。解密器体
-///        （createDecryptMethod）是同一算术核——
+///        （createDecryptMethod）是同一算术核，
 ///
 ///            var n = key; var l = seed; var n2 = classKey xor n
 ///            for (i in cArray.indices) {
@@ -324,7 +324,7 @@ bool longLoadSlotOf(const ir::Insn& in, ca::u32& slot)
     return false;
 }
 
-/// @brief char[] 参数装载（ALOAD 0 / ALOAD_0——static 方法首参槽恒 0）。
+/// @brief char[] 参数装载（ALOAD 0 / ALOAD_0，static 方法首参槽恒 0）。
 bool arrayLoadZeroAt(const ir::Insn& in)
 {
     if (in.op == Op::ALOAD) return in.a == 0;
@@ -332,7 +332,7 @@ bool arrayLoadZeroAt(const ir::Insn& in)
 }
 
 /// @brief 从 from 起跳过 NOP 找下一条真实指令（squeeze 遗留落点不驻栈，
-///        number_fold 同口径）；途中任何标签置 labeledFlag（合并点记账）。
+///        number_fold 同口径）；途中任何标签置 labeledFlag（合并点计数）。
 const ir::Insn* nextRealInsn(ir::CodeDom& dom, const std::vector<ir::InsnId>& order,
                              ca::usize from, ca::usize* outQ, bool* labeledFlag)
 {
@@ -385,7 +385,7 @@ struct PoolChain
     ca::i32                                classKey = 0;
 };
 
-/// @brief 池链失败桶（记账归类；None = 成功）。
+/// @brief 池链失败桶（计数归类；None = 成功）。
 enum class ChainFail : ca::u8 { None, NoPrelude, ArrayInit, Decryptor };
 
 /// @brief 一次 promote 的会话级产物（arrayInit / 解密器检查共用）。
@@ -415,7 +415,7 @@ bool promoteToSeq(ir::ClassSession& s, ca::usize methodIndex, PromotedCode& out)
 }
 
 /// @brief 解密器三窗口钉形：init（classKey 烧体）+ 循环头（bound=len）+ 核
-///        （52 条算术核心逐字）。全部命中且槽位互证一致、解法唯一才放行。
+///        （52 条算术核心逐字）。全部命中且槽位核对一致、解法唯一才放行。
 ///        后续加密面变换（ArithmeticEncrypt/Controlflow）打碎任一窗口 →
 ///        整类拒绝（fail-closed，residual 如实计）。
 /// @return 是否提取成功（classKey 进 out；失败原因进 why）。
@@ -485,7 +485,7 @@ bool extractClassKey(ir::ClassSession& s, const PromotedCode& code, std::string&
     const ca::u32    kSlot = std::get<2>(core);
 
     // ---- init 窗口（6 条）：<int classKey>; iload k; ixor; istore s;
-    //      iconst_0; istore i——槽位与核窗口互证，int 常量即 classKey ----
+    //      iconst_0; istore i，槽位与核窗口核对，int 常量即 classKey ----
     bool        initFound = false;
     std::optional<ca::i32> initKey;
     for (ca::usize p = 0; p + 6 <= seq.size(); ++p) {
@@ -506,7 +506,7 @@ bool extractClassKey(ir::ClassSession& s, const PromotedCode& code, std::string&
         return false;
     }
 
-    // ---- 循环头窗口（4 条）：iload i; aload 0; arraylength; if_icmpge——
+    // ---- 循环头窗口（4 条）：iload i; aload 0; arraylength; if_icmpge，
     //      循环界 = 数组长（keystream 覆盖全长的事实钉面），至少一处 ----
     bool headFound = false;
     for (ca::usize p = 0; p + 4 <= seq.size(); ++p) {
@@ -741,7 +741,7 @@ ChainFail buildPoolChain(ir::ClassSession& s, PoolChain& out, std::string& why)
     }
 
     // ---- 前导四连：<int n>; ANEWARRAY java/lang/String; PUTSTATIC <pool>;
-    //      INVOKESTATIC <arrayInit> ()V——允许多个候选但只取唯一解 ----
+    //      INVOKESTATIC <arrayInit> ()V，允许多个候选但只取唯一解 ----
     const std::vector<const ir::Insn*>& seq = clinit.seq;
     std::optional<std::string>          poolField;
     std::optional<std::string>          arrayInitName;
@@ -871,7 +871,7 @@ ChainFail buildPoolChain(ir::ClassSession& s, PoolChain& out, std::string& why)
         return ChainFail::Decryptor;
     }
 
-    // ---- 池表完整性：块数 = 前导池长（生成面逐字对齐的事实互证）----
+    // ---- 池表完整性：块数 = 前导池长（生成面逐字对齐的事实核对）----
     if (static_cast<ca::i32>(out.entries.size()) != out.poolLen) {
         why = "池表块数与前导池长不符";
         return ChainFail::ArrayInit;
@@ -896,7 +896,7 @@ void scanClass(ir::ClassSession& s, const std::string& uri, ScanResult& result,
     std::string why;
     const ChainFail fail = buildPoolChain(s, chain, why);
     if (fail != ChainFail::None) {
-        // 失败桶：按原因归类记账（可折叠面缺席不是异常——非本家类占大头）。
+        // 失败桶：按原因归类计数（可折叠面缺席不是异常，非本家类占大头）。
         if (!countOnly && fail != ChainFail::NoPrelude) {
             Reject rej;
             rej.uri = uri;
@@ -945,7 +945,7 @@ void scanClass(ir::ClassSession& s, const std::string& uri, ScanResult& result,
                 || sem.desc != knowledge::kGruntPoolFieldDesc || sem.owner != selfName
                 || sem.name != chain.fieldName) continue;
 
-            // 合并点门：三元组内部有标签 = 外部到达路径的栈形状不可知。
+            // 合并点检查：三元组内部有标签 = 外部到达路径的栈形状不可知。
             // NOP 跳过（squeeze 遗留落点不驻栈，number_fold 同口径）。
             bool            labeled = false;
             ca::usize       midQ = 0, tailQ = 0;
@@ -1048,7 +1048,7 @@ ca::u32 internPlainString(jbc::core::ConstantPool& cp, const PlainUnits& plain)
     return cp.addString(utf8Idx);
 }
 
-/// @brief 单站点改写。@return false = 未动（failed 记账）。
+/// @brief 单站点改写。@return false = 未动（failed 计数）。
 ///
 /// 重定位（srcPc + GETSTATIC）→ 形状复核（scan 之后字节可能已被同方法前站
 /// 改写，不盲改）→ CP intern → 锚点原地换 ldc（srcPc 保留）→ 跨度其余指令
@@ -1119,7 +1119,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
     rewrite_tools::FrameContext frames(container);
 
-    // 站点按 uri 聚类（万类大罐上避免 classes × sites 平方账）。
+    // 站点按 uri 聚类（万类大 jar 上避免 classes × sites 平方账）。
     std::unordered_map<std::string, std::vector<const Site*>> byUri;
     for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
 
@@ -1146,7 +1146,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
-        // 前置门：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
+        // 前置检查：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
         const std::unordered_set<ca::usize> safe =
             proof_tools::roundTripSafe(*entry.bytes,
                                        std::vector<ca::usize>(methodIdxs.begin(),
@@ -1222,7 +1222,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,
                   ca::usize classesBefore)
 {
-    // proof 是效力门（不变量复核），不许被 pass 级时间片截短——挂起期间
+    // proof 是效力检查（不变量复核），不许被 pass 级时间片截短，挂起期间
     // forEachClass 全量放行（residual 统计同样要看到全量类）。
     pass_clock::Suspend                   suspend;
     const proof_tools::ClassIntactResult intact =

@@ -10,7 +10,7 @@ import java.util.List;
  * grunt3 分支 e41e852 StringArrayedEncrypt.kt 逐字相同）。
  *
  * 用法：java GruntStringEncryptRef.java <plaintext> <seed> <key> <classKey>
- * 输出：cipher 的 UTF-16 码元十进制序列（逗号分隔）——测试夹具按此嵌入
+ * 输出：cipher 的 UTF-16 码元十进制序列（逗号分隔），测试夹具按此嵌入
  * CASTORE / ldc 密文，fold 产物应还原为 <plaintext> 本身。
  */
 public class GruntStringEncryptRef {

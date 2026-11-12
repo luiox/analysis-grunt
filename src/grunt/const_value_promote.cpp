@@ -9,7 +9,7 @@
 /// ## 值面解码与回填通道
 ///
 /// `const_args::decodeValueLoad`（工具箱）：与栈值面 `decodePush` 是两个
-/// 事实——接受 ldc String，拒绝 aconst_null。返回
+/// 事实，接受 ldc String，拒绝 aconst_null。返回
 /// `ValueLoad{kind, bits, str, slots}`，ev::Value 装不下字符串所以独立成
 /// 结构。回填三通道：`internInteger`（i32，会话侧 intern）、
 /// `cp.addLong/addFloatBits/addDoubleBits`（u2 域检查，LDC2_W 是 CP2）、
@@ -125,14 +125,14 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
     ScanResult result;
 
     // 访问面普查不完整（会话打不开的类 / promote 失败的方法）＝引用证据不足
-    // ——「唯一写在本类 clinit」判据会漏计漏普查面上的写，fail-closed 整轮
+    // ，唯一写在本类 clinit判据会漏计漏普查面上的写，fail-closed 整轮
     // 放弃（与 dead_member 引用普查同一课，宁误留不误删）。
     field_census::Census     census;
     const field_census::Stat stat = field_census::scanFieldAccess(container, census);
     if (!stat.complete()) {
         result.censusIncomplete = true;
         std::fprintf(stderr,
-                     "[grunt.ConstValuePromote] 普查不完整（类 %zu / 方法 %zu 未普查）——整轮放弃\n",
+                     "[grunt.ConstValuePromote] 普查不完整（类 %zu / 方法 %zu 未普查），整轮放弃\n",
                      stat.classesSkipped, stat.methodsPromoteFailed);
         return result;
     }
@@ -162,7 +162,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
             if (!descSupported(fdesc)) continue;
             if (fieldHasConstantValue(s, fld)) continue;
 
-            // 访问面门：全容器唯一一次写，落在本类 clinit（owner::name 键）。
+            // 访问面检查：全容器唯一一次写，落在本类 clinit（owner::name 键）。
             const std::string ownerKey = std::string(cf.thisName()) + "::" + fname;
             const auto        acc      = census.find(ownerKey);
             if (acc == census.end()) continue;
@@ -304,7 +304,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                         continue;
                     }
 
-                    // 值指令回溯（NOP 跳过），取位置而非指针——后面要按位改写。
+                    // 值指令回溯（NOP 跳过），取位置而非指针，后面要按位改写。
                     ca::usize valuePos = static_cast<ca::usize>(-1);
                     for (ca::usize q = putPos; q > 0;) {
                         --q;
@@ -329,7 +329,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                         continue;
                     }
 
-                    // 标签门：值指令与 putstatic 都不能是合并点。
+                    // 标签检查：值指令与 putstatic 都不能是合并点。
                     bool blocked = !dom.labelsAt(order[putPos]).empty()
                                    || !dom.labelsAt(order[valuePos]).empty();
                     if (blocked) {

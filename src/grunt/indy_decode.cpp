@@ -1,6 +1,6 @@
 /// @file        indy_decode.cpp
 /// @brief       残留 `indy_decode` 三段实现：key 提取（S2）→ mode/extra 表
-///              分派（S3，knowledge 表）→ desc 互证（S1）→ 7 形态改写。
+///              分派（S3，knowledge 表）→ desc 核对（S1）→ 7 形态改写。
 ///
 /// 形态、判据分级与插入式改写的锚保留/槽位面设计见头文件；骨架对齐
 /// indy_fold / number_fold：scan 只读、rewrite 只写（mutateMethodWithFrames
@@ -10,7 +10,7 @@
 ///
 /// 文件系统副作用（JDK 接口普查）收敛在 scan 之前：CLI `--jdk` 传入 JDK
 /// 根，adapter 在 probeEra 判为 Kasumi 时才扫描注入；残留本体零文件系统遍
-/// 历。jdkInterfaces 为空 = 无任何旁证——virtual 站点目标不在容器时整站
+/// 历。jdkInterfaces 为空 = 无任何旁证，virtual 站点目标不在容器时整站
 /// fail-closed 拒绝（invokevirtual 误调接口方法运行时
 /// IncompatibleClassChangeError，fail-closed 优先于覆盖率）。
 ///
@@ -20,7 +20,7 @@
 /// BSM→解密器映射），第二轮逐方法逐 INVOKEDYNAMIC 判定；key 按内部类名归
 /// 账。S2 双钉选面：BSM 8 参描述符指纹（scan_tools::bsmEntries 读
 /// BootstrapMethods）+ 解密器体形（i2c 回溯两层 ixor 取常量异或，兼容单
-/// 层）；指纹不钉的 indy 静默跳过——非本家调用点不记账。Era 门：probeEra
+/// 层）；指纹不钉的 indy 静默跳过，非本家调用点不计数。Era 检查：probeEra
 /// ≠ Kasumi 整站拒绝；mode/extra 表是 S3 换代面，Era 分支是它唯一合法的
 /// 落点。key 链 bsmDecrypt[bsm] → dec → decryptors[dec] = key（BSM 体里第
 /// 一条直调本类 (String;)String 的 invokestatic 即映射），任一环断 =
@@ -30,14 +30,14 @@
 /// 解密是自写 MUTF-8 码元解码：孤立代理是合法形态（库的严格 UTF-8 解码会
 /// 拒真），逐码元 XOR key 低 16 位后按 Java 规则重编码；owner 点分转内部
 /// 名。ctor 的 encDesc 解出空 → init desc 由 indy 描述符参数段合成（描述
-/// 符里 `)` 只在参数段尾出现一次，取最后一个）。S1 互证见头文件，不符 =
+/// 符里 `)` 只在参数段尾出现一次，取最后一个）。S1 核对见头文件，不符 =
 /// descMismatch 桶。
 ///
 /// ## REWRITE
 ///
-/// 按 uri 聚合，roundTripSafe 前置门（未改会话先往返，跑不完整方法整方法
+/// 按 uri 聚合，roundTripSafe 前置检查（未改会话先往返，跑不完整方法整方法
 /// 跳过）。纯原地三形态（static/getstatic/putstatic）换 op + setMember 换
-/// CP 引用（先 intern 后动 DOM），srcPc 保留；换不动则 op 还原——失败不
+/// CP 引用（先 intern 后动 DOM），srcPc 保留；换不动则 op 还原，失败不
 /// 留半截指令。插入式四形态见头文件：indy 本体原地换指令，spill/reload
 /// （或 NEW;DUP）序列插在 indy 之前，spill 槽从 cu->maxLocals 起排、成功
 /// 后抬到新水位（超 u16 整站放弃）；插入失败 eraseBatch 回滚再报 failed。
@@ -46,7 +46,7 @@
 /// ## 已知边界
 ///
 /// 解密产物空 owner / 非 ctor 空 name → decodeFailed 拒绝，不猜。解密器形
-/// 状变体（i2c 前多一层算术等）不认——换代面，Era 门兜底整站拒绝。
+/// 状变体（i2c 前多一层算术等）不认，换代面，Era 检查兜底整站拒绝。
 /// ConstantCallSite 假设：可变调用点形态不在面内。
 
 #include "grunt/indy_decode.hpp"
@@ -92,7 +92,7 @@ using jbc::type::TypeDesc;
 constexpr ca::u16 kAccInterface = 0x0200;   ///< class access_flags 的 ACC_INTERFACE
 
 /// rewriteSite 的成功产出：命中形态（DirtySet 形态计数由调用方在类写回
-/// 成功后归账——类级放弃不许虚报站点）。
+/// 成功后归账，类级放弃不许虚报站点）。
 using FormHit = std::optional<knowledge::KasumiIndyForm>;
 
 // ============================================================================
@@ -204,8 +204,8 @@ struct ClassKeys
     std::unordered_map<std::string, std::string> bsmDecrypt;
 };
 
-/// @brief 收集一类的解密器 key 与 BSM→解密器映射（纯读，失败静默——缺表在
-///        站点判定时走 keyMissing 记账）。
+/// @brief 收集一类的解密器 key 与 BSM→解密器映射（纯读，失败静默，缺表在
+///        站点判定时走 keyMissing 计数）。
 void collectClassKeys(ir::ClassSession& s, ClassKeys& out)
 {
     const ir::ClassUnit& unit = s.unit();
@@ -227,7 +227,7 @@ void collectClassKeys(ir::ClassSession& s, ClassKeys& out)
             continue;
         }
         if (mdesc != knowledge::kKasumiBootstrapDesc) continue;
-        // BSM 候选：体内第一条「直调本类 (String;)String 解密器」的
+        // BSM 候选：体内第一条直调本类 (String;)String 解密器的
         // invokestatic 即映射。
         if (!ir::hasCode(s, mi)) continue;
         auto promoted = ir::promoteMethod(s, mi);
@@ -287,7 +287,7 @@ bool readBsmArgs(const jbc::core::ConstantPool& cp, const std::vector<ca::u32>& 
 }
 
 /// @brief 解密 owner/name/desc 三段并过基本合法性（owner 非空；name 非空
-///        除 ctor——new 不需要方法名）。owner 点分 → slash。
+///        除 ctor，new 不需要方法名）。owner 点分 → slash。
 bool decryptTargets(const BsmArgs& args, ca::i32 key, bool ctor, std::string& owner,
                     std::string& name, std::string& desc, std::string& why)
 {
@@ -310,7 +310,7 @@ bool decryptTargets(const BsmArgs& args, ca::i32 key, bool ctor, std::string& ow
 }
 
 // ============================================================================
-// ==== S1 交叉校验：indy desc 与解密结果互证 =================================
+// ==== S1 交叉校验：indy desc 与解密结果核对 =================================
 // ============================================================================
 
 /// @brief 按 7 形态核对 indy 描述符与解密结果。ctor 的 init desc 在这里定案：
@@ -363,7 +363,7 @@ bool crossCheck(knowledge::KasumiIndyForm form, const MethodDesc& indy,
         const bool isGetter = form == knowledge::KasumiIndyForm::GetField
                               || form == knowledge::KasumiIndyForm::GetStatic;
         if (isStatic) {
-            // 静态字段：indy desc 无 receiver——getter ()T / setter (T)V。
+            // 静态字段：indy desc 无 receiver，getter ()T / setter (T)V。
             if (isGetter) {
                 if (!indy.params.empty()) return fail("static getter 带参数");
                 if (indy.ret_void || !sameType(indy.ret, field)) return fail("getter 类型不符");
@@ -374,7 +374,7 @@ bool crossCheck(knowledge::KasumiIndyForm form, const MethodDesc& indy,
                 if (!indy.ret_void) return fail("setter 返回类型不符");
             }
         } else {
-            // 实例字段：首参 Object(receiver)——getter (Object)T /
+            // 实例字段：首参 Object(receiver)，getter (Object)T /
             // setter (Object,T)V。
             if (isGetter) {
                 if (indy.params.size() != 1 || !isRefType(indy.params[0])) {
@@ -419,7 +419,7 @@ enum class Verdict
 {
     Skip,    ///< 非 Kasumi indy / CP 不可归属：静默跳过（不进 rejects）
     Accept,  ///< 站点成立
-    Reject,  ///< fail-closed 拒绝（进 rejects，bucket 已记账）
+    Reject,  ///< fail-closed 拒绝（进 rejects，bucket 已计数）
 };
 
 /// @brief 一个 indy 指令位置 → Site / Reject / Skip。
@@ -481,7 +481,7 @@ Verdict judgeSite(ir::CodeUnit& cu, const std::string& uri, ca::usize methodInde
     }
     ++stats.totalIndy;
 
-    // ---- S3 的 Era 门：mode/extra 数值表只在 Kasumi 判定下可用 ----
+    // ---- S3 的 Era 检查：mode/extra 数值表只在 Kasumi 判定下可用 ----
     if (input.era != knowledge::Era::Kasumi) {
         return reject("Era 未判定：mode/extra 表不可用（fail-closed）", 0);
     }
@@ -522,7 +522,7 @@ Verdict judgeSite(ir::CodeUnit& cu, const std::string& uri, ca::usize methodInde
         return reject(std::move(why), 3);
     }
 
-    // ---- S1：indy desc 与解密结果互证 ----
+    // ---- S1：indy desc 与解密结果核对 ----
     if (!cp.valid(indy.b)) return reject("indy NameAndType 索引无效", 4);
     const jbc::core::ConstantPool::Entry& nat = cp.at(indy.b);
     if (nat.tag != CpTag::NameAndType || !cp.valid(nat.b)) {
@@ -538,7 +538,7 @@ Verdict judgeSite(ir::CodeUnit& cu, const std::string& uri, ca::usize methodInde
     // ---- 接口旁证（virtual 落点分派）：容器普查优先（权威）。JDK 侧是
     //      穷举普查（scanJdkInterfaces 收全集内全部接口），故**成员与否双向
     //      作证**：在集 = 接口（invokeinterface），不在集 = 类（invokevirtual
-    //      ——ArrayList 这类 JDK 类目标靠缺席证据落对）。集合为空 = 没有任何
+    //      ，ArrayList 这类 JDK 类目标靠缺席证据落对）。集合为空 = 没有任何
     //      旁证，fail-closed 拒绝（invokevirtual 误调接口方法在运行时
     //      IncompatibleClassChangeError）。
     if (form == knowledge::KasumiIndyForm::Virtual) {
@@ -561,7 +561,7 @@ Verdict judgeSite(ir::CodeUnit& cu, const std::string& uri, ca::usize methodInde
 // ==== 改写原语 ==============================================================
 // ============================================================================
 
-/// @brief 一条合成指令（srcPc 由 CodeDom 硬清 kNoPc——锚保留设计见头文件）。
+/// @brief 一条合成指令（srcPc 由 CodeDom 硬清 kNoPc，锚保留设计见头文件）。
 ir::Insn synthInsn(Op op, ca::u32 slot)
 {
     ir::Insn in;
@@ -570,10 +570,10 @@ ir::Insn synthInsn(Op op, ca::u32 slot)
     return in;
 }
 
-/// @brief 单站点改写。@return 命中形态；nullopt = 未动（failed 记账）。
+/// @brief 单站点改写。@return 命中形态；nullopt = 未动（failed 计数）。
 ///
 /// 重定位 + 复核（scan 之后字节可能已被同方法前站改写，不盲改）；插入式站点
-/// 先插 spill/reload（或 NEW;DUP）再原地换指令——indy 本体保 srcPc。
+/// 先插 spill/reload（或 NEW;DUP）再原地换指令，indy 本体保 srcPc。
 FormHit rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu,
                     const std::vector<jbc::core::BootstrapMethodsAttr::Entry>& bsms,
                     const Site& site, ca::usize& failed)
@@ -870,7 +870,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
 {
     ScanResult result;
 
-    // 第一遍：接口普查（全容器——indy 目标可能是无 indy 形状的接口）+ 每类
+    // 第一遍：接口普查（全容器，indy 目标可能是无 indy 形状的接口）+ 每类
     // key/BSM 映射收集。
     std::unordered_map<std::string, bool>      jarIsInterface;
     std::unordered_map<std::string, ClassKeys> keysByOwner;
@@ -938,7 +938,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
     rewrite_tools::FrameContext frames(container);
 
-    // 站点按 uri 聚类（对齐 number_fold：万类大罐上避免 classes × sites 平方账）。
+    // 站点按 uri 聚类（对齐 number_fold：万类大 jar 上避免 classes × sites 平方账）。
     std::unordered_map<std::string, std::vector<const Site*>> byUri;
     for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
 
@@ -965,7 +965,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
-        // 前置门：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
+        // 前置检查：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
         const std::unordered_set<ca::usize> safe =
             proof_tools::roundTripSafe(*entry.bytes,
                                        std::vector<ca::usize>(methodIdxs.begin(),
@@ -1093,7 +1093,7 @@ ca::usize countKasumiIndyResidual(const mjbase::model::ResourceContainer& contai
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,
                   ca::usize classesBefore)
 {
-    // proof 是效力门（不变量复核），不许被 pass 级时间片截短——挂起期间
+    // proof 是效力检查（不变量复核），不许被 pass 级时间片截短，挂起期间
     // forEachClass 全量放行（residual 统计同样要看到全量类）。
     pass_clock::Suspend    suspend;
     ProofResult            result;

@@ -15,7 +15,7 @@ namespace grunt::cli {
 bool wideArgToUtf8(const wchar_t* arg, std::string& out)
 {
     if (arg == nullptr) return false;
-    // WC_ERR_INVALID_CHARS：失配代理对直接判败，不做 U+FFFD 静默替换——
+    // WC_ERR_INVALID_CHARS：失配代理对直接判败，不做 U+FFFD 静默替换，
     // 替换后的路径必然 NotFound，比显式报错更难排查。
     const int need = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, arg, -1,
                                          nullptr, 0, nullptr, nullptr);

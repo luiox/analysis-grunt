@@ -1,6 +1,6 @@
 /// @file        gate_processor_fold_test.cpp
-/// @brief       残留 `gate_processor_fold` 的三段判据测试：门点形状钉、跨方法
-///              求值（含 rotateLeft 接管与转发器递归）、恒真裁决门与 TAKEN 形
+/// @brief       残留 `gate_processor_fold` 的三段判据测试：gate 形状钉、跨方法
+///              求值（含 rotateLeft 接管与转发器递归）、恒真裁决检查与 TAKEN 形
 ///              折叠，逐桶反证。
 #include "grunt/gate_processor_fold.hpp"
 
@@ -79,7 +79,7 @@ std::string rejectReasons(const ScanResult& result)
     return out;
 }
 
-/// 门点方法体：三常量喂 proc、compareValue 比较、真臂 Lreal / junk 臂
+/// gate 方法体：三常量喂 proc、compareValue 比较、真臂 Lreal / junk 臂
 /// fallthrough（生成面布局）。
 std::string gateBody(const std::string& procRef, const std::string& argInsns,
                      const std::string& compareInsn)
@@ -189,8 +189,8 @@ TEST(GateProcessorFoldRewrite, FoldsToAlwaysTrueForm)
         if (in->op == jbc::core::Op::IF_ICMPEQ) ++icmps;
         if (in->op == jbc::core::Op::IFEQ) ++ifeqs;
     }
-    EXPECT_EQ(invokes, 0u) << "门点调用未擦除";
-    EXPECT_EQ(icmps, 0u) << "门点比较未折叠";
+    EXPECT_EQ(invokes, 0u) << "gate 调用未擦除";
+    EXPECT_EQ(icmps, 0u) << "gate 比较未折叠";
     EXPECT_EQ(ifeqs, 1u) << "TAKEN 未落恒真 IFEQ";
     ASSERT_NE(firstInsn, nullptr);
     EXPECT_EQ(firstInsn->op, jbc::core::Op::ICONST_0) << "锚未改 ICONST_0";
@@ -211,12 +211,12 @@ TEST(GateProcessorFoldRewrite, FoldsToAlwaysTrueForm)
     // proof：类数不增 + 脏类可重解析 + residual 归零（再扫无站点）。
     const ProofResult verdict = proof(container, dirty, before);
     EXPECT_TRUE(verdict.ok);
-    EXPECT_EQ(verdict.residual, 0u) << "折叠后同门不得再成站点";
+    EXPECT_EQ(verdict.residual, 0u) << "折叠后同一检查不得再成站点";
 }
 
 /// proc 体走 Integer.rotateLeft 盐旋转步（PredicateStep AddSaltRotate 生成
 /// 面）：rotateLeft(3,1)=6，6+2=8==compareValue。mock 语义走样（如错成
-/// rotateRight）则判非恒真、不折叠——本测试同时是接管面的哨兵。
+/// rotateRight）则判非恒真、不折叠，本测试同时是接管面的哨兵。
 TEST(GateProcessorFoldRewrite, RotateLeftBodyFolds)
 {
     model::ResourceContainer container;
@@ -239,8 +239,8 @@ TEST(GateProcessorFoldRewrite, RotateLeftBodyFolds)
     EXPECT_EQ(dirty.sites, 1u);
 }
 
-/// 跨类 proc（H3 面）：门点在 GateX、真体在 GateY（无 clinit，初始化门放
-/// 行）——跨方法求值必须穿透类边界。
+/// 跨类 proc（H3 面）：gate 在 GateX、真体在 GateY（无 clinit，初始化检查放
+/// 行），跨方法求值必须穿透类边界。
 TEST(GateProcessorFoldRewrite, CrossClassProcFolds)
 {
     model::ResourceContainer container;
@@ -268,8 +268,8 @@ TEST(GateProcessorFoldRewrite, CrossClassProcFolds)
     EXPECT_EQ(dirty.uris.size(), 1u);
 }
 
-/// `__grt$indy$` 蹬床还原产物形（IndyRestore 上游）：门点调转发器，转发器
-/// 体 = 纯 iload 前缀 + 单 invoke + ireturn——求值必须经编排层递归穿透。
+/// `__grt$indy$` 转发还原产物形（IndyRestore 上游）：gate 调转发器，转发器
+/// 体 = 纯 iload 前缀 + 单 invoke + ireturn，求值必须经编排层递归穿透。
 TEST(GateProcessorFoldRewrite, ForwarderRecursionFolds)
 {
     model::ResourceContainer container;
@@ -304,7 +304,7 @@ TEST(GateProcessorFoldRewrite, ForwarderRecursionFolds)
 }
 
 /// TLR 面（RandomBound 变体，运行期随机，明确排除）：proc 体引用
-/// ThreadLocalRandom，不在容器内、无 mock——求值 EvalBadState 整站拒绝。
+/// ThreadLocalRandom，不在容器内、无 mock，求值 EvalBadState 整站拒绝。
 TEST(GateProcessorFoldScan, TlrBodyFailsClosed)
 {
     model::ResourceContainer container;
@@ -322,8 +322,8 @@ TEST(GateProcessorFoldScan, TlrBodyFailsClosed)
         << "运行期随机面必须 fail-closed（EvalBadState 桶）";
 }
 
-/// TLR 窗口变体：TLR.current 取数进前窗——停点具名识别，TlrWindow 桶单独
-/// 记账（与走廊走样的 ForwardShape 区分，RandomBound 排除面在 trace 可见）。
+/// TLR 窗口变体：TLR.current 取数进前窗，停点具名识别，TlrWindow 桶单独
+/// 计数（与走廊走样的 ForwardShape 区分，RandomBound 排除面在 trace 可见）。
 TEST(GateProcessorFoldScan, TlrWindowRejected)
 {
     model::ResourceContainer container;
@@ -359,7 +359,7 @@ TEST(GateProcessorFoldScan, TlrWindowRejected)
     EXPECT_NE(findReject(scanned, RejectReason::TlrWindow), nullptr);
 }
 
-/// 生成面恒真保证的防御面：proc(1,2,3) = (1^2)+3 = 6 != compareValue 7——
+/// 生成面恒真保证的防御面：proc(1,2,3) = (1^2)+3 = 6 != compareValue 7，
 /// 判非 taken 即拒绝，绝不按非真方向改写。
 TEST(GateProcessorFoldScan, NotAlwaysTrueRejected)
 {
@@ -407,7 +407,7 @@ TEST(GateProcessorFoldScan, NonConstantArgsRejected)
     EXPECT_NE(findReject(scanned, RejectReason::ArgsNotConstant), nullptr);
 }
 
-/// 前窗面反证：调用与比较之间夹了多余栈操作（aconst_null; pop）——非生成面
+/// 前窗面反证：调用与比较之间夹了多余栈操作（aconst_null; pop），非生成面
 /// 逐字形，ForwardShape 整站拒绝。
 TEST(GateProcessorFoldScan, PollutedWindowRejected)
 {
@@ -457,7 +457,7 @@ TEST(GateProcessorFoldScan, OutsideTargetRejected)
     EXPECT_NE(findReject(scanned, RejectReason::TargetOutside), nullptr);
 }
 
-/// 初始化暴露门（constant_call 同源）：目标类 clinit 非中性时跨类调用拒绝
+/// 初始化暴露检查（constant_call 同源）：目标类 clinit 非中性时跨类调用拒绝
 /// （删调用会改变被调类初始化时机）。
 TEST(GateProcessorFoldScan, CrossClassClinitPresentRejected)
 {
@@ -494,9 +494,9 @@ TEST(GateProcessorFoldScan, CrossClassClinitPresentRejected)
         << "rejects: " << rejectReasons(scanned);
 }
 
-/// 标签门：操作数区中段（salt 常量上）带真实合并点标签（有入边、栈形相容）
-/// = 合并点，rewrite 整站放弃、字节不动（scan 不设此门——站点照常入改写面，
-/// 由复核段拦；未引用标签在 promote 后不驻 DOM，测不出该门）。
+/// 标签检查：操作数区中段（salt 常量上）带真实合并点标签（有入边、栈形相容）
+/// = 合并点，rewrite 整站放弃、字节不动（scan 不设此检查，站点照常入改写面，
+/// 由复核段拦；未引用标签在 promote 后不驻 DOM，测不出该检查）。
 TEST(GateProcessorFoldRewrite, MidRegionLabelBlocked)
 {
     model::ResourceContainer container;

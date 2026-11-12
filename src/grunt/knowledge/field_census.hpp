@@ -1,12 +1,12 @@
 /// @file        field_census.hpp
 /// @brief       家族知识：容器级字段访问面普查（promote 精确口径）。
 ///
-/// 消费方：const_value_promote（唯一写入门）、seed_strip（写全在本类 clinit
-/// 门）。普查走 promote 后的指令面，不受死池条目干扰；key = owner::name。
+/// 消费方：const_value_promote（唯一写入检查）、seed_strip（写全在本类 clinit
+/// 检查）。普查走 promote 后的指令面，不受死池条目干扰；key = owner::name。
 ///
 /// fail-closed 口径（与 dead_member 引用普查同一课）：普查**不完整**时调用方
-/// 必须放弃改写——会话打不开的类、promote 失败的方法都计进 Stat，键面看不见
-/// 它们的访问，任何「零引用/唯一写」判据都会漏计证据（宁误留不误删）。
+/// 必须放弃改写，会话打不开的类、promote 失败的方法都计进 Stat，键面看不见
+/// 它们的访问，任何零引用/唯一写判据都会漏计证据（宁误留不误删）。
 #pragma once
 
 #include <string>
@@ -32,7 +32,7 @@ struct FieldAcc
 /// @brief 逐字段访问清单，key = `owner::name`。
 using Census = std::unordered_map<std::string, std::vector<FieldAcc>>;
 
-/// @brief 普查完整性台账：漏计的类 / 方法数（>0 即引用证据不足）。
+/// @brief 普查完整性统计：漏计的类 / 方法数（>0 即引用证据不足）。
 struct Stat
 {
     ca::usize classesSkipped       = 0;   ///< 会话打不开，整类未普查
@@ -44,7 +44,7 @@ struct Stat
     }
 };
 
-/// @brief 容器级普查：全部方法的字段访问指令逐条归类。@return 完整性台账。
+/// @brief 容器级普查：全部方法的字段访问指令逐条归类。@return 完整性统计。
 inline Stat scanFieldAccess(const mjbase::model::ResourceContainer& container, Census& out)
 {
     namespace ir = jbc::ir;

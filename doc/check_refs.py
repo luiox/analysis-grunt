@@ -6,15 +6,15 @@
 1. ``doc:<label>`` 必须能在 doc/**.rst 里找到 ``.. _<label>:`` 声明；同理
    ``:ref:``/``:doc:`` 目标在 RST 侧自检（label 唯一 + doc 文件在册）。
 2. 代码面出现的 ``doc/...rst`` 路径必须存在。
-3. 文档/代码面不得点名「设计内容形态」的 ``.md``。白名单：流程文档
+3. 文档/代码面不得点名设计内容形态的 ``.md``。白名单：流程文档
    （README/CONVENTION/CHANGELOG 等）；跨仓出处必须带仓名标记（mjt / grunt2 / grunt3 / luiox 等）。**迁移期特例**：本仓正处
-   md→rst 逐批迁移中，点名「仓库里仍存在」的 md 文件放行——仓内账本
+   md→rst 逐批迁移中，点名仓库里仍存在的 md 文件放行，仓内记录
    简写（裸文件名 / pass 名下划线写法）按 doc/ 树内同名唯一命中解析
    （含下划线↔连字符归一）；文件删除/迁移后 mention 自动变红，倒逼
    逐批清理；源码注释 ``doc:<label>`` 指向铺开是后续批，本批不强制。
    jar 资源名（META-INF/**.md）是测试夹具字符串不是文档点名，豁免。
-4. RST 里「``X`` 头注」指向微观层：``X`` 必须是某个 ``@defgroup`` 组名或
-   某个头文件名。宏观规格不许指向不存在的组注释——那一半内容就失踪了。
+4. RST 里``X`` 头注指向微观层：``X`` 必须是某个 ``@defgroup`` 组名或
+   某个头文件名。宏观规格不许指向不存在的组注释，那一半内容就失踪了。
    另：``doc_ai`` 在本仓从无本地目录，出现即指兄弟研究仓，必须带仓名
    标记，否则按坏引用计。
 
@@ -57,7 +57,7 @@ DEFGROUP = re.compile(r"@defgroup\s+([\w.-]+)")
 
 
 def micro_targets(src_root: Path):
-    """微观层可被「X 头注」点名的锚点：@defgroup 组名 + 头文件名/.stem。"""
+    """微观层可被X 头注点名的锚点：@defgroup 组名 + 头文件名/.stem。"""
     groups, headers = set(), set()
     if not src_root.is_dir():
         return groups, headers
@@ -101,7 +101,7 @@ def md_allowed(root: Path, mention: str, line: str) -> bool:
         return True
     if (root / rel).exists():
         return True
-    # 仓内 doc 账本简写放行（迁移期）：裸文件名 / pass 名下划线写法按 doc/
+    # 仓内 doc 记录简写放行（迁移期）：裸文件名 / pass 名下划线写法按 doc/
     # 树内同名唯一命中解析（含下划线↔连字符归一）；命中不唯一或零命中仍失败。
     hits = set()
     for name in {rel.name, rel.name.replace("_", "-")}:
@@ -156,7 +156,7 @@ def check(root: Path):
     problems += dup
     in_tree = toctree_entries(doc_dir / "index.rst")
     # 子目录 toctree 条目（Sphinx 相对 index 所在目录解析，如 obf-behaviors/<stem>）
-    # 按末段 stem 归一比对——孤儿判定只看「挂进 toctree 与否」，不看层级。
+    # 按末段 stem 归一比对，孤儿判定只看挂进 toctree 与否，不看层级。
     in_tree_stems = in_tree | {entry.rsplit("/", 1)[-1] for entry in in_tree}
     groups, headers = micro_targets(root / "src")
 
@@ -176,7 +176,7 @@ def check(root: Path):
             for m in MD_MENTION.finditer(line):
                 if not md_allowed(root, m.group(0), line):
                     problems.append(
-                        f"{p.name}:{lineno}: 文档点名 markdown 规格 {m.group(0)}——"
+                        f"{p.name}:{lineno}: 文档点名 markdown 规格 {m.group(0)}，"
                         "在册 rst 用 :ref:/:doc:，跨仓出处加仓名标记"
                     )
             for m in REF_ROLE.finditer(line):
@@ -192,7 +192,7 @@ def check(root: Path):
                 if target in groups or target in headers:
                     continue
                 problems.append(
-                    f"{p.name}:{lineno}: 「{target} 头注」在微观层无锚点——"
+                    f"{p.name}:{lineno}: {target} 头注在微观层无锚点，"
                     f"应为 @defgroup 组名或头文件名（现有组：{', '.join(sorted(groups)) or '无'}）"
                 )
 
@@ -213,7 +213,7 @@ def check(root: Path):
             for m in MD_MENTION.finditer(line):
                 if not md_allowed(root, m.group(0), line):
                     problems.append(
-                        f"{rel}:{lineno}: 代码面引用 markdown 规格 {m.group(0)}——"
+                        f"{rel}:{lineno}: 代码面引用 markdown 规格 {m.group(0)}，"
                         "迁移期只放行仍存在的文件，跨仓出处加仓名标记"
                     )
 

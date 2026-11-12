@@ -7,8 +7,8 @@
 /// - 反证：普通 6 参 BSM 类（indy_fold 形态）、空容器 → Unknown。
 ///
 /// @Metadata 注解指纹不在此覆盖（jasm 夹具不带注解面）：该探针走与
-/// booger_anno_strip 同一 decodeAttr 通路，语料单罐（SnakeGame-obf.jar）上
-/// 以命名空间 + BSM 双指纹实证（doc/kasumi-verify.md）。
+/// booger_anno_strip 同一 decodeAttr 通路，语料单 jar（SnakeGame-obf.jar）上
+/// 以命名空间 + BSM 双指纹验证（doc/kasumi-verify.rst）。
 #include "grunt/knowledge/era.hpp"
 
 #include "libca/core/tag_cast.hpp"
@@ -83,7 +83,7 @@ std::string namespaceHostSource()
 }
 
 /// 8 参 BSM 指纹夹具：类名不带命名空间，只靠 BootstrapMethods 条目的
-/// MethodHandle 描述符命中。BSM 体不必真返回 CallSite——指纹只读属性。
+/// MethodHandle 描述符命中。BSM 体不必真返回 CallSite，指纹只读属性。
 std::string bsmFingerprintSource()
 {
     return ".super java/lang/Object\n"

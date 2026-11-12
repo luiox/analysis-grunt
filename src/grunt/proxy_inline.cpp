@@ -11,7 +11,7 @@
 /// 后 `decodeProxyBody` 精查；调用点普查 `collectSites` 全容器逐
 /// `INVOKESTATIC` 查定义表，命中即站点。
 ///
-/// 初始化暴露门：按代理分组后，存在 owner 外调用点的代理，owner
+/// 初始化暴露检查：按代理分组后，存在 owner 外调用点的代理，owner
 /// `<clinit>` 必须中性（缺失或只剩 NOP/RETURN，与 constant_call 同口径，
 /// 收口在 `scan_toolbox::classInitNeutral`，owner 级缓存）；非中性**整组
 /// 放弃**（只放一半调用点会把初始化时机劈成两半），记 `OwnerInitExposed`。
@@ -19,16 +19,16 @@
 ///
 /// ## 改写
 ///
-/// 按 uri → methodIndex 两级聚合；前置门 `roundTripSafe`。`rewriteSite`
+/// 按 uri → methodIndex 两级聚合；前置检查 `roundTripSafe`。`rewriteSite`
 /// 按 `srcPc+op` 定位调用指令，复核成员引用仍是该代理（防同方法前站改写
 /// 串位）后原地换：op 按 `virtualTarget` 换 `INVOKESTATIC`/`INVOKEVIRTUAL`，
-/// `setMember` 换成目标方法引用（CP intern 去重只追加），`srcPc` 保——锚
+/// `setMember` 换成目标方法引用（CP intern 去重只追加），`srcPc` 保，锚
 /// 在调用指令上的标签/调试行不动。`setMember` 失败整条指令还原。栈效应
 /// 不变（恒等转发弹栈/压栈集合一致），栈帧无需修补；lower 失败粒度 = 类，
 /// 整类放弃回写。
 ///
 /// **不动代理本体**：内联后代理变零引用死码，交给下游 DeadMember/DeadCode
-/// ——链序上本残留排在其前，同一轮就能清掉。
+/// ，链序上本残留排在其前，同一轮就能清掉。
 ///
 /// ## 已知边界
 ///
@@ -168,7 +168,7 @@ Op loadOpOf(char kind)
     }
 }
 
-/// 装载指令是否匹配「类型类 + 槽位」。两种编码都认：带操作数的
+/// 装载指令是否匹配类型类 + 槽位。两种编码都认：带操作数的
 /// `xload n`，与把槽位编码进操作码的紧凑形态 `xload_0..3`（CodeDom 不做
 /// 归一化，汇编器产出哪种就是哪种）。
 bool loadMatches(const ir::Insn& in, char kind, ca::u32 slot)
@@ -216,7 +216,7 @@ struct ProxyDef
 /// 定义表：owner\nname\ndesc -> 转发目标。
 using ProxyIndex = std::unordered_map<std::string, ProxyDef>;
 
-/// 方法体是否沾「直线代理」形状：值得进拒绝面（trace 有用）；其余静默跳过。
+/// 方法体是否沾直线代理形状：值得进拒绝面（trace 有用）；其余静默跳过。
 bool shapePlausible(const ir::CodeUnit& cu)
 {
     const std::vector<ir::InsnId>& order = cu.dom.order();
@@ -240,7 +240,7 @@ bool decodeProxyBody(ir::ClassSession& s, ir::CodeUnit& cu, std::string_view des
     const ir::CodeDom&             dom   = cu.dom;
     const std::vector<ir::InsnId>& order = dom.order();
 
-    // 直线门：任何指令带标签 = 有分支/合并点/异常入口，形状失效。
+    // 直线检查：任何指令带标签 = 有分支/合并点/异常入口，形状失效。
     for (const ir::InsnId id : order) {
         if (!dom.labelsAt(id).empty()) {
             why = RejectReason::BodyNotProxyShape;
@@ -371,7 +371,7 @@ void buildDefs(const mjbase::model::ResourceContainer& container, ProxyIndex& de
     });
 }
 
-/// 调用点普查 + 初始化暴露门。站点按代理分组收齐后以代理为单位裁决：
+/// 调用点普查 + 初始化暴露检查。站点按代理分组收齐后以代理为单位裁决：
 /// 调用点越出 owner 类的代理，owner `<clinit>` 必须中性，否则整组放弃。
 void collectSites(const mjbase::model::ResourceContainer& container, const ProxyIndex& defs,
                   ScanResult& result)
@@ -435,7 +435,7 @@ void collectSites(const mjbase::model::ResourceContainer& container, const Proxy
         }
     });
 
-    // 初始化暴露门（带 owner 级缓存）：非中性的代理整组放弃——只放一半
+    // 初始化暴露检查（带 owner 级缓存）：非中性的代理整组放弃，只放一半
     // 调用点会把初始化时机劈成两半。
     std::unordered_map<std::string, signed char> neutralCache;   // -1 未判 / 0 非 / 1 中性
     std::unordered_set<std::string>              dropped;
@@ -558,7 +558,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         touchedProxies.insert(scan_tools::keyOf(s.proxyOwner, s.proxyName, s.proxyDesc));
     }
 
-    // 两遍式：先收动作清单，再逐类「开会话 → 改写 → lower → 立即回写」，
+    // 两遍式：先收动作清单，再逐类开会话 → 改写 → lower → 立即回写，
     // 峰值内存是单类会话而不是整 jar 的改写字节（同 const_method 的理由）。
     for (auto& [uri, sites] : byUri) {
         const std::vector<ca::u8>* bytes = findClassBytes(container, uri);

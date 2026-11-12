@@ -82,7 +82,7 @@ struct Span
 constexpr ca::usize kMaxSpan = 7;   ///< 最长跨度（int 跨度 6 条 + float 包装 1 条）
 
 /// @brief 从 from 起收集最多 kMaxSpan 条非 NOP 指令（NOP 是 squeeze 遗留落点，
-///        不驻栈，跳过——与 const_args::collectArgs 同一口径）。
+///        不驻栈，跳过，与 const_args::collectArgs 同一口径）。
 void collectReal(const ir::CodeDom& dom, const std::vector<ir::InsnId>& order,
                  ca::usize from, std::vector<ca::usize>& pos,
                  std::vector<const ir::Insn*>& in)
@@ -150,7 +150,7 @@ bool matchLongToInt(ir::ClassSession& s, const std::vector<ca::usize>& pos,
 /// <i32 a> <i32 b> IAND → a & b。
 ///
 /// 位与是纯位运算：i32 逐位与与 JVM IAND 逐位等价，无符号性/溢出无涉；
-/// 折叠值直接取 a & b 的位形，不依赖生成侧「first & second = 原值」的构造
+/// 折叠值直接取 a & b 的位形，不依赖生成侧first & second = 原值的构造
 /// 意图。第二操作数类型钉 I32（I64/LDC2_W 喂给 = 栈形破裂，拒绝）。
 bool matchIntSplice(ir::ClassSession& s, const std::vector<ca::usize>& pos,
                     const std::vector<const ir::Insn*>& in, Span& out)
@@ -231,8 +231,8 @@ bool matchBase32Long(ir::ClassSession& s, const std::vector<ca::usize>& pos,
 /// @brief 包装扩展：跨度尾随 Float.intBitsToFloat / Double.longBitsToDouble
 ///        时，跨度产出从整数值升成位形浮点常量（跨度延伸一条）。
 ///
-/// 类型门是语义事实：intBitsToFloat 只收 i32（int 跨度），longBitsToDouble
-/// 只收 i64（long 跨度）——引用吻合而类型不吻合即不扩展。
+/// 类型检查是语义事实：intBitsToFloat 只收 i32（int 跨度），longBitsToDouble
+/// 只收 i64（long 跨度），引用吻合而类型不吻合即不扩展。
 void extendWrapper(ir::ClassSession& s, const std::vector<ca::usize>& pos,
                    const std::vector<const ir::Insn*>& in, Span& out)
 {
@@ -254,7 +254,7 @@ void extendWrapper(ir::ClassSession& s, const std::vector<ca::usize>& pos,
     }
 }
 
-/// @brief 跨度内除锚点外的标签门：任何中段指令带标签 = 合并点（外部到达
+/// @brief 跨度内除锚点外的标签检查：任何中段指令带标签 = 合并点（外部到达
 ///        路径的栈形状与跨度产出耦合），站点放弃。
 bool labelBlocked(const ir::CodeDom& dom, const std::vector<ir::InsnId>& order,
                   ca::usize firstPos, ca::usize lastPos)
@@ -287,7 +287,7 @@ bool tryMatchAt(ir::ClassSession& s, const ir::CodeDom& dom,
     out.value = anchor;
     bool matched = false;
     if (anchor.kind == ValueLoad::Kind::I32) {
-        // 旧式先试：新式只接旧式拒绝的站点（旧四式折叠数跨批次不动）。
+        // 旧式先试：新式只接旧式拒绝的站点（旧四式折叠数不受新式影响）。
         matched = matchIntViaLong(s, pos, in, out) || matchIntSplice(s, pos, in, out);
     } else if (anchor.kind == ValueLoad::Kind::I64) {
         matched = matchLongToInt(s, pos, in, out) || matchLongSplice(s, pos, in, out);
@@ -325,7 +325,7 @@ bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, ca::u32 classIdx,
     const std::vector<ir::InsnId>& order = cu->dom.order();
     ca::usize                      pos   = 0;
     while (pos < order.size()) {
-        if (!budget.tick()) return false;   ///< 逐位置记账：超限即停，类保守跳过
+        if (!budget.tick()) return false;   ///< 逐位置计数：超限即停，类保守跳过
         const ir::Insn* in = cu->dom.peek(order[pos]);
         if (in == nullptr || in->op == Op::NOP) {
             ++pos;
@@ -355,7 +355,7 @@ bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, ca::u32 classIdx,
 /// cu 由 mutateMethodWithFrames 提升好：promote 只发生一次。站点按 srcPc+op
 /// 重定位后全量复核（scan 之后字节可能已被同方法前站改写，不盲改），锚点
 /// 原地改成结果常量装载，跨度其余非 NOP 指令擦除。
-/// budget 逐站点按方法指令数记账（重定位是线性扫）；超限时剩余站点保守放弃。
+/// budget 逐站点按方法指令数计数（重定位是线性扫）；超限时剩余站点保守放弃。
 ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
                         const std::vector<const Site*>& sites, ca::usize& failed,
                         ca::usize& skippedByBudget, iter_budget::ClassBudget& budget)
@@ -365,7 +365,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
     ca::usize                      tried = 0;   ///< 本方法已尝试的站点数
 
     for (const Site* site : sites) {
-        // 逐站点按方法指令数记账：重定位 + 复核都是对 order 的线性扫。
+        // 逐站点按方法指令数计数：重定位 + 复核都是对 order 的线性扫。
         if (!budget.tick(order.size())) {
             skippedByBudget += sites.size() - tried;   ///< 余下站点保守放弃
             return hit;
@@ -393,7 +393,7 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
             ++failed;
             continue;
         }
-        // 标签门复核（scan 已拦，防同方法前站改写引入新边界）。
+        // 标签检查复核（scan 已拦，防同方法前站改写引入新边界）。
         if (labelBlocked(cu->dom, order, span.firstPos, span.lastPos)) {
             ++failed;
             continue;
@@ -416,8 +416,8 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit* cu,
         *anchor     = fresh;
 
         // 跨度其余非 NOP 指令擦除。NOP 是 squeeze 遗留落点，留着无害（DeadCode
-        // 收尾）。eraseBatch kRejectIfUsed：受害者被异常表引用时拒收——回滚
-        // 锚点，整站放弃，不留「常量已覆盖、跨度还在」的半改写态。
+        // 收尾）。eraseBatch kRejectIfUsed：受害者被异常表引用时拒收，回滚
+        // 锚点，整站放弃，不留常量已覆盖、跨度还在的半改写态。
         std::vector<ir::InsnId> victims;
         for (ca::usize p = anchorPos + 1; p <= span.lastPos && p < order.size(); ++p) {
             const ir::Insn* victim = cu->dom.peek(order[p]);
@@ -453,7 +453,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
             ++result.classesSkipped;
             return;
         }
-        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置计数
         ir::ClassSession&        s      = *session;
         const ir::ClassUnit&     unit   = s.unit();
         for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
@@ -480,7 +480,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
     rewrite_tools::FrameContext frames(container);
 
-    // 站点按类序号聚类（一遍建索引；此前逐类线性筛全站点的做法在万类大罐上
+    // 站点按类序号聚类（一遍建索引；此前逐类线性筛全站点的做法在万类大 jar 上
     // 是 classes × sites 的平方账）。scan/rewrite 两段对同一容器走同一
     // visitResources 序，classIdx 跨段一致。
     std::unordered_map<ca::u32, std::vector<const Site*>> byIdx;
@@ -503,9 +503,9 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
-        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置计数
 
-        // 前置门：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
+        // 前置检查：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
         const std::unordered_set<ca::usize> safe =
             proof_tools::roundTripSafe(*entry.bytes,
                                        std::vector<ca::usize>(methodIdxs.begin(),
@@ -547,8 +547,8 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         }
         if (hit == 0) return;
 
-        // 类字节就地回写：类资源内容原位换新（容器映射不动、无待写缓冲——
-        // 万类大罐上全量 dirty 类字节驻留是 GB 级账，流式写回把峰值削平）。
+        // 类字节就地回写：类资源内容原位换新（容器映射不动、无待写缓冲，
+        // 万类大 jar 上全量 dirty 类字节驻留是 GB 级账，流式写回把峰值削平）。
         auto encoded = jbc::core::writeClass(s.backing());
         if (encoded.is_err()) return;
         mjbase::model::IResource* raw = container.getResource(entry.uri);

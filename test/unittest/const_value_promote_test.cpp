@@ -2,7 +2,7 @@
 /// @brief       残留 `const_value_promote` 的三段判据测试（jasm 夹具）。
 ///
 /// 覆盖分工：
-/// - SCAN：int/long/String 三通道单写正例（kind/slots/desc 互证）；同字段
+/// - SCAN：int/long/String 三通道单写正例（kind/slots/desc 核对）；同字段
 ///   多次写、clinit 外写、宿主类外写拒绝；ACONST_NULL 值拒绝（ConstantValue
 ///   无 null 形态）；已带 ConstantValue 的字段跳过；类外读不拒（契约：
 ///   读的次数不限，回填后读者仍见同值）；
@@ -149,7 +149,7 @@ ca::u32 constantValueCp(const jbc::core::ClassFile& cf, const jbc::core::MemberI
 }
 
 /// 绕过 jasm 给字段注入 ConstantValue（jasm 无法声明字段初值），验证
-/// 「已带 ConstantValue 跳过」门。
+/// 已带 ConstantValue 跳过检查。
 std::vector<ca::u8> withConstantValue(const std::vector<ca::u8>& bytes,
                                       const std::string& fieldName, ca::i32 v)
 {
@@ -210,7 +210,7 @@ TEST(ConstValuePromoteScan, PromotesIntLongStringSingleWrites)
 
 TEST(ConstValuePromoteScan, RejectsMultipleWrites)
 {
-    // 同字段在 clinit 里写两次：唯一写门失败。
+    // 同字段在 clinit 里写两次：唯一写检查失败。
     model::ResourceContainer container = makeContainer({
         {"fixture/Twice",
          ".super java/lang/Object\n"
@@ -235,7 +235,7 @@ TEST(ConstValuePromoteScan, RejectsMultipleWrites)
 
 TEST(ConstValuePromoteScan, RejectsWriteOutsideClinit)
 {
-    // 唯一写必须落在本类 clinit：同方法体的第二处写也越门。
+    // 唯一写必须落在本类 clinit：同方法体的第二处写也越检查。
     model::ResourceContainer container = makeContainer({
         {"fixture/Late",
          ".super java/lang/Object\n"
@@ -266,7 +266,7 @@ TEST(ConstValuePromoteScan, RejectsWriteOutsideClinit)
 
 TEST(ConstValuePromoteScan, RejectsCrossClassWrite)
 {
-    // 宿主类外另有写者：全容器唯一写门失败。
+    // 宿主类外另有写者：全容器唯一写检查失败。
     model::ResourceContainer container = makeContainer({
         {"fixture/Host",
          ".super java/lang/Object\n"
@@ -353,7 +353,7 @@ TEST(ConstValuePromoteScan, SkipsFieldAlreadyWithConstantValue)
 
 TEST(ConstValuePromoteScan, AllowsCrossClassReads)
 {
-    // 契约（hpp 判据 2）：读的次数不限——回填后读者仍见同值，类外读不拒。
+    // 契约（hpp 判据 2）：读的次数不限，回填后读者仍见同值，类外读不拒。
     model::ResourceContainer container = makeContainer({
         {"fixture/Host",
          ".super java/lang/Object\n"

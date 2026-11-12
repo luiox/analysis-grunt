@@ -19,7 +19,7 @@ namespace grunt {
 extern const char* gActivePass;
 
 /// @brief `grunt.IndyDecode` 的 JDK 接口旁证注入面：CLI 在管线启动前填 JDK
-/// 根目录（`--jdk`）。文件系统副作用只发生在这里（adapter 层）——残留本体
+/// 根目录（`--jdk`）。文件系统副作用只发生在这里（adapter 层），残留本体
 /// 不做任何遍历；空串 = 不注入，interface 路判 fail-closed。
 extern std::string gKasumiJdkPath;
 
@@ -28,7 +28,7 @@ extern std::string gKasumiJdkPath;
 /// （adapter 层）；空串 = 不注入，旁证路判 fail-closed（Absent）。
 extern std::string gKasumiTsvPath;
 
-/// @brief 读 TSV 文本文件。@return 是否可读（内容进 out，UTF-8 直通——解析
+/// @brief 读 TSV 文本文件。@return 是否可读（内容进 out，UTF-8 直通，解析
 ///        在 string_cache_fold::parseTsv 纯函数面）。
 bool readTextFile(const std::string& path, std::string& out);
 
@@ -37,7 +37,7 @@ bool readTextFile(const std::string& path, std::string& out);
 std::unordered_set<std::string> scanJdkInterfaces(const std::string& jdkPath);
 
 /// @brief fail-closed 装饰器：pass 体抛出的异常（含 /EHa 下的 SEH 硬崩）不再
-/// 穿透管线——stderr 点名后按「本 pass 产出丢弃」收场，罐不拖垮整轮语料。
+/// 穿透管线，stderr 点名后按本 pass 产出丢弃收场，jar 不拖垮整轮语料。
 ///
 /// 口径对齐既有保守面：崩在哪一 pass 就丢哪一 pass 的产出，容器保有此前
 /// 已落盘状态；PreservedAnalyses 全弃（失效面最大，宁枉勿纵）。
@@ -110,7 +110,7 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
-/// @brief `grunt.TrampolineSqueeze`：「跳到下一条」goto 蹦床 NOP 化。
+/// @brief `grunt.TrampolineSqueeze`：跳到下一条goto 蹦床 NOP 化。
 class TrampolineSqueezePass final : public mjbase::spi::GlobalPass
 {
 public:
@@ -217,7 +217,7 @@ public:
 };
 
 /// @brief `grunt.StringPoolFold`：Grunt v2/v3 字符串池读点折回 ldc 明文
-/// （池链结构自证判据，无外部旁证注入面；Era 不消费——形态内无版本敏感判据）。
+/// （池链结构自证判据，无外部旁证注入面；Era 不消费，形态内无版本敏感判据）。
 class StringPoolFoldPass final : public mjbase::spi::GlobalPass
 {
 public:
@@ -226,8 +226,8 @@ public:
 };
 
 /// @brief `grunt.IndyRestore`：Grunt v2/v3 indy 调用点直接解密回填（simple
-/// 三段串/heavy `@Metadata` 数组；Era 探测进 scan，heavy 面 Era=Grunt3 门；
-/// JDK 接口旁证注入见 gKasumiJdkPath——Era 非 Unknown 即激活）。
+/// 三段串/heavy `@Metadata` 数组；Era 探测进 scan，heavy 面 Era=Grunt3 检查；
+/// JDK 接口旁证注入见 gKasumiJdkPath，Era 非 Unknown 即激活）。
 class IndyRestorePass final : public mjbase::spi::GlobalPass
 {
 public:
@@ -247,7 +247,7 @@ public:
 
 /// @brief `grunt.DispatcherRestore`：Grunt v3 InvokeDispatcher 调用点反查
 /// 回填真实 invoke（键表结构自证判据，无外部旁证注入面；v3-only，Era 不
-/// 消费——分发器本体与键表不删，交死码/死成员/压池回收）。
+/// 消费，分发器本体与键表不删，交死码/死成员/压池回收）。
 class DispatcherRestorePass final : public mjbase::spi::GlobalPass
 {
 public:
@@ -256,8 +256,8 @@ public:
 };
 
 /// @brief `grunt.CffUnflatten`：Grunt v3 ControlflowFlattening 反摊平（Flow
-/// IR 岛形结构自证判据，无外部旁证注入面；v3-only，Era 不消费——SSA 变体
-/// 不同构挂账；processor 桥键静态不可解整岛保留，解锁路径记 doc）。
+/// IR 岛形结构自证判据，无外部旁证注入面；v3-only，Era 不消费，SSA 变体
+/// 不同构遗留；processor 桥键静态不可解整岛保留，解锁路径记 doc）。
 class CffUnflattenPass final : public mjbase::spi::GlobalPass
 {
 public:
@@ -267,7 +267,7 @@ public:
 
 /// @brief `grunt.MaterialKeyRestore`：RuntimeMaterial 材料通道 key 静态折回
 /// （材料初值链结构自证判据，无外部旁证注入面；还原口径 = 清洁运行环境
-/// 语义，反调试扰动路径不在范围——只把解密器窗口的 materialKey() 调用
+/// 语义，反调试扰动路径不在范围，只把解密器窗口的 materialKey() 调用
 /// 原地换 LDC，indy_restore 第二轮按既有 Plain 通道折回站点）。
 class MaterialKeyRestorePass final : public mjbase::spi::GlobalPass
 {
@@ -277,8 +277,8 @@ public:
 };
 
 /// @brief `grunt.ExcBridgeRestore`：Grunt v3 ControlflowJump 异常桥还原
-/// （合成 throw/catch 蹦床边摘除，原边直连真实目标；形状钉 + 互证门全
-/// 自证，无外部旁证注入面，Era 不消费；链序在 CffUnflatten 之前——桥
+/// （合成 throw/catch 蹦床边摘除，原边直连真实目标；形状钉 + 核对检查全
+/// 自证，无外部旁证注入面，Era 不消费；链序在 CffUnflatten 之前，桥
 /// 摘除后 CFF 的 state span goto 恢复整块形，岛识别更干净）。
 class ExcBridgeRestorePass final : public mjbase::spi::GlobalPass
 {
@@ -287,10 +287,10 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
-/// @brief `grunt.GateProcessorFold`：Grunt v3 ControlflowJump 门点 processor
-/// 跨方法静态求值 + 恒真门比较折叠（(III)I 形状钉 + 前窗逐字钉 + jsim 编排
+/// @brief `grunt.GateProcessorFold`：Grunt v3 ControlflowJump gate processor
+/// 跨方法静态求值 + 恒真检查比较折叠（(III)I 形状钉 + 前窗逐字钉 + jsim 编排
 /// 层跨方法求值 + Integer.rotateLeft 接管；TLR 运行期随机面与 material-key
-/// 桶求值 fail-closed，逐桶记账；Era 不消费，无外部旁证注入面）。
+/// 桶求值 fail-closed，逐桶计数；Era 不消费，无外部旁证注入面）。
 class GateProcessorFoldPass final : public mjbase::spi::GlobalPass
 {
 public:

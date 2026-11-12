@@ -10,20 +10,20 @@
 /// mjbase #158 的守卫（annotation_depth）原本只落在 member_remapper 的注
 /// 解族解码收口；本仓 grunt 侧有**直调 libjbc decodeAttr 的路径**，不在
 /// 该守卫面内，逐位盘点并接线（mjbase::util::attrSafeToDecode 预检，预检
-/// 拒绝按「解不开原样保真」fail-open 跳过，调用点形状不变）：
+/// 拒绝按解不开原样保真fail-open 跳过，调用点形状不变）：
 ///
-/// - booger_anno_strip.cpp stripTable / countIn——类/方法/字段属性槽；
-/// - constant_call.cpp dumpPcRefs——Code 与嵌套（诊断面属性槽）；
-/// - dead_member.cpp annotationStrings——注解族属性槽普查；
-/// - indy_fold.cpp bsmEntries——BootstrapMethods（守卫恒放行，形状归一）。
+/// - booger_anno_strip.cpp stripTable / countIn，类/方法/字段属性槽；
+/// - constant_call.cpp dumpPcRefs，Code 与嵌套（诊断面属性槽）；
+/// - dead_member.cpp annotationStrings，注解族属性槽普查；
+/// - indy_fold.cpp bsmEntries，BootstrapMethods（守卫恒放行，形状归一）。
 ///
 /// 负例测试还咬出第 7 面：jbc::ir::cp_compact 会对全部属性槽（类/字段/
 /// 方法 + Code 嵌套）decodeAttr 重映射注解内 CP 引用，敌意深嵌注解不走
-/// Result 错误通道、直接栈溢出（单测进程实证）。libjbc 上游不动，grunt
+/// Result 错误通道、直接栈溢出（单测进程验证）。libjbc 上游不动，grunt
 /// 侧在 container.hpp 加 classAnnoDepthSafe（同一批槽位过
 /// attrSafeToDecode，Code 槽借道下探嵌套属性），compact 前置到三处调用
 /// 点：dead_member 首轮压缩与二次压缩、booger_anno_strip 剥注解后压缩
-/// ——越限类按既有 compact 失败通道「原样保真」（CP 不重编号、字节不动，
+/// ，越限类按既有 compact 失败通道原样保真（CP 不重编号、字节不动，
 /// 宁少带走死 Utf8）。
 ///
 /// 负例测试 test/unittest/annotation_guard_test.cpp（原始字节夹具，jasm
@@ -65,7 +65,7 @@ ca::usize stripTable(ir::ClassSession& s, std::vector<jbc::core::AttrSlot>& slot
     for (ca::usize si = 0; si < slots.size(); ++si) {
         // 注解族槽先过嵌套深度预检（mjbase #158）：libjbc attr_codec 注解码码
         // 互递归无界，敌意深嵌注解会在 decodeAttr 内栈溢出；预检拒绝按
-        // 「解不开原样保真」fail-open 跳过——少剥一条注解，进程不被打爆。
+        // 解不开原样保真fail-open 跳过，少剥一条注解，进程不被打爆。
         if (!mjbase::util::attrSafeToDecode(s.backing(), slots[si])) continue;
         auto d = s.backing().decodeAttr(slots[si]);
         if (d.is_err()) continue;
@@ -95,7 +95,7 @@ ca::usize stripTable(ir::ClassSession& s, std::vector<jbc::core::AttrSlot>& slot
     return removed;
 }
 
-/// @brief Booger 引用门探针结果：是否在册 + 普查完整性（漏计即证据不足）。
+/// @brief Booger 引用检查探针结果：是否在册 + 普查完整性（漏计即证据不足）。
 struct RefProbe
 {
     bool      found          = false;
@@ -104,9 +104,9 @@ struct RefProbe
 
 /// @brief 容器 CP 里是否有他类指向 Booger 的 Class 引用（自引不算）。
 ///
-/// 引用门是删动词的前置判据，fail-closed 口径：会话打不开的类按「引用在册」
-/// 记账（它可能正指着 Booger，普查看不见不等于引用不存在）——门整个关死，
-/// 与 dead_member 引用普查的 census-blind 同一门。
+/// 引用检查是删动词的前置判据，fail-closed 口径：会话打不开的类按引用在册
+/// 计数（它可能正指着 Booger，普查看不见不等于引用不存在），检查整个关死，
+/// 与 dead_member 引用普查的 census-blind 同一检查。
 RefProbe boogerReferenced(const mjbase::model::ResourceContainer& container)
 {
     RefProbe probe;
@@ -173,7 +173,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
         result.gateBlocked = true;
         if (!probe.found) {
             std::fprintf(stderr,
-                         "[grunt.BoogerAnnoStrip] 引用门普查不完整（%zu 类未普查）——按引用在册关死\n",
+                         "[grunt.BoogerAnnoStrip] 引用检查普查不完整（%zu 类未普查），按引用在册关死\n",
                          probe.classesSkipped);
         }
         return result;

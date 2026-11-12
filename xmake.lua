@@ -6,7 +6,7 @@
 -- 产品线内容不入仓（含测试与语料）。
 
 -- libjsim：单方法模拟执行库（header-only，纯 std），luiox-repo 包消费。
--- grunt 侧只用它跑「拿真实 CodeUnit 做常量折叠/解密」这一件事。
+-- grunt 侧只用它跑拿真实 CodeUnit 做常量折叠/解密这一件事。
 
 -- 版本单源；数值与 luiox 家族各仓同一字面量（嵌套 libca 实例统一）。
 LUIOX_LIBCA_VERSION = "0.0.16"
@@ -50,8 +50,8 @@ add_repositories("luiox-repo https://github.com/luiox/luiox-repo.git")
 -- 直接 include 的四面各按消费面显式声明：mjbase/* → mjbase 包；jbc/* →
 -- libjbc（裸下界 >=0.4.24 = 与 libjsim 桥面下界的交集归一，防实例分裂，
 -- 同一消费图归并解析到同一实例）；libca/* → libca（顶层钉版钉模块集，
--- 全图归并单实例——家族各包定义的嵌套 libca 已统一为同一超集 modules，
--- 版本经顶层钉定收敛）；jsim/* → libjsim 包（jbc 桥 config 开——桥迁官方
+-- 全图归并单实例，家族各包定义的嵌套 libca 已统一为同一超集 modules，
+-- 版本经顶层钉定收敛）；jsim/* → libjsim 包（jbc 桥 config 开，桥迁官方
 -- jsim/jbc.hpp，libjbc 随桥面进 jsim 消费图，与 grunt 直连面同实例归并）。
 add_requires("mjbase 0.0.18")
 add_requires("libjbc >=0.4.24")

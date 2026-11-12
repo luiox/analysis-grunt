@@ -1,6 +1,6 @@
 /// @file        field_access_proxy.hpp
-/// @brief       残留 `field_access_proxy`：把「方法体 = 实参逐槽过手 + 单次
-///              字段访问 + 匹配返回」的 static 字段代理方法的调用点改回真实
+/// @brief       残留 `field_access_proxy`：把方法体 = 实参逐槽过手 + 单次
+///              字段访问 + 匹配返回的 static 字段代理方法的调用点改回真实
 ///              字段访问。
 ///
 /// ## 形态（artifact 侧）
@@ -38,23 +38,23 @@
 ///
 /// 代理落在调用者类内或调用者类的生成外置类（`...$FieldProxy`，全
 /// `public static`）；字段 owner 可以在容器外（`System.out` 也被代理）。
-/// 后续改名 pass 会把代理名/外置类名抹掉——判据不能依赖名字、标志与家族名。
+/// 后续改名 pass 会把代理名/外置类名抹掉，判据不能依赖名字、标志与家族名。
 ///
 /// ## 判据（scan 的细找）
 ///
-/// S2 结构事实——**只钉方法体形状 + 引用普查，不依赖家族名/命名模式**：
+/// S2 结构事实，**只钉方法体形状 + 引用普查，不依赖家族名/命名模式**：
 ///
 ///   1. 定义侧：`static`、有方法体、非初始化器、非 `synchronized`；方法体
-///      恰为「每个形参槽一条匹配类型的 `xload n`（long/double 占两槽）+
-///      单条字段访问 + 匹配描述符返回类型的 `*return`」的直线；无标签、无
-///      异常表。字段访问与代理描述符互证：getter 返回类型类 == 字段描述符
+///      恰为每个形参槽一条匹配类型的 `xload n`（long/double 占两槽）+
+///      单条字段访问 + 匹配描述符返回类型的 `*return`的直线；无标签、无
+///      异常表。字段访问与代理描述符核对：getter 返回类型类 == 字段描述符
 ///      类型类；实例字段的字段 owner 必须与描述符接收者一致；getter 描述符
 ///      返回区 == 字段描述符（setter 的实参尾区 == 字段描述符）。
-///   2. 引用普查：只对容器内**有调用点**的代理动手——零引用代理是死码，
+///   2. 引用普查：只对容器内**有调用点**的代理动手，零引用代理是死码，
 ///      是 DeadMember 的业务，本残留不产站点。
-///   3. 初始化暴露门：`invokestatic proxy(C)` 是 C 的主动使用。改回字段
+///   3. 初始化暴露检查：`invokestatic proxy(C)` 是 C 的主动使用。改回字段
 ///      访问后这层触发消失。生成面里调用点全在代理 owner 类自身（外置类
-///      无 `<clinit>`）——判据把这写成可检查的事实：**代理的调用点必须全
+///      无 `<clinit>`），判据把这写成可检查的事实：**代理的调用点必须全
 ///      部落在 owner 类内，否则要求 owner `<clinit>` 缺失或只剩
 ///      NOP/RETURN**（scan_tools::classInitNeutral 中性口径），不满足整
 ///      代理放弃。字段 owner 的初始化时机不受影响：代理体内的字段访问本来
@@ -63,12 +63,12 @@
 /// ## 改写
 ///
 /// 调用点**原地换 op + 换字段引用**（保 `srcPc`）：按代理体字段指令落
-/// `getstatic`/`putstatic`/`getfield`/`putfield`——栈效应不变（getter 弹
+/// `getstatic`/`putstatic`/`getfield`/`putfield`，栈效应不变（getter 弹
 /// 0/1 参压 1 值、setter 弹实参不压值，与代理完全一致），栈帧无需修补。
-/// 不改代理本体——改回后代理变零引用死码，交下游 DeadMember/DeadCode
+/// 不改代理本体，改回后代理变零引用死码，交下游 DeadMember/DeadCode
 /// 清理。
 ///
-/// 保守面：代理体带标签/异常表/多余指令、装载槽错、字段描述符互证错配、
+/// 保守面：代理体带标签/异常表/多余指令、装载槽错、字段描述符核对错配、
 /// 返回错配、`synchronized`、初始化暴露 → 整代理拒绝。
 #pragma once
 
@@ -112,7 +112,7 @@ struct Site
 /// @brief 定义侧拒绝原因（方法沾代理形状但不成立的才记；其余静默跳过）。
 enum class RejectReason : ca::u8 {
     BodyNotProxyShape = 0,   ///< 体形对不上（多余指令 / 装载槽错 / 非字段访问）
-    FieldDescMismatch,       ///< 字段描述符与代理描述符互证不过（返回区/接收者）
+    FieldDescMismatch,       ///< 字段描述符与代理描述符核对不过（返回区/接收者）
     ReturnMismatch,          ///< 返回指令与描述符返回类型不符
     ProxySynchronized,       ///< 监视器语义，内联会丢锁
     OwnerInitExposed,        ///< 调用点越出 owner 类且 owner `<clinit>` 非中性
@@ -154,7 +154,7 @@ struct ProofResult
     std::vector<std::string> failed;
 };
 
-/// @brief SCAN：纯读。代理定义表 + 调用点普查 + 初始化暴露门。
+/// @brief SCAN：纯读。代理定义表 + 调用点普查 + 初始化暴露检查。
 ScanResult scan(const mjbase::model::ResourceContainer& container);
 
 /// @brief REWRITE：纯写。只消费 ScanResult，按 callSrcPc 原地换 op + 字段引用。
