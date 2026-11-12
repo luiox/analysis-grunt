@@ -8,7 +8,7 @@
 ///
 /// @Metadata 注解指纹不在此覆盖（jasm 夹具不带注解面）：该探针走与
 /// booger_anno_strip 同一 decodeAttr 通路，语料单罐（SnakeGame-obf.jar）上
-/// 以命名空间 + BSM 双指纹实证（doc/indy-decode.impl.md 语料账本）。
+/// 以命名空间 + BSM 双指纹实证（doc/kasumi-verify.md）。
 #include "grunt/knowledge/era.hpp"
 
 #include "libca/core/tag_cast.hpp"

@@ -1,8 +1,9 @@
 """Sphinx 配置：analysis-grunt 行为账与 pass 规格层。
 
 规范见家族口径（mjbase/libjbc doc 站同款）：本目录收 RST 行为账与 pass 规格；
-markdown 属人读/AI 方向层（逐面 ``<residue>.md`` / ``<residue>.impl.md`` 账本），
-不进 doctree，按批次逐篇迁移。CI 以 -W --keep-going 构建，警告即失败。
+markdown 属人读/AI 方向层（逐面 ``<residue>.md`` 行为描述），实现说明在各 pass
+源码文件头 /// 注释，不进 doctree，markdown 按批次逐篇迁移。CI 以 -W
+--keep-going 构建，警告即失败。
 """
 
 project = "analysis-grunt"

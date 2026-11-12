@@ -134,4 +134,4 @@ proof residual = 改写后容器里仍带 Grunt simple/heavy BSM desc 指纹的 
 - `corpus-regress` 双罐（boar-main + boar-main-origin）：2 罐 0 失败；
   origin 罐（未混淆）两 pass 全零静默通过（era=Unknown fail-closed 正确）。
 
-判据源锚与实现细节见 [indy-restore.impl.md](indy-restore.impl.md)。
+判据源锚与实现细节见 `src/grunt/indy_restore.hpp` / `indy_restore.cpp` 文件头注释。

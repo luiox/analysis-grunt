@@ -67,8 +67,7 @@
 ├── CONVENTION.md                    # 本文件
 ├── doc/
 │   ├── README.md                    # 索引 + 口径分工声明
-│   ├── <residue>.md                 # 残留的技术形态(artifact 侧，换输入仍成立才写)
-│   └── <residue>.impl.md            # 三章固定：Scan / Rewrite / Proof
+│   └── <residue>.md                 # 残留的技术形态(artifact 侧，换输入仍成立才写)
 │
 ├── src/<family>/
 │   ├── knowledge/                   # ← 第三轴：唯一允许随版本变的地方
@@ -356,7 +355,8 @@ ConstValuePromote、BoogerAnnoStrip 引用门）在普查不完整时 fail-close
 
 ```
 doc/<residue>.md          只写"混淆器会产出什么结构" —— 换个输入 jar 仍成立才写
-doc/<residue>.impl.md     只写"本仓这个残留怎么还原" —— 三章固定 Scan / Rewrite / Proof
+src/<family>/<pass>.cpp   "本仓这个残留怎么还原"写在源码文件头 /// 注释 ——
+                          三章固定 Scan / Rewrite / Proof，判据分级与已知边界同处
 仓外笔记                   具体样本取证(哪个 jar、哪条指令、round-trip 值) —— 不进仓
 README 残留一览表           必须有【判据】列 + 等级(S1/S2/S3) —— 这是全仓的"本质声明"
 ```
@@ -436,5 +436,4 @@ struct ReversalEntry {
 - [ ] `knowledge/` 落地：`45.3`、反射三连、`RuntimeException` 这些家族常量抽成常量表
 - [ ] `Era` 枚举 + `probeEra()`（当前只有 12.8 一族；落点已定在 `control_flow` 的生成类指纹与 `checks` 的模板）
 - [ ] adapter 目录落地，`pack.cpp` 迁入 —— 迁完后 #1 的 3 处词汇 TODO 清零
-- [ ] `doc/<residue>.impl.md` 三章化（现有 `doc/*-pass.md` 是两份混写的形态/实现文档）
 - [ ] 单测按 `scan_test` / `rewrite_test` 重新分组

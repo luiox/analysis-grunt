@@ -72,7 +72,7 @@ grunt 行为账总表
    * - StringEncrypt
      - S1
      - 已处理
-     - StringPoolFold（literal 形折叠；供给链被 indy 藏面时依赖上游还原，见 ``doc/string-pool-fold.impl.md`` 语料账本）
+     - StringPoolFold（literal 形折叠；供给链被 indy 藏面时依赖上游还原，实现说明见 ``src/grunt/string_pool_fold.cpp`` 文件头注释）
    * - ConstBuilder
      - S1
      - 无处理
@@ -166,15 +166,15 @@ grunt 行为账总表
    * - StringArrayedEncrypt
      - S1
      - 已处理
-     - StringPoolFold（arrayed 形折叠；供给链被 indy 藏面时依赖上游还原，见 ``doc/string-pool-fold.impl.md`` 语料账本）
+     - StringPoolFold（arrayed 形折叠；供给链被 indy 藏面时依赖上游还原，实现说明见 ``src/grunt/string_pool_fold.cpp`` 文件头注释）
    * - InvokeDispatcher
      - S2
      - 已处理
-     - DispatcherRestore（头锚 + 键表 + 调用点 key 反查回填；分发器本体与键表交 DeadCode/DeadMember 回收。宿主方法被 CFF 摊平或调用点被 ReferenceObfuscate indy 化时依赖链序/上游还原，见 ``doc/dispatcher-restore.impl.md`` 语料账本）
+     - DispatcherRestore（头锚 + 键表 + 调用点 key 反查回填；分发器本体与键表交 DeadCode/DeadMember 回收。宿主方法被 CFF 摊平或调用点被 ReferenceObfuscate indy 化时依赖链序/上游还原，实现说明见 ``src/grunt/dispatcher_restore.cpp`` 文件头注释）
    * - ControlflowFlattening（含 SSA exp）
      - S1/S2
      - 已处理（主面）
-     - CffUnflatten（岛识别 + span 求值反摊平 + alias-face 剪枝 + 入口归位/handler 重绑/位置边钉，缺口 #4 主面已处理完，见 ``doc/cff-unflatten.impl.md`` 语料账本；processor 键解锁（NumberFold 先行）+ SSA exp 变体 → 缺口 #4 余量）
+     - CffUnflatten（岛识别 + span 求值反摊平 + alias-face 剪枝 + 入口归位/handler 重绑/位置边钉，缺口 #4 主面已处理完，实现说明见 ``src/grunt/cff_unflatten.cpp`` 文件头注释；processor 键解锁（NumberFold 先行）+ SSA exp 变体 → 缺口 #4 余量）
    * - ArithmeticSubstitute（Hidden）
      - S2
      - 无处理

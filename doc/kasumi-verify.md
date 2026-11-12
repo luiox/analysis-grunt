@@ -1,7 +1,7 @@
 # Kasumi 端到端复现记录（SnakeGame-obf）
 
 > 样本：`SnakeGame-obf.jar`（run-lab 语料位；= morpher 树版样本
-> SnakeGame-obf (1).jar，来源与 jar 账本见 [indy-decode.impl.md](indy-decode.impl.md)），
+> SnakeGame-obf (1).jar，来源与 jar 形态见 doc/indy-decode.md），
 > 582,974 B，sha256 `c3481fb16f66ea9fade86e601a73b651db984666de18fe356bb439cc874f77fc`。
 > 专链：`grunt.IndyDecode,grunt.StringCacheFold,grunt.MetadataStrip`（MetadataStrip 收尾，
 > 先还原再清理）。jar / TSV / 产物一律不进仓，本文只记数字与来源。
@@ -71,7 +71,7 @@ CORPUS=<run-lab> ONLY=SnakeGame-obf \
    `.class` 计数不受影响）。
 5. **死池残字**：16 类压池被封闭集拒绝（非零长 Raw 属性 → `AttrNotModeled`）
    保留死 Utf8 残字——依赖上游 cp_compact 扩面（libjbc 挂账方向），注解条目
-   判据 residual 已清零，见 [metadata-strip.impl.md](metadata-strip.impl.md)。
+   判据 residual 已清零（实现说明见 `src/grunt/metadata_strip.cpp` 文件头注释）。
 
 ## 3. 通用链取证与普查修复（通用链接入前置条件已解除）
 
