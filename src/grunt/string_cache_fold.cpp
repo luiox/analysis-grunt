@@ -1,5 +1,5 @@
 /// @file        string_cache_fold.cpp
-/// @brief       残留 `string_cache_fold` 三段实现：形状钉面（S2）→ Era 门 +
+/// @brief       残留 `string_cache_fold` 三段实现：形状钉面（S2）→ Era 检查 +
 ///              TSV 旁证（S3/S1）→ 两形态改写（锚点原地换 ldc + 跨度擦除）。
 ///
 /// 形态、判据分级与锚保留/槽位面设计见头文件；骨架对齐 number_fold（跨度
@@ -11,7 +11,7 @@
 ///
 /// 文件读取收敛在 scan 之前：CLI `--tsv` 传路径，adapter 在 probeEra 判为
 /// Kasumi 时才读文件；parseTsv 是纯函数（点分 owner → slash，转义反转义），
-/// 残留本体零文件系统副作用。TSV 内容不进仓——文档只记来源形态
+/// 残留本体零文件系统副作用。TSV 内容不进仓，文档只记来源形态
 /// （KasumiStringDumper 四列），不记样本明文。
 ///
 /// ## SCAN
@@ -20,42 +20,42 @@
 /// desc 钉 `[Ljava/lang/String;`（形态 1）/ `[[B`（形态 2）（knowledge
 /// 表），后继非 NOP 指令逐条钉形（int 常量装载族、AALOAD、DUP、
 /// ARRAYLENGTH、INVOKESTATIC desc `([BII)Ljava/lang/String;`）。跨度是**前
-/// 缀钉面**——形态 1 到 aaload、形态 2 到 invokestatic 为止，后继与本站无
+/// 缀钉面**，形态 1 到 aaload、形态 2 到 invokestatic 为止，后继与本站无
 /// 关。NOP 跳过（squeeze 遗留落点不驻栈，number_fold 同口径）；锚点之后
 /// 到尾条之间任何带标签指令 = 合并点，整站放弃。三级分工：S2 形状钉面 →
-/// S3 Era 门（Era::Kasumi 未判整站拒绝——TSV 是换代表面，Era 分支唯一合
-/// 法落点）→ 旁证降级门（TSV 未装载整站拒绝：Absent = CLI 未注入，
-/// Unreadable = 文件缺失/不可读）→ S1 明文表互证（(owner, fieldKey, idx)
-/// 精确命中 = 定案；无命中 = noPlaintext——dumper 只导出运行期缓存非空的
+/// S3 Era 检查（Era::Kasumi 未判整站拒绝，TSV 是换代表面，Era 分支唯一合
+/// 法落点）→ 旁证降级检查（TSV 未装载整站拒绝：Absent = CLI 未注入，
+/// Unreadable = 文件缺失/不可读）→ S1 明文表核对（(owner, fieldKey, idx)
+/// 精确命中 = 定案；无命中 = noPlaintext，dumper 只导出运行期缓存非空的
 /// 槽位，覆盖是部分的，缺席不是异常，参考实现同样静默跳过）。S1 无旁证不可定
-/// 案是数据流事实（明文本身就是要回填的内容）；本仓把无旁证显式记账进
+/// 案是数据流事实（明文本身就是要回填的内容）；本仓把无旁证显式计数进
 /// rejects，改写面语义与参考实现逐位一致。
 ///
 /// ## REWRITE
 ///
-/// 按 uri 聚类 + roundTripSafe 前置门。锚点原地换 ldc（srcPc 保留），跨度
+/// 按 uri 聚类 + roundTripSafe 前置检查。锚点原地换 ldc（srcPc 保留），跨度
 /// 其余非 NOP 指令 eraseBatch（kRejectIfUsed：受害者被异常表引用即拒收，
 /// 回滚锚点整站放弃，不留半改写态）；NOP 遗留落点不动，DeadCode 收尾。
 /// CP 先 intern（Utf8 findUtf8 → miss 才 addUtf8；String 包装先线性扫复用
 /// → miss 才 addString，0 = 失败哨兵）再动 DOM。明文 MUTF-8 转码失败（过
-/// 短编码/挂续字节）整站拒绝——旁证是外部注入，不猜。失败粒度 = 类：帧
+/// 短编码/挂续字节）整站拒绝，旁证是外部注入，不猜。失败粒度 = 类：帧
 /// 链/编码失败整方法放弃，形态分列计数只在类写回成功后归账。
 ///
 /// ## PROOF
 ///
 /// pass_clock::Suspend + 类数不增 + 脏类可重新解析 + residual：改写后容器
-/// 里仍「全形 + 明文表命中」的站点数（countResidual 与 scan 同判据重钉）。
-/// 旁证缺席的形状命中不进 residual——那是覆盖面事实（运行期缓存为空的槽
-/// 位 dumper 导不出来），不是还原缺陷。语料单罐门要求 residual = 0。
+/// 里仍全形 + 明文表命中的站点数（countResidual 与 scan 同判据重钉）。
+/// 旁证缺席的形状命中不进 residual，那是覆盖面事实（运行期缓存为空的槽
+/// 位 dumper 导不出来），不是还原缺陷。语料单 jar 检查要求 residual = 0。
 ///
 /// ## 已知边界
 ///
-/// char[][] 密文载体（`a([CII)` 解密器）不在面内——参考实现同样只处理
+/// char[][] 密文载体（`a([CII)` 解密器）不在面内，参考实现同样只处理
 /// byte[][] 形态 2 与 String[] 形态 1，样本未见 char 站点。明文表是运行期
 /// 快照：缓存槽为 null 的下标旁证缺席，参考实现语义 = 跳过，本仓 = noPlaintext
 /// 计数。换代面（TSV 列格式 / `byte:` 前缀 / 两形态描述符都钉自当前
-/// Kasumi 版本）由 Era 门整站拒绝兜底。形态 2 的解密方法 owner 不与本站
-/// getstatic owner 互钉（参考实现同口径）——数据流由栈形锁定，表键只认
+/// Kasumi 版本）由 Era 检查整站拒绝兜底。形态 2 的解密方法 owner 不与本站
+/// getstatic owner 互钉（参考实现同口径），数据流由栈形锁定，表键只认
 /// getstatic 侧 owner/field/idx。
 
 #include "grunt/string_cache_fold.hpp"
@@ -96,8 +96,8 @@ constexpr ca::usize kMaxSpan = 7;   ///< 最长跨度（形态 2 恰 7 条：含
 // ============================================================================
 
 /// @brief UTF-8 → classfile modified UTF-8（NUL 走 0xC0 0x80；增补平面码点
-///        拆代理对各落 3 字节——classfile Utf8 不允许 4 字节形）。输入非合法
-///        UTF-8（含挂续字节/越界形/过短编码）返回 false，调用方整站拒绝——
+///        拆代理对各落 3 字节，classfile Utf8 不允许 4 字节形）。输入非合法
+///        UTF-8（含挂续字节/越界形/过短编码）返回 false，调用方整站拒绝，
 ///        旁证内容是外部注入，不猜。
 bool utf8ToMutf8(std::string_view in, std::string& out)
 {
@@ -177,7 +177,7 @@ bool utf8ToMutf8(std::string_view in, std::string& out)
 // ==== 形状钉面（S2；常量装载读数走 const_args）==============================
 // ============================================================================
 
-/// @brief 跨度内部标签门：锚点之后到尾条之间任何指令带标签 = 合并点，整站
+/// @brief 跨度内部标签检查：锚点之后到尾条之间任何指令带标签 = 合并点，整站
 ///        放弃（外部到达路径的栈形状不可知，不猜）。与 number_fold 同口径。
 bool labelBlocked(const ir::CodeDom& dom, const std::vector<ir::InsnId>& order,
                   ca::usize firstPos, ca::usize lastPos)
@@ -190,7 +190,7 @@ bool labelBlocked(const ir::CodeDom& dom, const std::vector<ir::InsnId>& order,
 
 /// @brief 单站点形状钉面：从锚点位收最多 kMaxSpan-1 条后继非 NOP 指令（NOP
 ///        是 squeeze 遗留落点，不驻栈跳过），按形态逐条比对。命中时产出
-///        （form, owner, fieldKey, idx）与尾条位置；不命中返回 false——形状
+///        （form, owner, fieldKey, idx）与尾条位置；不命中返回 false，形状
 ///        不全即非本家站点（或程序本来的数组读），静默跳过。
 bool tryMatchAt(ir::ClassSession& s, const ir::CodeDom& dom,
                 const std::vector<ir::InsnId>& order, ca::usize anchorPos, Site& out,
@@ -228,7 +228,7 @@ bool tryMatchAt(ir::ClassSession& s, const ir::CodeDom& dom,
         return false;
     }
     if (form == Form::CacheRead) {
-        // 形态 1：锚 + idx + aaload（跨度是前缀钉面——aaload 之后是什么指令
+        // 形态 1：锚 + idx + aaload（跨度是前缀钉面，aaload 之后是什么指令
         // 与本站无关，参考实现 nextRealAfter 同口径）。
         out.owner    = std::string(sem.owner);
         out.fieldKey = std::string(sem.name);
@@ -263,8 +263,8 @@ bool tryMatchAt(ir::ClassSession& s, const ir::CodeDom& dom,
     return true;
 }
 
-/// @brief 明文表互证（S1）：命中产出含明文的完整 Site；无命中返回 false
-///        （noPlaintext，参考实现静默跳过对齐——旁证覆盖是部分的，缺席不是异常）。
+/// @brief 明文表核对（S1）：命中产出含明文的完整 Site；无命中返回 false
+///        （noPlaintext，参考实现静默跳过对齐，旁证覆盖是部分的，缺席不是异常）。
 bool lookupPlaintext(const PlaintextTable& table, const Site& shape, Site& out)
 {
     const auto oit = table.find(shape.owner);
@@ -279,8 +279,8 @@ bool lookupPlaintext(const PlaintextTable& table, const Site& shape, Site& out)
     return true;
 }
 
-/// @brief 单方法 SCAN。逐 GETSTATIC 起锚：形状钉面 → Era 门（S3）→ 旁证降级
-///        门 → 明文表互证（S1）。
+/// @brief 单方法 SCAN。逐 GETSTATIC 起锚：形状钉面 → Era 检查（S3）→ 旁证降级
+///        检查 → 明文表核对（S1）。
 void scanMethod(ir::ClassSession& s, const std::string& uri, ca::usize methodIndex,
                 const ScanInput& input, ScanResult& result)
 {
@@ -309,7 +309,7 @@ void scanMethod(ir::ClassSession& s, const std::string& uri, ca::usize methodInd
         ++result.totalShapeHits;
         pos = lastPos + 1;   ///< 跨度内部不再起锚（站点跨度不重叠）
 
-        // ---- S3 门：TSV 旁证属换代表面，Era 分支是它唯一合法落点 ----
+        // ---- S3 检查：TSV 旁证属换代表面，Era 分支是它唯一合法落点 ----
         if (input.era != knowledge::Era::Kasumi) {
             Reject rej;
             rej.uri         = uri;
@@ -321,7 +321,7 @@ void scanMethod(ir::ClassSession& s, const std::string& uri, ca::usize methodInd
             continue;
         }
         // ---- 旁证降级面：Absent / Unreadable 全拒（参考实现对齐：无旁证不改写；
-        //      本仓把「无旁证」显式记账）----
+        //      本仓把无旁证显式计数）----
         if (input.tsvState != TsvState::Loaded) {
             Reject rej;
             rej.uri         = uri;
@@ -334,7 +334,7 @@ void scanMethod(ir::ClassSession& s, const std::string& uri, ca::usize methodInd
             ++result.tsvBlocked;
             continue;
         }
-        // ---- S1：明文表互证定案；无命中不猜（参考实现静默跳过对齐）----
+        // ---- S1：明文表核对定案；无命中不猜（参考实现静默跳过对齐）----
         Site site;
         if (!lookupPlaintext(input.plaintexts, shape, site)) {
             ++result.noPlaintext;
@@ -352,7 +352,7 @@ void scanMethod(ir::ClassSession& s, const std::string& uri, ca::usize methodInd
 // ============================================================================
 
 /// @brief 明文 intern 进常量池：Utf8（命中既有池不膨胀）+ CONSTANT_String
-///        包装（线性扫既有 String 条目复用）。CP 先行——失败面在动 DOM 之前
+///        包装（线性扫既有 String 条目复用）。CP 先行，失败面在动 DOM 之前
 ///        收口。@return String 条目索引；0 = 失败（占位槽索引天然是哨兵）。
 ca::u32 internStringConst(jbc::core::ConstantPool& cp, const std::string& mutf8)
 {
@@ -368,10 +368,10 @@ ca::u32 internStringConst(jbc::core::ConstantPool& cp, const std::string& mutf8)
     return cp.addString(utf8Idx);
 }
 
-/// @brief 单站点改写。@return 命中形态；false = 未动（failed 记账）。
+/// @brief 单站点改写。@return 命中形态；false = 未动（failed 计数）。
 ///
 /// 重定位 + 复核（scan 之后字节可能已被同方法前站改写，不盲改）：锚点
-/// srcPc+op 重定位、形状重钉、标签门复核。锚点原地换 `ldc <明文>`（srcPc
+/// srcPc+op 重定位、形状重钉、标签检查复核。锚点原地换 `ldc <明文>`（srcPc
 /// 保留），跨度其余非 NOP 指令擦除（kRejectIfUsed 拒收即回滚锚点，不留
 /// 半改写态）。
 bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
@@ -417,7 +417,7 @@ bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
     *anchor        = fresh;
 
     // 跨度其余非 NOP 指令擦除。eraseBatch kRejectIfUsed：受害者被异常表引用
-    // 时拒收——回滚锚点整站放弃，不留「常量已覆盖、跨度还在」的半改写态。
+    // 时拒收，回滚锚点整站放弃，不留常量已覆盖、跨度还在的半改写态。
     std::vector<ir::InsnId> victims;
     for (ca::usize p = anchorPos + 1; p <= lastPos && p < order.size(); ++p) {
         const ir::Insn* victim = cu.dom.peek(order[p]);
@@ -431,7 +431,7 @@ bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
     return true;
 }
 
-/// @brief 单方法 REWRITE 驱动。@return 命中站点数（命中形态落 hits——类级
+/// @brief 单方法 REWRITE 驱动。@return 命中站点数（命中形态落 hits，类级
 ///        放弃不许虚报站点，调用方在类写回成功后归账）。
 ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit& cu,
                         const std::vector<const Site*>& sites, std::vector<Form>& hits,
@@ -453,10 +453,10 @@ ca::usize rewriteMethod(ir::ClassSession& s, ir::CodeUnit& cu,
 // ==== PROOF：residual 统计 ==================================================
 // ============================================================================
 
-/// @brief 容器里仍「全形 + 明文表命中」的站点数（residual 口径）。
+/// @brief 容器里仍全形 + 明文表命中的站点数（residual 口径）。
 ///
 /// 形状钉面是容器自证事实（与 scan 同判据），表命中保证 residual 只数
-/// 「本可折叠而未折叠」的站点——旁证缺席的形状命中不进 residual（那是
+/// 本可折叠而未折叠的站点，旁证缺席的形状命中不进 residual（那是
 /// 覆盖面事实，不是还原缺陷）。
 ca::usize countResidual(const mjbase::model::ResourceContainer& container,
                         const PlaintextTable& table)
@@ -628,7 +628,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
     rewrite_tools::FrameContext frames(container);
 
-    // 站点按 uri 聚类（对齐 number_fold：万类大罐上避免 classes × sites 平方账）。
+    // 站点按 uri 聚类（对齐 number_fold：万类大 jar 上避免 classes × sites 平方账）。
     std::unordered_map<std::string, std::vector<const Site*>> byUri;
     for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
 
@@ -654,7 +654,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
-        // 前置门：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
+        // 前置检查：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
         const std::unordered_set<ca::usize> safe =
             proof_tools::roundTripSafe(*entry.bytes,
                                        std::vector<ca::usize>(methodIdxs.begin(),
@@ -726,7 +726,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,
                   ca::usize classesBefore, const ScanInput& input)
 {
-    // proof 是效力门（不变量复核），不许被 pass 级时间片截短——挂起期间
+    // proof 是效力检查（不变量复核），不许被 pass 级时间片截短，挂起期间
     // forEachClass 全量放行（residual 统计同样要看到全量类）。
     pass_clock::Suspend                  suspend;
     const proof_tools::ClassIntactResult intact =

@@ -17,20 +17,20 @@
 ///     owner/name/desc = 解密(bsmArgs[1..3])   // owner 点分（java.lang.Math）
 ///     按 (mode, extra) 选 find* 出句柄 → ConstantCallSite
 ///
-/// 结果是目标信息全部在场、但全部异或藏形——key 在解密器字节码里，也是
+/// 结果是目标信息全部在场、但全部异或藏形，key 在解密器字节码里，也是
 /// 编译期事实，所以可以整链静态复现。
 ///
 /// ## 判据分级（README 残留一览表口径）
 ///
 /// - **S2 结构事实**：BSM 描述符（8 参指纹，`kKasumiBootstrapDesc`）+
 ///   解密器形状（`charAt; LDC K1; LDC K2; IXOR; IXOR; i2c` 双层，或
-///   `LDC K; IXOR` 单层——定位 `i2c` 回溯两层 IXOR 取常量异或）；
+///   `LDC K; IXOR` 单层，定位 `i2c` 回溯两层 IXOR 取常量异或）；
 /// - **S3 实现选择**：mode/extra 数值表（`knowledge::kasumiIndyForm`，换代
-///   需复核——Era 分支唯一合法落点，`Era::Kasumi` 未判定整站拒绝）；
+///   需复核，Era 分支唯一合法落点，`Era::Kasumi` 未判定整站拒绝）；
 /// - **S1 语义后果**：indy desc 与解密结果交叉校验（static 全等；virtual
 ///   首参 receiver + 其余逐位吻合；字段 4 路按 `()T / (T)V /
-///   (Object)T / (Object,T)V` 形状互证；ctor 返回 `Lowner;` 且参数段与
-///   indy desc 一致）——描述符互证不成立即拒绝，不猜。
+///   (Object)T / (Object,T)V` 形状核对；ctor 返回 `Lowner;` 且参数段与
+///   indy desc 一致），描述符核对不成立即拒绝，不猜。
 ///
 /// ## 改写（插入式站点的锚保留与槽位面）
 ///
@@ -41,26 +41,26 @@
 /// - **插入式**（virtual / getfield / putfield / ctor）：在 indy 之前插入
 ///   spill/reload（或 `NEW;DUP`）序列，**indy 本体仍然原地换指令**。
 ///
-/// grunt 全局不变量「插入会把 srcPc 清成 kNoPc」在这里的解法：
+/// grunt 全局不变量插入会把 srcPc 清成 kNoPc在这里的解法：
 ///
-/// 1. 被删指令不存在——本残留只插不改位，全方法没有失去落点的旧 pc，
+/// 1. 被删指令不存在，本残留只插不改位，全方法没有失去落点的旧 pc，
 ///   `lowerMethod` 的 pcmap 重定位不会 `RelocationBadTarget`；
-/// 2. 锚保留靠「indy 原地换指令」：锚在 indy 旧 pc 上的 LNT 行/标签
+/// 2. 锚保留靠indy 原地换指令：锚在 indy 旧 pc 上的 LNT 行/标签
 ///   随 indy 一起迁到新布局，栈帧由帧链整体重算（`mutateMethodWithFrames`）；
 /// 3. 槽位面显式设计：spill 槽从 `cu->maxLocals` 起排（receiver/value +
 ///   实参按 `slotWidth` 累计，cat2 双槽），`cu->maxLocals` 抬到新水位
 ///   （超 u16 整站放弃）；帧链写回时 maxes 再生，插入块内部无标签、无
 ///   分支点，不产生新合并点。
 ///
-/// 改写前置门与折叠系同源：未改会话先往返（`roundTripSafe`），走不完的
+/// 改写前置检查与折叠系同源：未改会话先往返（`roundTripSafe`），走不完的
 /// 方法整方法跳过；接口落点靠旁证（容器类 access 位 + CLI 注入的 JDK
 /// 接口集），两处都没有的 virtual 目标 fail-closed 拒绝（invokevirtual 调
 /// 接口方法运行时 `IncompatibleClassChangeError`）。
 ///
-/// ## 台账
+/// ## 统计
 ///
 /// DirtySet 按 7 形态计数 + failed/skippedByRoundTrip；ProofResult 在
-/// 类数门之外统计 residual（改写后容器里仍带 8 参指纹的 indy 调用点数）。
+/// 类数检查之外统计 residual（改写后容器里仍带 8 参指纹的 indy 调用点数）。
 #pragma once
 
 #include <string>
@@ -102,7 +102,7 @@ struct Site
     bool                             ownerIsInterface = false;  ///< virtual 落点分派
 };
 
-/// @brief 拒绝（fail-closed 记账：拒绝原因进 trace，站点不动）。
+/// @brief 拒绝（fail-closed 计数：拒绝原因进 trace，站点不动）。
 struct Reject
 {
     std::string uri;
@@ -147,7 +147,7 @@ struct DirtySet
 };
 
 /// @brief 验收结果。residual = 改写后容器里仍带 8 参指纹的 indy 调用点
-///        （还原不彻底的残留，语料单罐门要求 0）。
+///        （还原不彻底的残留，语料单 jar 检查要求 0）。
 struct ProofResult
 {
     bool                     ok = true;

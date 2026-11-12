@@ -12,13 +12,13 @@
 ///   aconst_null → Null；getstatic → 查 knowledge::primitiveTypeDesc，必须
 ///   是九大原始包装类的 TYPE 字段（desc `Ljava/lang/Class;`）→ PrimClass，
 ///   其余 getstatic 记 GetstaticUnsupported；非常量生产者**静默跳过**（不
-///   进拒绝面——否则全 jar 的普通方法刷屏）。
+///   进拒绝面，否则全 jar 的普通方法刷屏）。
 /// - 返回指令与生产值类别必须匹配（I32↔ireturn，Null/PrimClass↔areturn），
 ///   错配记 BodyNotSingleConst；synchronized 记 TargetSynchronized。
-/// - **所有者 clinit 纯度门**（clinitPure）：`<clinit>` 缺失，或全部指令落
+/// - **所有者 clinit 纯度检查**（clinitPure）：`<clinit>` 缺失，或全部指令落
 ///   在纯常量白名单（常量装载限数值类池常量、数值运算/转换/比较、对**本
 ///   类**静态字段的 putstatic、return）且**无任何标签**（直线；有分支/
-///   循环即不纯——循环不终止是副作用）。跨类 putstatic 判不纯：写别人的
+///   循环即不纯，循环不终止是副作用）。跨类 putstatic 判不纯：写别人的
 ///   字段会在初始化链上触发别的类，跳过初始化可能让字段池永远没人写。
 ///
 /// 通过者进定义表 owner/name/desc → ConstValue。调用侧逐方法逐条
@@ -30,8 +30,8 @@
 /// 法）。站点改写是**原地替换**：按 callSrcPc 定位 invokestatic，memberOf
 /// 校验目标一致后整条指令换成常量装载（I32 走 rewrite_tools::makeConstLoad；
 /// Null 落 aconst_null；PrimClass 在调用方池内现 intern addUtf8 + addClass
-/// 再 CodeEditor::loadConst），srcPc 保留。没有删除、没有区间——不需要
-/// constant_call 的标签门。方法 lower 失败整类放弃；写回走 pending 批量
+/// 再 CodeEditor::loadConst），srcPc 保留。没有删除、没有区间，不需要
+/// constant_call 的标签检查。方法 lower 失败整类放弃；写回走 pending 批量
 /// 形态（constant_call 同形）。
 ///
 /// ## PROOF
@@ -40,9 +40,9 @@
 ///
 /// ## 已知边界
 ///
-/// TYPE 取值器所在类若用「clinit 跨类写字段池」的结构（Grunt 家族常态），
-/// 纯度门整方法拒绝（OwnerClassInitImpure）——解锁依赖字段池残留的读取点
-/// （getstatic 传播）先折：读取点折成常量后跨类写入成死代码，门才有放宽
+/// TYPE 取值器所在类若用clinit 跨类写字段池的结构（Grunt 家族常态），
+/// 纯度检查整方法拒绝（OwnerClassInitImpure），解锁依赖字段池残留的读取点
+/// （getstatic 传播）先折：读取点折成常量后跨类写入成死代码，检查才有放宽
 /// 的语义依据。拒绝数即这个边界在样本上的覆盖量。
 #include "grunt/const_method.hpp"
 
@@ -83,11 +83,11 @@ constexpr ca::usize kNoIndex       = static_cast<ca::usize>(-1);
 // ==== SCAN ==================================================================
 // ============================================================================
 
-/// @brief 所有者类初始化纯度门：`<clinit>` 缺失，或整体落在纯常量白名单。
+/// @brief 所有者类初始化纯度检查：`<clinit>` 缺失，或整体落在纯常量白名单。
 ///
 /// 白名单：常量装载（仅数值类池常量）、数值运算/转换/比较、`putstatic`
-/// （目标必须是本类字段——跨类 putstatic 会触发别人的初始化链）、`return`。
-/// 直线门：任何指令上带标签即有分支/循环，直接判不纯（循环不终止是副作用）。
+/// （目标必须是本类字段，跨类 putstatic 会触发别人的初始化链）、`return`。
+/// 直线检查：任何指令上带标签即有分支/循环，直接判不纯（循环不终止是副作用）。
 bool clinitPure(ir::ClassSession& session)
 {
     const ir::ClassUnit& unit          = session.unit();
@@ -264,7 +264,7 @@ ProducerOutcome decodeProducer(ir::ClassSession& session, const ir::Insn& in, Co
     }
 }
 
-/// @brief 容器内全部「单常量方法」定义表：owner\nname\ndesc -> 值
+/// @brief 容器内全部单常量方法定义表：owner\nname\ndesc -> 值
 ///        （键复合收口在 scan_toolbox::keyOf）。
 using ConstMethodIndex = std::unordered_map<std::string, ConstValue>;
 
@@ -403,7 +403,7 @@ RwResult rewriteSite(ir::ClassSession& session, ir::CodeUnit& cu, const Site& si
     if (!makeInlineLoad(session, site.value, load)) return RwResult::LoadFail;
 
     // 原地改写：调用指令的身份与 srcPc 不变，锚在它上面的标签因此不必迁移，
-    // 也不需要 constant_call 那套「区间中段标签门」——这里没有删除，没有区间。
+    // 也不需要 constant_call 那套区间中段标签检查，这里没有删除，没有区间。
     auto slotR = dom.get(order[callPos]);
     if (slotR.is_err()) return RwResult::SlotFail;
     ir::Insn*     insn   = slotR.unwrap();
@@ -432,7 +432,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
     forEachClass(container, [&](const ClassEntry& entry) {
         auto session = openSession(*entry.bytes);
         if (!session) return;
-        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置计数
         ir::ClassSession&     s    = *session;
         const ir::ClassUnit&  unit = s.unit();
         const std::string_view self = s.backing().thisName();
@@ -449,7 +449,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
             const std::vector<ir::InsnId>& order = cu->dom.order();
 
             for (ca::usize pos = 0; pos < order.size(); ++pos) {
-                if (!budget.tick()) {   ///< 逐位置记账：超限即停，类保守跳过
+                if (!budget.tick()) {   ///< 逐位置计数：超限即停，类保守跳过
                     ++result.classesSkippedByBudget;
                     iter_budget::reportExhausted("grunt.ConstMethod", "scan",
                                                  std::string(entry.uri), budget, named);
@@ -494,7 +494,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 
     ca::usize named = 0;
 
-    // 两遍式：上面只收动作清单，这里逐类「开会话 → 改写 → lower → 立即回写」，
+    // 两遍式：上面只收动作清单，这里逐类开会话 → 改写 → lower → 立即回写，
     // 峰值内存是单类会话而不是整 jar 的改写字节（同 flags_strip 的理由）。
     for (auto& [uri, sites] : byUri) {
         const std::vector<ca::u8>* bytes = findClassBytes(container, uri);
@@ -511,7 +511,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         for (const auto& slot : byMethod) candidates.push_back(slot.first);
         const std::unordered_set<ca::usize> safe = proof_tools::roundTripSafe(*bytes, candidates);
 
-        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置记账
+        iter_budget::ClassBudget budget = budgetTemplate;   ///< 每类重置计数
 
         bool changed = false;
         bool abandoned = false;   ///< 任一方法 lower 失败：整类放弃回写（粒度=类）
@@ -530,7 +530,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             bool    methodChanged = false;
             ca::usize tried        = 0;   ///< 本方法已尝试的站点数
             for (const Site* site : methodSites) {
-                if (!budget.tick(orderSize)) {   ///< 逐站点按指令数记账：超限弃余
+                if (!budget.tick(orderSize)) {   ///< 逐站点按指令数计数：超限弃余
                     dirty.skippedByBudget += methodSites.size() - tried;
                     iter_budget::reportExhausted("grunt.ConstMethod", "rewrite", uri,
                                                  budget, named);

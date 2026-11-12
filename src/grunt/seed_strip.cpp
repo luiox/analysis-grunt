@@ -5,13 +5,13 @@
 ///
 /// `spanDepthDelta` 词汇表逐指令增量；组从 `GETSTATIC F`（+1）起，到
 /// `IASTORE`（-3：数组引用 + 下标 + 值出栈）归零收尾。嵌套 `GETSTATIC F`
-/// （值链里再读同一数组——grunt 用前一元素算下一元素）深度 +1，允许嵌套。
+/// （值链里再读同一数组，grunt 用前一元素算下一元素）深度 +1，允许嵌套。
 ///
 /// ## 复核纪律
 ///
 /// rewrite 对每个字段**重新收集跨度再擦**：同 clinit 里多个种子字段时，
 /// 先擦的字段改变布局，后擦的字段必须按新 DOM 重推。逐字段全有或全无：
-/// 任一跨度擦除失败即放弃该字段（已擦的跨度语义仍安全——普查门保证无类
+/// 任一跨度擦除失败即放弃该字段（已擦的跨度语义仍安全，普查检查保证无类
 /// 外读，残余读检查收尾）。
 ///
 /// ## 残余读检查
@@ -235,14 +235,14 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
     ScanResult result;
 
     // 访问面普查不完整（会话打不开的类 / promote 失败的方法）＝引用证据不足
-    // ——「写读全在本类 clinit」判据会漏计漏普查面上的读，拆表即运行期断供，
+    // ，写读全在本类 clinit判据会漏计漏普查面上的读，拆表即运行期断供，
     // fail-closed 整轮放弃（与 dead_member 引用普查同一课，宁误留不误删）。
     field_census::Census     census;
     const field_census::Stat stat = field_census::scanFieldAccess(container, census);
     if (!stat.complete()) {
         result.censusIncomplete = true;
         std::fprintf(stderr,
-                     "[grunt.SeedStrip] 普查不完整（类 %zu / 方法 %zu 未普查）——整轮放弃\n",
+                     "[grunt.SeedStrip] 普查不完整（类 %zu / 方法 %zu 未普查），整轮放弃\n",
                      stat.classesSkipped, stat.methodsPromoteFailed);
         return result;
     }
@@ -266,7 +266,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
             const std::string fname(cf.utf8(fld.nameCp));
             if (cf.utf8(fld.descCp) != "[I") continue;
 
-            // 访问面门：写全在本类 clinit，读也全在本类 clinit。
+            // 访问面检查：写全在本类 clinit，读也全在本类 clinit。
             const auto acc = census.find(owner + "::" + fname);
             if (acc == census.end()) continue;
             bool ok = true;
@@ -277,7 +277,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
             }
             if (!ok || !anyWrite) continue;
 
-            // 建表形状门。
+            // 建表形状检查。
             auto promoted = ir::promoteMethod(s, clinit);
             if (promoted.is_err()) continue;
             ir::CodeUnit* cu = promoted.unwrap().get();
@@ -342,7 +342,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                     ++dirty.attempted;
 
                     // 复核：访问面与建表形状（scan 之后容器未变，形状必须重推
-                    // ——同方法其他字段的跨度可能改变布局）。
+                    // ，同方法其他字段的跨度可能改变布局）。
                     std::vector<std::vector<ir::InsnId>> spans;
                     if (!collectSpans(s, cdom, owner, site->fieldName, spans)) {
                         ++dirty.failed;

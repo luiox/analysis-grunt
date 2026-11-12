@@ -1,6 +1,6 @@
 /// @file        indy_restore.cpp
 /// @brief       残留 `indy_restore` 三段实现：键链三路（S2）→ 参数解密
-///              （纯算术直解）→ S1 互证 → heavy Era 门 → 三态原地改写。
+///              （纯算术直解）→ S1 核对 → heavy Era 检查 → 三态原地改写。
 ///
 /// 形态、判据分级、键链三路与材料通道边界见头文件；骨架对齐 indy_decode /
 /// string_pool_fold：scan 只读、rewrite 只写（mutateMethodWithFrames 正统
@@ -10,14 +10,14 @@
 ///
 /// collectClassKeys 先建类内键表：(String;)String 方法 promote 后
 /// scanDecryptKey 提窗口（i2c 回溯两层，布局序 = DOM order，与 indy_decode
-/// 同源）——单层 `LDC K; IXOR` 记 Plain；`LDC K; INVOKESTATIC <self> ()I;
+/// 同源），单层 `LDC K; IXOR` 记 Plain；`LDC K; INVOKESTATIC <self> ()I;
 /// IXOR; IXOR` 记 Material（记原始 K）；`LDC A; LDC B; IXOR; IXOR`（reobf
 /// 折叠键）记 Plain(A^B)。无方法体 / promote 失败 / 无窗口进
 /// deadStringMethods（族推导 c2 的家族证据）。BSM 方法体在场才进表：
 /// simple 取体首条直调本类 (String;)String 的解密器；heavy 取
 /// (String;I)String 紧前的 int 常量 generalKey。judgeSite 粗找 =
 /// INVOKEDYNAMIC 全量起锚，细找按 S2 desc 指纹 → 键链 → S1 解密 + desc 互
-/// 证 → S3 heavy Era 门 + magic 自证 → 接口旁证（容器普查优先 / `--jdk`
+/// 证 → S3 heavy Era 检查 + magic 自证 → 接口旁证（容器普查优先 / `--jdk`
 /// 注入的 JDK 接口集双向作证 / 两无 fail-closed）。JDK 接口集由 adapter 在
 /// Era 非 Unknown 时注入（scanJdkInterfaces 与 indy_decode 单源），残留本
 /// 体零文件系统副作用。
@@ -30,8 +30,8 @@
 /// deadStringMethods 里有同名死方法佐证。c2 的 key 正确性源锚是生成面两分
 /// 支烧同一 decryptKey 常量（材料通道 LDC 是异或前的原始 key，plain 站点
 /// 可直接用）。**不认** plainDecryptName（len-4）这条边：它由路由 1 的同
-/// 名面覆盖，混进族推导会把材料 BSM 的站点误接到 plain 解密器上——解出垃
-/// 圾死在 S1 虽然不会误改，但拒绝记账口径被污染。
+/// 名面覆盖，混进族推导会把材料 BSM 的站点误接到 plain 解密器上，解出垃
+/// 圾死在 S1 虽然不会误改，但拒绝计数口径被污染。
 ///
 /// ## 解密与编码
 ///
@@ -43,8 +43,8 @@
 ///
 /// ## REWRITE
 ///
-/// 站点按 uri 聚类，roundTripSafe 前置门；rewriteSite 按 indySrcPc 重定位
-/// 并复核仍是 INVOKEDYNAMIC，然后纯原地换 op + setMember——不插指令（v2/
+/// 站点按 uri 聚类，roundTripSafe 前置检查；rewriteSite 按 indySrcPc 重定位
+/// 并复核仍是 INVOKEDYNAMIC，然后纯原地换 op + setMember，不插指令（v2/
 /// v3 无 spill 面，virtual 的 receiver 槽就是 indy 首参）。换指令失败把 op
 /// 还原，不留半截。形态计数在类写回成功后归账（类级放弃不许虚报站点，
 /// 对齐 indy_decode 口径）。
@@ -52,7 +52,7 @@
 /// ## 边界与不做
 ///
 /// 材料通道不猜（见头文件）。v2 专面不建：heavy 的 @GruntMetadata 注解名
-/// 可配置、heavy 关闭时注解类不生成，不能当版本判据——probeEra 的 Grunt2
+/// 可配置、heavy 关闭时注解类不生成，不能当版本判据，probeEra 的 Grunt2
 /// 判据因此在 era.hpp 明文挂缺（缺口 #15 口径），v2 现场的 heavy 面不激
 /// 活（simple 面两代同源自证，不挂 Era）。BSM / 解密器 / @Metadata 注解清
 /// 理不做：改写只动调用点，指纹条目交 DeadMember 引用普查与 metadata-strip
@@ -165,18 +165,18 @@ enum class DecShape : ca::u8
                    ///  IXOR; IXOR; I2C`，key = A^B）
     Material,      ///< `charAt; LDC K; INVOKESTATIC <self> ()I; IXOR; IXOR; I2C`
                    ///  （v3 RuntimeMaterial 通道：有效 key = K ^ materialKey()，
-                   ///  静态不可解——判据只认形状，消费侧 fail-closed）
+                   ///  静态不可解，判据只认形状，消费侧 fail-closed）
 };
 
 /// @brief 一类一个的解密器键表。
 struct ClassKeys
 {
     /// @brief 在场解密器：方法名 → 形状 + LDC key（Material 形的 key 是
-    ///        异或前的原始 decryptKey——与同类 plain 通道共用一常量，源锚
+    ///        异或前的原始 decryptKey，与同类 plain 通道共用一常量，源锚
     ///        createDecryptMethod 两分支同一 `LDC(key)`）。
     std::unordered_map<std::string, std::pair<DecShape, ca::i32>> simpleDecs;
     /// @brief 同名同 desc 的 (String;)String 方法在场但窗口不在场（ACC_NATIVE
-    ///        壳 / 外形不符）——名字族推导的家族证据（c2 路前置门）。
+    ///        壳 / 外形不符），名字族推导的家族证据（c2 路前置检查）。
     std::unordered_set<std::string> deadStringMethods;
     /// @brief BSM 方法名 → 体首条 `INVOKESTATIC <self> (String;)String` 目标
     ///        名（BSM 体在场时的体跟随路）；BSM 壳死不进表。
@@ -235,7 +235,7 @@ std::optional<std::pair<DecShape, ca::i32>> scanDecryptKey(ir::ClassSession& s, 
     return std::nullopt;
 }
 
-/// @brief 收集一类的解密器键表与 BSM 体跟随面（纯读；BSM 壳死按缺席记账）。
+/// @brief 收集一类的解密器键表与 BSM 体跟随面（纯读；BSM 壳死按缺席计数）。
 void collectClassKeys(ir::ClassSession& s, ClassKeys& out)
 {
     const ir::ClassUnit& unit = s.unit();
@@ -272,7 +272,7 @@ void collectClassKeys(ir::ClassSession& s, ClassKeys& out)
             && mdesc != knowledge::kGruntHeavyBsmDesc) {
             continue;
         }
-        // BSM 体跟随面（壳死 = 无 Code，缺席记账）。
+        // BSM 体跟随面（壳死 = 无 Code，缺席计数）。
         if (!ir::hasCode(s, mi)) continue;
         auto promoted = ir::promoteMethod(s, mi);
         if (promoted.is_err()) continue;
@@ -328,7 +328,7 @@ struct SimpleLane
 };
 
 /// @brief 键链三路：同名直连 → BSM 体跟随 → 名字族推导。裁决按 BSM 方法名
-///        （同一方法名共享一个键面——多条 BootstrapMethods 条目指向同一
+///        （同一方法名共享一个键面，多条 BootstrapMethods 条目指向同一
 ///        BSM 方法是常态）。
 SimpleLane resolveSimpleLane(const std::string& bsmName, const ClassKeys& keys)
 {
@@ -366,7 +366,7 @@ SimpleLane resolveSimpleLane(const std::string& bsmName, const ClassKeys& keys)
     //    bsmName1.substring(2, len-1)（grunt3@e41e852 ReferenceObfuscate.kt
     //    L216 / grunt2@36c0eef 同构），即解密器名 = BSM 名去头两字符再去尾
     //    一字符；v3 material 配对的 plain 通道名再缩一格（substring(1,
-    //    len-3)），与 material 解密器名恰有「去首字符前缀」关系。
+    //    len-3)），与 material 解密器名恰有去首字符前缀关系。
     for (const auto& [decName, shapeKey] : keys.simpleDecs) {
         const ca::usize db = bsmName.size();
         const ca::usize dd = decName.size();
@@ -386,7 +386,7 @@ SimpleLane resolveSimpleLane(const std::string& bsmName, const ClassKeys& keys)
     }
     // c2（material 配对类 + plain 解密器被 native 摘除）：BSM 名与一个壳死
     // 的 (String;)String 同名（家族证据），material 解密器名 M 满足
-    // M[0, len(B)-1) == B[1, len(B))——LDC K 即原始 decryptKey（两分支共用
+    // M[0, len(B)-1) == B[1, len(B))，LDC K 即原始 decryptKey（两分支共用
     // 一常量），clinit/init 的 plain 站点用它直解。
     if (keys.deadStringMethods.count(bsmName) != 0) {
         for (const auto& [decName, shapeKey] : keys.simpleDecs) {
@@ -432,7 +432,7 @@ bool readStringArray(const jbc::core::AnnotationsAttr::ElemValue& value,
     return true;
 }
 
-/// @brief 从 owner 类字节读 @Metadata 形注解（mv/d1/d2 元素名 + mv 版本门 +
+/// @brief 从 owner 类字节读 @Metadata 形注解（mv/d1/d2 元素名 + mv 版本检查 +
 ///        注解类在容器内的 mv/d1/d2 抽象方法面）。@return 读到填 d1/d2。
 bool readMetadata(const std::unordered_map<std::string, const std::vector<ca::u8>*>& classesBySelf,
                   const std::string& ownerInternal, std::vector<std::string>& d1,
@@ -467,7 +467,7 @@ bool readMetadata(const std::unordered_map<std::string, const std::vector<ca::u8
             if (mv->tag != 'I' || !cp.valid(mv->cp)) continue;
             const jbc::core::ConstantPool::Entry& mvEntry = cp.at(mv->cp);
             if (mvEntry.tag != CpTag::Integer) continue;
-            // mv 版本门（BSM 体 BIPUSH 100; IF_ICMPGE 的静态半边）。
+            // mv 版本检查（BSM 体 BIPUSH 100; IF_ICMPGE 的静态半边）。
             if (mvEntry.ival < knowledge::kGruntMetadataMv) continue;
 
             // 注解类结构作证：容器内有该注解类且带 mv/d1/d2 抽象方法三件套。
@@ -496,12 +496,12 @@ bool readMetadata(const std::unordered_map<std::string, const std::vector<ca::u8
 }
 
 // ============================================================================
-// ==== S1 交叉校验：indy desc 与解密结果互证 =================================
+// ==== S1 交叉校验：indy desc 与解密结果核对 =================================
 // ============================================================================
 
-/// @brief simple/heavy 共用的 desc 互证。v2/v3 生成面把 virtual 的 indy desc
+/// @brief simple/heavy 共用的 desc 核对。v2/v3 生成面把 virtual 的 indy desc
 ///        首参恒补 `Ljava/lang/Object;`（`desc.replace("(", "(Ljava/lang/
-///        Object;")`）——按生成面钉死，比 Kasumi 面的任意引用 receiver 更严。
+///        Object;")`），按生成面钉死，比 Kasumi 面的任意引用 receiver 更严。
 bool crossCheck(Form form, const MethodDesc& indy, std::string& targetDesc, std::string& why)
 {
     auto fail = [&why](const char* reason) {
@@ -616,7 +616,7 @@ enum class Verdict
 {
     Skip,    ///< 非 Grunt indy / CP 不可归属：静默跳过（不进 rejects）
     Accept,  ///< 站点成立
-    Reject,  ///< fail-closed 拒绝（进 rejects，bucket 已记账）
+    Reject,  ///< fail-closed 拒绝（进 rejects，bucket 已计数）
 };
 
 Verdict judgeSite(const std::string& uri, ca::usize methodIndex,
@@ -679,7 +679,7 @@ Verdict judgeSite(const std::string& uri, ca::usize methodIndex,
     if (!isSimple && !isHeavy) return Verdict::Skip;
     ++stats.totalIndy;
 
-    // ---- indy desc 解析（S1 互证的另一边）----
+    // ---- indy desc 解析（S1 核对的另一边）----
     if (!cp.valid(indy.b)) return reject("indy NameAndType 索引无效", 2);
     const jbc::core::ConstantPool::Entry& nat = cp.at(indy.b);
     if (nat.tag != CpTag::NameAndType || !cp.valid(nat.b)) {
@@ -727,12 +727,12 @@ Verdict judgeSite(const std::string& uri, ca::usize methodIndex,
         site.targetName  = decName;
         site.targetDesc  = decDesc;
 
-        // ---- S1 互证 ----
+        // ---- S1 核对 ----
         if (!crossCheck(site.form, indyDesc, site.targetDesc, why)) {
             return reject(std::move(why), 3);
         }
     } else {
-        // ---- heavy：Era 门（@Metadata 数组解释是 S3 版本敏感面）----
+        // ---- heavy：Era 检查（@Metadata 数组解释是 S3 版本敏感面）----
         if (input.era != knowledge::Era::Grunt3) {
             return reject("heavy 面未激活（Era 未判 Grunt3，fail-closed）", 5);
         }
@@ -789,7 +789,7 @@ Verdict judgeSite(const std::string& uri, ca::usize methodIndex,
         }
         if (!hit) return reject("d1 全扫无 data1 % 59557 == magic2 命中", 4);
 
-        // ---- S1 互证 ----
+        // ---- S1 核对 ----
         if (!crossCheck(site.form, indyDesc, site.targetDesc, why)) {
             return reject(std::move(why), 3);
         }
@@ -883,7 +883,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
 
 namespace {
 
-/// @brief 单站点改写。@return 命中形态；nullopt = 未动（failed 记账）。
+/// @brief 单站点改写。@return 命中形态；nullopt = 未动（failed 计数）。
 ///
 /// v2/v3 只有方法调用两态且都是纯原地（virtual 的 receiver 槽就是 indy 首
 /// 参，不插不删），原地换指令保 srcPc。
@@ -948,7 +948,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
     rewrite_tools::FrameContext frames(container);
 
-    // 站点按 uri 聚类（万类大罐上避免 classes × sites 平方账）。
+    // 站点按 uri 聚类（万类大 jar 上避免 classes × sites 平方账）。
     std::unordered_map<std::string, std::vector<const Site*>> byUri;
     for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
 
@@ -974,7 +974,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         std::set<ca::usize> methodIdxs;
         for (const Site* site : sitesOf) methodIdxs.insert(site->methodIndex);
 
-        // 前置门：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
+        // 前置检查：原样往返不了的方法不进改写面（lower 失败与改写无关却拖垮类）。
         const std::unordered_set<ca::usize> safe =
             proof_tools::roundTripSafe(*entry.bytes,
                                        std::vector<ca::usize>(methodIdxs.begin(),
@@ -1106,7 +1106,7 @@ ca::usize countGruntIndyResidual(const mjbase::model::ResourceContainer& contain
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,
                   ca::usize classesBefore)
 {
-    // proof 是效力门（不变量复核），不许被 pass 级时间片截短。
+    // proof 是效力检查（不变量复核），不许被 pass 级时间片截短。
     pass_clock::Suspend suspend;
     ProofResult         result;
     const proof_tools::ClassIntactResult intact =

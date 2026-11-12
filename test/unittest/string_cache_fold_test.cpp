@@ -2,9 +2,9 @@
 /// @brief       残留 `string_cache_fold` 的三段判据测试（参考实现两形态迁移 +
 ///              拒绝面反证）。
 ///
-/// 夹具是「缩小版 Kasumi 字符串缓存形态」（jasm 现场汇编，不落二进制、不
+/// 夹具是缩小版 Kasumi 字符串缓存形态（jasm 现场汇编，不落二进制、不
 /// 依赖语料目录）：每类带 `String[]` 缓存字段与 `byte[][]` 密文字段各一，
-/// 调用点各一个——
+/// 调用点各一个，
 ///
 ///     形态 1（读缓存）：getstatic a:[Ljava/lang/String;; iconst_1; aaload
 ///     形态 2（直接解密）：getstatic b:[[B; iconst_1; aaload; dup; arraylength;
@@ -15,7 +15,7 @@
 ///
 /// 覆盖分工：
 /// - SCAN：两形态形状钉面 + 表命中定案；Era 未判 / 旁证缺席 / 旁证不可读 /
-///   表无该条目 / 形状畸形 → 拒绝面（或静默跳过）逐桶记账；
+///   表无该条目 / 形状畸形 → 拒绝面（或静默跳过）逐桶计数；
 /// - REWRITE：两形态锚点原地换 ldc + 跨度擦除；拒绝面上容器字节逐位不动；
 /// - PROOF：类数不增 + 脏类可重解析 + residual 归零。
 #include "grunt/string_cache_fold.hpp"
@@ -224,7 +224,7 @@ TEST(StringCacheScan, RejectsSitesWhenEraUnknown)
         makeContainer({{"CacheHost", hostSource("CacheHost", false)}});
 
     ScanInput input = kasumiInput();
-    input.era     = knowledge::Era::Unknown;   // S3 门：旁证表不可用
+    input.era     = knowledge::Era::Unknown;   // S3 检查：旁证表不可用
     const ScanResult result = scan(container, input);
     EXPECT_EQ(result.sites.size(), 0u);
     EXPECT_EQ(result.totalShapeHits, 2u);
@@ -335,8 +335,8 @@ TEST(StringCacheRewrite, FoldsDirectDecryptToLdc)
 
 TEST(StringCacheRewrite, KeepsBytesUntouchedOnRejections)
 {
-    // 拒绝面：表无条目（noPlaintext 静默跳过，含形状畸形类）——单容器单输入
-    // 全拒，字节逐位不动。Era 未判 / 旁证缺席的独占门在各自 SCAN 测里。
+    // 拒绝面：表无条目（noPlaintext 静默跳过，含形状畸形类），单容器单输入
+    // 全拒，字节逐位不动。Era 未判 / 旁证缺席的独占检查在各自 SCAN 测里。
     std::vector<std::pair<std::string, std::string>> fixtures;
     fixtures.push_back({"plainHost", hostSource("PlainHost", false)});
     fixtures.push_back({"badHost", hostSource("BadHost", true)});
@@ -393,7 +393,7 @@ TEST(StringCacheProof, KeepsClassCountReparsesAndResidualZero)
 
 TEST(StringCacheProof, CountsResidualWhenSitesUntouched)
 {
-    // 旁证命中但没跑 rewrite：residual 如实报告「本可折叠」的站点数。
+    // 旁证命中但没跑 rewrite：residual 如实报告本可折叠的站点数。
     model::ResourceContainer container =
         makeContainer({{"CacheHost", hostSource("CacheHost", false)}});
     const ScanResult scanned = scan(container, kasumiInput());

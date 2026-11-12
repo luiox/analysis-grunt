@@ -11,13 +11,13 @@
 /// 解密算法两代逐字相同（char 级 XOR 流，classKey ^ key ^ seed 驱动、内部
 /// 状态随 `i & 0xFF` 旋转），差别只在产物配置：v2 默认 `Arrayed=false`
 /// （密文走 `ldc` 串 + `toCharArray`），v3 默认 `Carray=true`（密文走
-/// `NEWARRAY T_CHAR` + 逐码元 `CASTORE`）——密文形态是配置选择不是版本键，
+/// `NEWARRAY T_CHAR` + 逐码元 `CASTORE`），密文形态是配置选择不是版本键，
 /// v2/v3 判别（缺口 #15）不挂本表，era.hpp 不消费本文件的池段。
 ///
 /// indy 段（v2 `InvokeDynamicTransformer.kt` / v3 `ReferenceObfuscate.kt`）：
 /// 两代的 bootstrap 描述符、`encrypt`（逐码元 `code ^ xor` 自逆 XOR）、
 /// heavy 的 `@Metadata` 注解（mv/d1/d2 成员 + `data1 % 59557 == magic2`
-/// 互证）逐字同源，也落本表；`@Metadata` 注解类默认名两代不同（v2
+/// 核对）逐字同源，也落本表；`@Metadata` 注解类默认名两代不同（v2
 /// `net/spartanb312/grunt/GruntMetadata`、v3 `net/spartanb312/grunteon/
 /// internal/Metadata`，均可配置），名字不进判据，era 指纹见 era.hpp。
 #pragma once
@@ -62,7 +62,7 @@ inline constexpr ca::u32 kGruntDecryptorSeedSlot = 1;
 /// @brief 解密器循环的状态旋转掩码（体内 `SIPUSH(255); IAND` 逐字面）。
 inline constexpr ca::i32 kGruntRotateMask = 255;
 
-/// @brief per-string seed 生成上界（`Random.nextLong(100000L)`）——记录性
+/// @brief per-string seed 生成上界（`Random.nextLong(100000L)`），记录性
 ///        常量（语料普查对数用），不作判据。
 inline constexpr ca::i64 kGruntSeedBound = 100000;
 
@@ -98,12 +98,12 @@ inline constexpr std::string_view kGruntHeavyDecryptorDesc =
 ///        生成面逐字 `59557`；BSM 体 `LDC 59557; IREM` 消费同一常量）。
 inline constexpr ca::i32 kGruntMetadataModulus = 59557;
 
-/// @brief heavy BSM 的 mv 版本门（体 `BIPUSH 100; IF_ICMPGE`，生成面注解
+/// @brief heavy BSM 的 mv 版本检查（体 `BIPUSH 100; IF_ICMPGE`，生成面注解
 ///        `mv = 100`）。
 inline constexpr ca::i32 kGruntMetadataMv = 100;
 
 /// @brief v3 默认 `@Metadata` 注解类内部名（`config.metadataClass` 默认值，
-///        可配置——只作 era 指纹与文档锚点，不作还原判据）。
+///        可配置，只作 era 指纹与文档锚点，不作还原判据）。
 inline constexpr std::string_view kGrunt3MetadataAnnoInternalName =
     "net/spartanb312/grunteon/internal/Metadata";
 
@@ -123,17 +123,17 @@ inline constexpr std::string_view kGruntMetadataPairSep = "<>";
 ///        体内 `GETSTATIC keyField(J); DUP2; INT(32); LUSHR; LXOR; L2I;
 ///        GETSTATIC poisonField(I); IXOR; IRETURN`（源锚
 ///        `createMaterialKeyMethod`，grunt3 ReferenceObfuscate.kt L1187-1213
-///        ——本常量即其中 `INT(32); LUSHR` 的位移），`createDecryptMethod` 的
+///        ，本常量即其中 `INT(32); LUSHR` 的位移），`createDecryptMethod` 的
 ///        `materialKeyName != null` 分支解密器体内 `LDC key; INVOKESTATIC
-///        <self> ()I; IXOR; IXOR`——有效 key 依赖运行期材料字段
-///        （canonicalKey/poison，boar 实证其初值由解密后的字符串池经
+///        <self> ()I; IXOR; IXOR`，有效 key 依赖运行期材料字段
+///        （canonicalKey/poison，boar 验证其初值由解密后的字符串池经
 ///        parseLong 转出），纯静态不可解。判据在 indy_restore（fail-closed，
 ///        只按窗口形状自证，不消费本位移值；锚点留给缺口 #15 联动面）。
 inline constexpr ca::u32 kGruntMaterialKeySlotShift = 32;
 
 // ---- InvokeDispatcher 分发器形态（v3 专属；grunt3 InvokeDispatcher.kt
-//      生成面。grunt2 分支 redirect/ 下无此 transformer——v3-only，见
-//      doc/dispatcher-restore.md）--------------------------------------------
+//      生成面。grunt2 分支 redirect/ 下无此 transformer，v3-only，见
+//      doc/dispatcher-restore.rst）--------------------------------------------
 
 /// @brief 分发器逐槽参数类型（生成面 `repeat(maxLoadOp) { desc +=
 ///        "Ljava/lang/Object;" }` 逐字面）。
@@ -142,24 +142,24 @@ inline constexpr std::string_view kGruntDispatcherParamType = "Ljava/lang/Object
 /// @brief 分发器 key 参数类型（desc 尾参 `...I)$returnDesc` 逐字面）。
 inline constexpr std::string_view kGruntDispatcherKeyType = "I";
 
-/// @brief 分发器生成名前缀（`dispatcher_<10 随机字符>`；记录性常量——改名
+/// @brief 分发器生成名前缀（`dispatcher_<10 随机字符>`；记录性常量，改名
 ///        后不存活，不作判据）。
 inline constexpr std::string_view kGruntDispatcherNamePrefix = "dispatcher_";
 
-/// @brief 分发器单组转发目标上限（`MaxHandles` 默认值；记录性常量——可配置，
+/// @brief 分发器单组转发目标上限（`MaxHandles` 默认值；记录性常量，可配置，
 ///        不作判据）。
 inline constexpr ca::i32 kGruntDispatcherMaxHandles = 10;
 
 /// @brief 分发器同返回类型分组的最小调用点数（生成面 `group.filter { 
-///        it.value.size > 1 }`——键表 case 数 ≥ 2 是生成面事实，作形状门）。
+///        it.value.size > 1 }`，键表 case 数 ≥ 2 是生成面事实，作形状检查）。
 inline constexpr ca::i32 kGruntDispatcherMinCases = 2;
 
-// ---- RuntimeMaterial 材料初值供给链（v3 专属；boar-main.jar 逐字节实证，
+// ---- RuntimeMaterial 材料初值供给链（v3 专属；boar-main.jar 逐字节验证，
 //      源锚 grunt3@e41e852 RuntimeMaterial.kt / ReferenceObfuscate.kt）------
 
 /// @brief 材料初值跨度的 parse 面：clinit 里 `parseUnsignedLong(明文, radix)`
-///        的 `INVOKESTATIC` 目标（boar 语料实证 `java/lang/Long.parseUnsignedLong`
-///        `(Ljava/lang/String;I)J`——直连或单跳蹦床两种承载；蹦床体恰为
+///        的 `INVOKESTATIC` 目标（boar 语料验证 `java/lang/Long.parseUnsignedLong`
+///        `(Ljava/lang/String;I)J`，直连或单跳蹦床两种承载；蹦床体恰为
 ///        `aload_0; iload_1; invokestatic <parse>; lreturn`）。radix 恒 32
 ///        （家族 number-reobf 的基 32 long 通道，与 NumberFold 同源口径）。
 inline constexpr std::string_view kGruntMaterialParseOwner = "java/lang/Long";
@@ -168,7 +168,7 @@ inline constexpr std::string_view kGruntMaterialParseDesc  = "(Ljava/lang/String
 inline constexpr ca::i32 kGruntMaterialParseRadix          = 32;
 
 // ---- CFF dispatcher 岛形态（v3 专属；grunt3 FlowControlFlowFlattener.kt
-//      生成面 + boar-main.jar 实证。源锚 e41e852）--------------------------
+//      生成面 + boar-main.jar 验证。源锚 e41e852）--------------------------
 
 /// @brief inline span 词汇表的 Math.max 三元组（`StateOp.MaxConst.emitTo`
 ///        逐字面 `INVOKESTATIC "java/lang/Math", "max", "(II)I"`）。
@@ -178,8 +178,8 @@ inline constexpr std::string_view kGruntCffMathMaxDesc  = "(II)I";
 
 /// @brief processor 形 span 与链内 processor 调用的动作描述符
 ///        （CffKeyProcessorRegistry ActionDesc / emitProcessorStateProgram 的
-///        INVOKESTATIC desc——span 链内非 Math.max 的 `(II)I` INVOKESTATIC
-///        一律按 key processor 藏形 fail-closed，boar 实证其落在
+///        INVOKESTATIC desc，span 链内非 Math.max 的 `(II)I` INVOKESTATIC
+///        一律按 key processor 藏形 fail-closed，boar 验证其落在
 ///        `__grt$indy$` 蹦床后）。
 inline constexpr std::string_view kGruntCffProcessorActionDesc = "(II)I";
 

@@ -816,7 +816,7 @@ mjbase::spi::PreservedAnalyses StringPoolFoldPass::run(
     const ca::usize before = countClasses(container);
 
     // 无旁证注入面：判据全为容器自证事实（池链结构 + 解密器窗口），Era 不
-    // 消费——v2/v3 共用全部形态常量，形态内无版本敏感判据（缺口 #15 不在此）。
+    // 消费，v2/v3 共用全部形态常量，形态内无版本敏感判据（缺口 #15 不在此）。
     const string_pool_fold::ScanInput input;
     const string_pool_fold::ScanResult scanned = string_pool_fold::scan(container, input);
     if (traceEnabled()) {
@@ -871,7 +871,7 @@ mjbase::spi::PreservedAnalyses IndyRestorePass::run(
     const ca::usize before = countClasses(container);
 
     // Era 探测（adapter 调一次，结果注入 scan）+ JDK 接口旁证（Era 非
-    // Unknown 才激活文件系统扫描——simple 面自证不挂 Era，但旁证只在家族
+    // Unknown 才激活文件系统扫描，simple 面自证不挂 Era，但旁证只在家族
     // 判定后注入；残留本体不做遍历）。
     indy_restore::ScanInput input;
     input.era = knowledge::probeEra(container);
@@ -995,7 +995,7 @@ mjbase::spi::PreservedAnalyses DispatcherRestorePass::run(
     const ca::usize before = countClasses(container);
 
     // 无旁证注入面：判据全为容器自证事实（键表结构 + 调用点形状），Era 不
-    // 消费——v3-only 形态（grunt2 无此 transformer），形态锚自证家族。
+    // 消费，v3-only 形态（grunt2 无此 transformer），形态锚自证家族。
     const dispatcher_restore::ScanInput input;
     const dispatcher_restore::ScanResult scanned =
         dispatcher_restore::scan(container, input);
@@ -1053,9 +1053,9 @@ mjbase::spi::PreservedAnalyses CffUnflattenPass::run(
     const ca::usize before = countClasses(container);
 
     // 无旁证注入面：判据全为容器自证事实（state 槽 confinement + 岛形 +
-    // 桥块形状），Era 不消费——v3-only 形态（v2 Controlflow 无 state 槽摊平），
+    // 桥块形状），Era 不消费，v3-only 形态（v2 Controlflow 无 state 槽摊平），
     // 岛形自证家族；SSA 变体不同构（LookupSwitch + per-case stub + passArgs
-    // 编组）挂账，processor 桥键静态不可解整岛保留（解锁路径记 doc）。
+    // 编组）遗留，processor 桥键静态不可解整岛保留（解锁路径记 doc）。
     const cff_unflatten::ScanInput input;
     const cff_unflatten::ScanResult scanned =
         cff_unflatten::scan(container, input);
@@ -1111,9 +1111,9 @@ mjbase::spi::PreservedAnalyses MaterialKeyRestorePass::run(
     const ca::usize before = countClasses(container);
 
     // 无旁证注入面：判据全为容器自证事实（材料初值链 + materialKey 体形 +
-    // 写者普查 + S1 路由互证），Era 不消费（同 string_pool_fold 口径——形态
+    // 写者普查 + S1 路由核对），Era 不消费（同 string_pool_fold 口径，形态
     // 内无版本敏感判据；家族锚只钉 simple BSM desc）。还原口径 = 清洁运行
-    // 环境语义（doc/material-key-restore.md §边界）。
+    // 环境语义（doc/material-key-restore.rst §边界）。
     const material_key_restore::ScanInput input;
     const material_key_restore::ScanResult scanned =
         material_key_restore::scan(container, input);
@@ -1169,7 +1169,7 @@ mjbase::spi::PreservedAnalyses ExcBridgeRestorePass::run(
     const ca::usize before = countClasses(container);
 
     // 无旁证注入面：判据全为容器自证事实（trap/handler 逐字形状钉 + 异常
-    // 表互证门），Era 不消费——v3-only 形态（v2 Controlflow 无异常桥面）。
+    // 表核对检查），Era 不消费，v3-only 形态（v2 Controlflow 无异常桥面）。
     const exc_bridge_restore::ScanResult scanned = exc_bridge_restore::scan(container);
     if (traceEnabled()) {
         std::fprintf(stderr,
@@ -1209,7 +1209,7 @@ mjbase::spi::PreservedAnalyses GateProcessorFoldPass::run(
     const ca::usize before = countClasses(container);
 
     // 无旁证注入面：判据全为容器自证事实（(III)I ActionDesc 指纹 + 前窗逐
-    // 字形 + 恒真裁决），Era 不消费（v3-only 形态，v2 Controlflow 无门点
+    // 字形 + 恒真裁决），Era 不消费（v3-only 形态，v2 Controlflow 无 gate
     // processor 面）。
     const gate_processor_fold::ScanResult scanned = gate_processor_fold::scan(container);
     if (traceEnabled()) {

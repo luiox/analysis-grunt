@@ -3,7 +3,7 @@
 ///
 /// ## 形态（artifact 侧）
 ///
-/// 混淆器往直线代码里插「常量 vs 常量」的假分支：真分支是原逻辑，假分支是
+/// 混淆器往直线代码里插常量 vs 常量的假分支：真分支是原逻辑，假分支是
 /// 诱饵死块（常调 JDK 方法再 throw，凑栈形状）。例如
 ///
 ///     ldc 138795133 ; ldc 21992595 ; if_icmple  <dead_block>
@@ -25,7 +25,7 @@
 ///
 /// taken → 区域首条操作数原地改 GOTO_W（保 srcPc）直奔目标；not-taken →
 /// 首条置 NOP；其余操作数与分支本体在非 indy 类擦除、indy 类 NOP 化（帧锚
-/// 保真）。区域中段或分支本体带标签即整站放弃——那是合并点，外部到达路径
+/// 保真）。区域中段或分支本体带标签即整站放弃，那是合并点，外部到达路径
 /// 的栈形状与区域产出耦合，不能动；区域首条的标签安全（外部到达起点即拿
 /// 到折叠结果）。
 #pragma once
@@ -63,7 +63,7 @@ struct DirtySet
 
     ca::usize sites      = 0;   ///< 改写成功的站点数
     ca::usize attempted  = 0;   ///< 进入 rewrite 的站点数
-    ca::usize failed     = 0;   ///< 复核/标签门/roundtrip 拦下的站点数
+    ca::usize failed     = 0;   ///< 复核/标签检查/roundtrip 拦下的站点数
     ca::usize skippedByRoundTrip = 0;   ///< 原样往返不了的方法上的站点数
 };
 

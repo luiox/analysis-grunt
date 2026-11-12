@@ -1,6 +1,6 @@
 /// @file        proxy_inline.hpp
-/// @brief       残留 `proxy_inline`：把「方法体 = 实参逐槽过手 + 单次 invoke +
-///              匹配返回」的 static 代理方法的调用点改指回真实目标。
+/// @brief       残留 `proxy_inline`：把方法体 = 实参逐槽过手 + 单次 invoke +
+///              匹配返回的 static 代理方法的调用点改指回真实目标。
 ///
 /// ## 形态（artifact 侧）
 ///
@@ -26,19 +26,19 @@
 ///
 /// ## 判据（scan 的细找）
 ///
-/// S2 结构事实——**只钉方法体形状 + 引用普查，不依赖家族名/命名模式**：
+/// S2 结构事实，**只钉方法体形状 + 引用普查，不依赖家族名/命名模式**：
 ///
 ///   1. 定义侧：`static`、有方法体、非初始化器、非 `synchronized`；方法体
-///      恰为「每个实参槽一条匹配类型的 `xload n`（long/double 占两槽）+
-///      单条 invoke + 匹配描述符返回类型的 `*return`」的直线；无标签、无
+///      恰为每个实参槽一条匹配类型的 `xload n`（long/double 占两槽）+
+///      单条 invoke + 匹配描述符返回类型的 `*return`的直线；无标签、无
 ///      异常表。转发目标只认 `invokestatic`（代理描述符 == 目标描述符）与
 ///      `invokevirtual`（代理描述符首参 == `L目标owner;` 且余部 == 目标
 ///      描述符）；`invokespecial`/`invokeinterface` 不收。
-///   2. 引用普查：只对容器内**有调用点**的代理动手——零引用代理是死码，
+///   2. 引用普查：只对容器内**有调用点**的代理动手，零引用代理是死码，
 ///      是 DeadMember 的业务，本残留不产站点。
-///   3. 初始化暴露门：`invokestatic proxy(C)` 是 C 的主动使用。改指真实
+///   3. 初始化暴露检查：`invokestatic proxy(C)` 是 C 的主动使用。改指真实
 ///      目标后这层触发消失。生成面里调用点全在代理 owner 类自身（外置类
-///      无 `<clinit>`）——判据把这写成可检查的事实：**代理的调用点必须全
+///      无 `<clinit>`），判据把这写成可检查的事实：**代理的调用点必须全
 ///      部落在 owner 类内，否则要求 owner `<clinit>` 缺失或只剩
 ///      NOP/RETURN**（与 constant_call 的中性口径一致），不满足整代理放弃。
 ///
@@ -46,7 +46,7 @@
 ///
 /// 调用点**原地换 op + 换成员引用**（保 `srcPc`）：static 目标落
 /// `invokestatic`，virtual 目标落 `invokevirtual`（栈上首实参就是接收者，
-/// 弹栈/压栈集合不变，栈帧无需修补）。不改代理本体——内联后代理变零引用
+/// 弹栈/压栈集合不变，栈帧无需修补）。不改代理本体，内联后代理变零引用
 /// 死码，交下游 DeadMember/DeadCode 清理。
 ///
 /// 保守面：代理体带标签/异常表/非转发指令、描述符错配、返回错配、
@@ -128,7 +128,7 @@ struct ProofResult
     std::vector<std::string> failed;
 };
 
-/// @brief SCAN：纯读。代理定义表 + 调用点普查 + 初始化暴露门。
+/// @brief SCAN：纯读。代理定义表 + 调用点普查 + 初始化暴露检查。
 ScanResult scan(const mjbase::model::ResourceContainer& container);
 
 /// @brief REWRITE：纯写。只消费 ScanResult，按 callSrcPc 原地换 op + 成员引用。

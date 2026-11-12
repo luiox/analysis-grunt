@@ -19,7 +19,7 @@
 ///         invokestatic|invokevirtual <真目标>  //   后转发真实目标（键 → 目标
 ///         <ret 型 return>                     //   映射编译期可重建）
 ///
-///     调用点（生成器就地改写原调用指令的 owner/name/desc，opcode 不变——
+///     调用点（生成器就地改写原调用指令的 owner/name/desc，opcode 不变，
 ///     静态源调用点保持 INVOKESTATIC，是唯一可验证形）：
 ///       <原调用的实参栈形不动>
 ///       { aconst_null }×addNulls               // 补齐 maxLoadOp 缺参
@@ -28,11 +28,11 @@
 ///
 /// ## 判据分级（README 残留一览表口径）
 ///
-/// - **S2 结构事实**：键表静态在场——tableswitch 连续键区间 + **default 回
+/// - **S2 结构事实**：键表静态在场，tableswitch 连续键区间 + **default 回
 ///   跳方法头**（生成器防死循环的习惯形，识别锚点）+ case 体转发序列逐形
 ///   （载实参 + CHECKCAST + 唯一 invoke + ret 型 return）+ 调用点 key 常量
 ///   紧邻压栈。键 → case → 真目标映射全为容器自证。
-/// - **无 Era 门**：v3-only 形态（grunt2 无 InvokeDispatcher，redirect/ 下
+/// - **无 Era 检查**：v3-only 形态（grunt2 无 InvokeDispatcher，redirect/ 下
 ///   只有 FieldScramble/InvokeDynamic/MethodExtractor/MethodScramble/
 ///   StringEqualsRedirect），判据内无版本敏感面；形态锚自证家族。
 /// - **纯常量键表直查，不需要 jsim**：key 是调用点紧邻常量、键区间在
@@ -45,15 +45,15 @@
 /// pcmap/调试行落点不变；opcode 换 case 转发的 invoke 形，成员引用 intern
 /// 成真目标），跨度内 [补位 ACONST_NULL×k; key] `eraseBatch` 擦除
 /// （kRejectIfUsed 拒收即回滚整站放弃）。回填目标的实参就是调用点原栈形
-/// ——生成器只插入不删除，跨度擦除后栈形恰好还原原调用。**分发器本体与
-/// 键表不在此删**——引用归零后由 DeadCode / DeadMember / 压池统一回收（与
+/// ，生成器只插入不删除，跨度擦除后栈形恰好还原原调用。**分发器本体与
+/// 键表不在此删**，引用归零后由 DeadCode / DeadMember / 压池统一回收（与
 /// string_pool_fold 同口径）。帧链走 mutateMethodWithFrames 整体重算。
 ///
-/// ## 台账
+/// ## 统计
 ///
 /// DirtySet 按回填 opcode 分列计数 + failed/skippedByRoundTrip；ProofResult
-/// 在类数门 + 脏类重解析门之外统计 residual（改写后容器里仍「分发器识别
-/// 通过 + 调用点全形状命中键表」的站点数——语料单罐门要求 0）。
+/// 在类数检查 + 脏类重解析检查之外统计 residual（改写后容器里仍分发器识别
+/// 通过 + 调用点全形状命中键表的站点数，语料单 jar 检查要求 0）。
 #pragma once
 
 #include <string>
@@ -91,11 +91,11 @@ struct Site
     ca::i32     key       = 0;     ///< 调用点 key 常量（键表命中值）
     ca::u32     padCount  = 0;     ///< 擦除的补位 ACONST_NULL 数 = N - 目标消费
                                    ///< （生成面 addNulls；调用点 null 跑更长说明
-                                   ///< 原实参尾带 null 字面量——保留不动）
+                                   ///< 原实参尾带 null 字面量，保留不动）
     Target      target;               ///< 键表查出的转发目标
 };
 
-/// @brief 拒绝（fail-closed 记账：拒绝原因进 trace，站点不动）。
+/// @brief 拒绝（fail-closed 计数：拒绝原因进 trace，站点不动）。
 struct Reject
 {
     std::string uri;
@@ -114,7 +114,7 @@ struct ScanResult
     ca::usize dispatcherRejected = 0;  ///< 头锚过但 case 体不合规的分发器数
     ca::usize keyNotConst        = 0;  ///< key 位非常量（含 NumberBasicEncrypt 藏形）
     ca::usize keyNotInTable      = 0;  ///< key 不在键表区间
-    ca::usize padMismatch        = 0;  ///< 补位数与目标栈形互证不符
+    ca::usize padMismatch        = 0;  ///< 补位数与目标栈形核对不符
     ca::usize dispatcherBlocked  = 0;  ///< 站点指向不合规分发器（多候选等）
     ca::usize classesSkipped     = 0;  ///< 会话开不了的类
 };
@@ -133,8 +133,8 @@ struct DirtySet
     ca::usize rewrittenVirtual = 0;   ///< 回填 invokevirtual 数
 };
 
-/// @brief 验收结果。residual = 改写后容器里仍「分发器在场 + 调用点全形状
-///        命中键表」的站点数（还原不彻底的残留，语料单罐门要求 0）。
+/// @brief 验收结果。residual = 改写后容器里仍分发器在场 + 调用点全形状
+///        命中键表的站点数（还原不彻底的残留，语料单 jar 检查要求 0）。
 struct ProofResult
 {
     bool                     ok = true;

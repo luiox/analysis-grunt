@@ -1,5 +1,5 @@
 /// @file        constant_call.hpp
-/// @brief       残留 `constant_call`：把「全常量实参 + 纯算术目标方法」的
+/// @brief       残留 `constant_call`：把全常量实参 + 纯算术目标方法的
 ///              `invokestatic` 折叠成一条常量装载。
 ///
 /// ## 形态（artifact 侧）
@@ -20,19 +20,19 @@
 ///   1. 目标方法是本容器内声明的 `static`、有方法体、非 `<init>`/`<clinit>`、
 ///      非 `synchronized`；
 ///   2. 调用点的实参由**紧邻的纯常量装载**产生，且槽数与描述符严格相等；
-///   3. 用 jsim 执行器（跨方法、封闭环境）在**常量实参**下能跑出一个值——
-///      环境外调用/字段/分配一律 bail，「求值成功」本身就是「这条执行路径
-///      可静态重放且无外部副作用」的证明。
+///   3. 用 jsim 执行器（跨方法、封闭环境）在**常量实参**下能跑出一个值，
+///      环境外调用/字段/分配一律 bail，求值成功本身就是这条执行路径
+///      可静态重放且无外部副作用的证明。
 ///
 /// 额外的保守面（不算判据，是拒绝理由）：被调类的 `<clinit>` 必须缺失或
-/// 只剩 `return`——否则删掉调用会改变类初始化时机。**同类豁免**（JVMS 5.5）：
+/// 只剩 `return`，否则删掉调用会改变类初始化时机。**同类豁免**（JVMS 5.5）：
 /// 本类方法开始执行时类已经在初始化中/已完成，同类 `INVOKESTATIC` 不触发
-/// 初始化，删调用不移时机——豁免站点的纯性仍由封闭环境求值独立证明。
-/// （boar 取证：processor 键解锁链的全部可折蹬床站点都落在非中性 clinit
-/// 类里，门不豁免则整条链空转。）
+/// 初始化，删调用不移时机，豁免站点的纯性仍由封闭环境求值独立证明。
+/// （boar 取证：processor 键解锁链的全部可折转发站点都落在非中性 clinit
+/// 类里，检查不豁免则整条链空转。）
 ///
-/// 求值环境接管（本残留自带）：`java/lang/Math.max(II)I`——IndyRestore 还原
-/// `__grt$indy$` 蹬床体内 indy 后，CFF inline 桥的 MaxConst 站点落在
+/// 求值环境接管（本残留自带）：`java/lang/Math.max(II)I`，IndyRestore 还原
+/// `__grt$indy$` 转发体内 indy 后，CFF inline 桥的 MaxConst 站点落在
 /// `java/lang/Math.max(II)I` 上；jsim 核心/num 包无 JDK 数学面，缺接管整条
 /// 面在 EvalBadState 拒。max 是全序纯函数，双常量实参下值唯一确定，
 /// unknown 按未知口径传播。
@@ -52,7 +52,7 @@ namespace grunt::constant_call {
 /// @brief 一个可折叠站点（ScanResult::sites 的元素）。
 ///
 /// `caller*` 定位调用点，`target*` 是证据，`args`/`value` 是判定结果。
-/// `callSrcPc` 是原始字节布局下的 pc，跨会话稳定——rewrite 用它重新定位
+/// `callSrcPc` 是原始字节布局下的 pc，跨会话稳定，rewrite 用它重新定位
 /// 指令，而不是把 InsnId（会话内句柄）带出去。
 struct Site
 {
@@ -114,7 +114,7 @@ struct DirtySet
     ca::usize              applied   = 0;   ///< 实际改写的站点数
     std::vector<ca::usize> failedByReason;  ///< 按 rewrite 失败原因分类计数
 
-    /// 因「原样往返不了」而整方法放弃的站点数。这类放弃与改写无关：方法在
+    /// 因原样往返不了而整方法放弃的站点数。这类放弃与改写无关：方法在
     /// 未修改状态下就走不完一次 lower，改写只会把类一起拖坏（见 roundTripSafe）。
     ca::usize skippedByRoundTrip = 0;
 };

@@ -323,7 +323,7 @@ const char* kSpliceNonConstOperand =
     "  }\n"
     "}\n";
 
-/// 位拼栈形破裂：cat1/cat2 混喂（iconst_3 喂 LAND，第二操作数类型门拒绝）。
+/// 位拼栈形破裂：cat1/cat2 混喂（iconst_3 喂 LAND，第二操作数类型检查拒绝）。
 const char* kSpliceMixedWidth =
     ".super java/lang/Object\n"
     ".class public super fixture/NfSpliceMixed {\n"
@@ -453,7 +453,7 @@ const char* kWrongCallee =
     "  }\n"
     "}\n";
 
-/// 中段标签：分支路径与贯穿路径在跨度中段（ldc 23）汇合，栈形一致 [J]——
+/// 中段标签：分支路径与贯穿路径在跨度中段（ldc 23）汇合，栈形一致 [J]，
 /// 汇编合法，但 ldc 23 带标签 = 合并点，scan 必须整站放弃。
 const char* kMidSpanLabel =
     ".super java/lang/Object\n"
@@ -646,7 +646,7 @@ TEST(NumberFoldScan, RejectsSpliceMixedWidth)
     addFixture(container, "fixture/NfSpliceMixed", kSpliceMixedWidth);
     const ScanResult scanned = scan(container);
     EXPECT_EQ(scanned.sites.size(), 0u)
-        << "cat1/cat2 混喂 = 栈形破裂，位拼第二操作数类型门必须拒绝";
+        << "cat1/cat2 混喂 = 栈形破裂，位拼第二操作数类型检查必须拒绝";
 }
 
 TEST(NumberFoldScan, RejectsSpliceShapeBreak)
@@ -946,7 +946,7 @@ TEST(NumberFoldProof, RejectsClassCountGrowth)
     const DirtySet dirty = rewrite(container, scanned);
     ASSERT_EQ(dirty.uris.size(), 1u);
 
-    // 人为增类，类数门必须报失败。
+    // 人为增类，类数检查必须报失败。
     const std::string extra = "fixture/NfExtra.class";
     container.addResource(extra, std::make_unique<model::ClassResource>(
                                      extra, asJava17(assemble("fixture/NfExtra", kIntViaLong))));
@@ -972,7 +972,7 @@ TEST(NumberFoldBudget, ScanOverBudgetSkipsClassConservatively)
     EXPECT_EQ(starved.sites.size(), 1u);
     EXPECT_EQ(starved.classesSkippedByBudget, 1u);
 
-    // 默认预算：正常夹具绝不触限（预算不改变正常罐行为）。
+    // 默认预算：正常夹具绝不触限（预算不改变正常 jar 行为）。
     const ScanResult normal = scan(container);
     ASSERT_EQ(normal.sites.size(), 1u);
     EXPECT_EQ(normal.classesSkippedByBudget, 0u);
@@ -987,7 +987,7 @@ TEST(NumberFoldBudget, RewriteOverBudgetLeavesClassUntouched)
     const ScanResult scanned = scan(container);
     ASSERT_EQ(scanned.sites.size(), 1u);
 
-    // 复核记账单位是方法指令数（本夹具 7 条）；预算 1 必在首站点即超限。
+    // 复核计数单位是方法指令数（本夹具 7 条）；预算 1 必在首站点即超限。
     const DirtySet dirty = rewrite(container, scanned, iter_budget::ClassBudget{1});
     EXPECT_EQ(dirty.uris.size(), 0u) << "超限类不许被改写";
     EXPECT_EQ(dirty.skippedByBudget, 1u);

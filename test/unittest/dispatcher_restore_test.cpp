@@ -2,13 +2,13 @@
 /// @brief       残留 `dispatcher_restore` 的三段判据测试（真值往返 + 拒绝面
 ///              反证）。
 ///
-/// 夹具是「缩小版 Grunt v3 InvokeDispatcher 形态」（jasm 现场汇编，不落二
+/// 夹具是缩小版 Grunt v3 InvokeDispatcher 形态（jasm 现场汇编，不落二
 /// 进制、不依赖语料目录）：每类带真实分发器方法（生成面逐字锚：头锚
 /// ILOAD key 槽 + tableswitch default 回跳方法头 + case 转发体）+ 真实调用
 /// 点（补位 + key 常量 + INVOKESTATIC 分发器）。
 ///
 /// 真值往返的证据链：分发器键表（tableswitch 连续键 + case 转发目标）与调
-/// 用点 key 常量是同一份静态事实的两半——scan 反查「key → 真目标」，rewrite
+/// 用点 key 常量是同一份静态事实的两半，scan 反查key → 真目标，rewrite
 /// 回填后调用点直接 invoke 真目标；断言回填目标 == 夹具键表写下的目标（无
 /// 循环论证：判据不读方法名，键表由结构重建）。
 ///
@@ -16,11 +16,11 @@
 /// - SCAN：static / virtual / N=0（无 Object 槽）三形态站点定案；原实参尾
 ///   带 null 字面量（null 跑长于补位数）的站点照常回填（只擦末段补位）；
 ///   形状不符分发器（default 不回头 / case 体多 invoke）、key 不在表、
-///   key 非常量、补位互证不符、key 位合并点 → 拒绝面逐桶记账；
+///   key 非常量、补位核对不符、key 位合并点 → 拒绝面逐桶计数；
 /// - REWRITE：调用指令原地换真目标 + 补位/key 擦除；**分发器本体与键表
 ///   不删**（改写后仍在场）；拒绝面上容器字节逐位不动；
 /// - PROOF：类数不增 + 脏类可重解析 + residual 归零（未跑 rewrite 时如实
-///   报「本可回填」站点数）。
+///   报本可回填站点数）。
 #include "grunt/dispatcher_restore.hpp"
 
 #include "jbc/ir/units.hpp"
@@ -96,9 +96,9 @@ const std::vector<ca::u8>& classBytes(const model::ResourceContainer& container,
 // ==== 夹具（v3 InvokeDispatcher 生成面缩样）=================================
 // ============================================================================
 //
-// dispA：N=2（(Object;Object;I)V），键区间 [100,101]——c0 → static tgtA
+// dispA：N=2（(Object;Object;I)V），键区间 [100,101]，c0 → static tgtA
 // （1 参），c1 → virtual PrintStream.println(String)。
-// dispB：N=0（(I)Ljava/lang/String;），键区间 [100,101]——c0 → tgtR0、
+// dispB：N=0（(I)Ljava/lang/String;），键区间 [100,101]，c0 → tgtR0、
 // c1 → tgtR1（均 static 无参返回 String）。
 
 std::string dispHostSource(const std::string& name)
@@ -201,7 +201,7 @@ std::string dispHostSource(const std::string& name)
 }
 
 /// @brief 正例夹具：原实参尾带 null 字面量（null 跑 2 = 实参 null + 补位 1
-/// ——null 跑长于补位数仍回填，只擦末段补位，实参保留）。
+/// ，null 跑长于补位数仍回填，只擦末段补位，实参保留）。
 std::string nullArgHostSource(const std::string& name)
 {
     return ".super java/lang/Object\n"
@@ -295,7 +295,7 @@ std::string badKeySource(const std::string& name)
            "}\n";
 }
 
-/// @brief 拒绝面夹具：key 位非常量（iload——NumberBasicEncrypt 藏形后的形）。
+/// @brief 拒绝面夹具：key 位非常量（iload，NumberBasicEncrypt 藏形后的形）。
 std::string nonConstKeySource(const std::string& name)
 {
     std::string src = badKeySource(name);
@@ -303,11 +303,11 @@ std::string nonConstKeySource(const std::string& name)
     const ca::usize   at      = src.find(needle);
     if (at == std::string::npos) return src;   // 夹具结构漂移即暴露
     src.replace(at, needle.size(), "      iload 0\n");
-    // call ()V 无参——iload 0 槽位越界但 jasm 只汇编不校验（夹具不运行）。
+    // call ()V 无参，iload 0 槽位越界但 jasm 只汇编不校验（夹具不运行）。
     return src;
 }
 
-/// @brief 拒绝面夹具：分发器形状不符——default 落别名块（CFF alias face 同形
+/// @brief 拒绝面夹具：分发器形状不符，default 落别名块（CFF alias face 同形
 /// 窜入）而非回跳方法头。分发器整表拒绝，调用点静默跳过。
 std::string aliasDefaultSource(const std::string& name)
 {
@@ -347,7 +347,7 @@ std::string ambiguousCaseSource(const std::string& name)
     return src;
 }
 
-/// @brief 拒绝面夹具：补位互证不符——调用点零补位（原实参非 null 值）但
+/// @brief 拒绝面夹具：补位核对不符，调用点零补位（原实参非 null 值）但
 /// addNulls = 1：null 跑 0 < 补位数，无 null 可擦（fail-closed）。
 std::string padMismatchSource(const std::string& name)
 {
@@ -444,7 +444,7 @@ TEST(DispatcherScan, RestoresStaticVirtualAndZeroSlotSites)
 
 TEST(DispatcherScan, RestoresSiteWithNullLiteralArg)
 {
-    // callNullArg：null 跑 2（实参 null + 补位 1）——null 跑长于补位数仍
+    // callNullArg：null 跑 2（实参 null + 补位 1），null 跑长于补位数仍
     // 回填（只擦末段补位），不能因跑长而误拒。
     model::ResourceContainer container =
         makeContainer({{"GtDispNull", nullArgHostSource("GtDispNull")}});
@@ -521,7 +521,7 @@ TEST(DispatcherScan, RejectsPadMismatch)
     EXPECT_EQ(result.dispatchers, 1u);
     EXPECT_EQ(result.padMismatch, 1u);
     ASSERT_EQ(result.rejects.size(), 1u);
-    EXPECT_NE(result.rejects.front().why.find("互证不符"), std::string::npos);
+    EXPECT_NE(result.rejects.front().why.find("核对不符"), std::string::npos);
 }
 
 TEST(DispatcherScan, RejectsLabeledKey)
@@ -580,8 +580,8 @@ TEST(DispatcherRewrite, RestoresSitesInPlaceAndKeepsDispatcher)
 
 TEST(DispatcherRewrite, KeepsNullLiteralArgWhenErasingTailPads)
 {
-    // null 实参站点：只擦末段补位，前段 null 实参保留——回填后调用点仍是
-    // 「null 实参 + 真目标」。
+    // null 实参站点：只擦末段补位，前段 null 实参保留，回填后调用点仍是
+    // null 实参 + 真目标。
     model::ResourceContainer container =
         makeContainer({{"GtDispNull", nullArgHostSource("GtDispNull")}});
 
@@ -662,7 +662,7 @@ TEST(DispatcherProof, KeepsClassCountReparsesAndResidualZero)
 
 TEST(DispatcherProof, CountsResidualWhenSitesUntouched)
 {
-    // 分发器在场但没跑 rewrite：residual 如实报告「本可回填」的站点数。
+    // 分发器在场但没跑 rewrite：residual 如实报告本可回填的站点数。
     model::ResourceContainer container =
         makeContainer({{"GtDisp", dispHostSource("GtDisp")}});
 

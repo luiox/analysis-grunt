@@ -11,10 +11,10 @@
 ///
 /// ## 判据（scan 的细找）
 ///
-/// S2 结构事实，边界收在「编译器不可能生成」的交集上：
+/// S2 结构事实，边界收在编译器不可能生成的交集上：
 ///   1. 类不是 enum（ACC_ENUM == 0：`$VALUES` 等枚举机制字段是真实的
 ///      static synthetic，不能碰）；
-///   2. 成员是 static，且名字不以 `$` 开头——各工具链的编译器合成物一律
+///   2. 成员是 static，且名字不以 `$` 开头，各工具链的编译器合成物一律
 ///      带 `$`（`access$000`、`$SWITCH_TABLE$`、`$assertionsDisabled`），
 ///      混淆器注入的伪标志成员是改名后的普通名字，按名字形状可分；
 ///   3. static 方法带 ACC_BRIDGE 或 ACC_SYNTHETIC → 两标志一起清；
@@ -22,7 +22,7 @@
 ///
 /// 保守面（不动）：实例方法的 ACC_BRIDGE（可能是真实泛型桥接器）、实例成员
 /// 的 ACC_SYNTHETIC（`this$0` 等）、类级 ACC_SYNTHETIC、一切 `$` 名字成员。
-/// 语义边界：标志只影响反射视图，不影响指令执行语义——isSynthetic 返回值的
+/// 语义边界：标志只影响反射视图，不影响指令执行语义，isSynthetic 返回值的
 /// 变化是本残留的目的，不是副作用。
 #pragma once
 
@@ -49,7 +49,7 @@ struct FlagSite
 struct ScanResult
 {
     std::vector<FlagSite> sites;
-    ca::usize             classesSkipped = 0;  ///< 解析失败 / 版本或枚举门外被跳过的类
+    ca::usize             classesSkipped = 0;  ///< 解析失败 / 版本或枚举检查外被跳过的类
 };
 
 /// @brief 被改写的类与成员级统计。

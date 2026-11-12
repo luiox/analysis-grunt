@@ -1,8 +1,8 @@
 /// @file        pass_clock_test.cpp
-/// @brief       pass 级 wall-clock 时间片的门与挂起测试（哑类夹具，不汇编）。
+/// @brief       pass 级 wall-clock 时间片的检查与挂起测试（哑类夹具，不汇编）。
 ///
 /// 时间是物理量，测试不靠睡眠：用 forceExpire 测试钩子做确定性过期，
-/// 语义面（门放行/拒绝、首停点名、逐类计数、proof 类数门挂起、不设防）
+/// 语义面（检查放行/拒绝、首停点名、逐类计数、proof 类数检查挂起、不设防）
 /// 全部走真路径。
 #include "grunt/pass_clock.hpp"
 
@@ -60,7 +60,7 @@ std::vector<ca::u8> probeClassBytes()
     return std::move(encoded).unwrap();
 }
 
-/// 哑类夹具：forEachClass 只认「非空 ClassResource」，不需要合法类字节。
+/// 哑类夹具：forEachClass 只认非空 ClassResource，不需要合法类字节。
 void addDummy(model::ResourceContainer& container, const std::string& name)
 {
     const std::string uri = name + ".class";
@@ -126,7 +126,7 @@ TEST(PassClockTest, ExpireMidwaySkipsOnlyRest)
             seen.emplace_back(e.uri);
             scope.clock().forceExpire();   ///< 第一类处理完即到墙
         });
-        // 首类已下发并处理，余两类被门拒收；容器迭代序不设保证（mjbase
+        // 首类已下发并处理，余两类被检查拒收；容器迭代序不设保证（mjbase
         // ResourceContainer unordered 契约），只认数目不点名。
         ASSERT_EQ(seen.size(), ca::usize{1});
         EXPECT_TRUE(seen[0] == "a.class" || seen[0] == "b.class" ||
@@ -141,7 +141,7 @@ TEST(PassClockTest, CountClassesIgnoresExpiredClock)
     model::ResourceContainer container = threeJars();
     pass_clock::PassScope    scope("grunt.Test", 1);
     scope.clock().forceExpire();
-    // 类数不增门（proof 面）必须看全量：挂起期 forEachClass 不受超墙影响。
+    // 类数不增检查（proof 面）必须看全量：挂起期 forEachClass 不受超墙影响。
     EXPECT_EQ(countClasses(container), ca::usize{3});
     EXPECT_EQ(scope.clock().skipped(), ca::usize{0});   ///< 挂起期不记跳过账
 }
@@ -151,7 +151,7 @@ TEST(PassClockTest, AdmitNamesFirstBlockedOnly)
     model::ResourceContainer  container = threeJars();
     pass_clock::PassScope     scope("grunt.Test", 1);
     scope.clock().forceExpire();
-    // 直接打门：首停类被点名记录（skipped 计数逐类累加，首停语义不变）。
+    // 直接打检查：首停类被点名记录（skipped 计数逐类累加，首停语义不变）。
     EXPECT_FALSE(scope.clock().admit("b.class"));
     EXPECT_FALSE(scope.clock().admit("c.class"));
     EXPECT_EQ(scope.clock().skipped(), ca::usize{2});
@@ -165,7 +165,7 @@ TEST(PassClockTest, ProofFaceIgnoresExpiredClock)
                           std::make_unique<model::ClassResource>(uri, probeClassBytes()));
     pass_clock::PassScope scope("grunt.Test", 1);
     scope.clock().forceExpire();
-    // 效力门不许被时间片截短：超墙后脏类仍要查到并真解析，类数门全量。
+    // 效力检查不许被时间片截短：超墙后脏类仍要查到并真解析，类数检查全量。
     const ca::usize before = countClasses(container);
     const proof_tools::ClassIntactResult intact =
         proof_tools::classesIntact(container, {uri}, before);

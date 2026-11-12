@@ -4,12 +4,12 @@
 /// CONVENTION §2：家族知识唯一落点。Kasumi 把调用点/字段访问/构造器全部改写成
 /// `invokedynamic`，由每类自带的 8 参 bootstrap 在运行时解密 bsmArgs、按
 /// mode/extra 选 `findStatic/findVirtual/findGetter/…/findConstructor` 出句柄。
-/// 本表钉的是「8 参 bootstrap 描述符、解密器描述符、mode×extra 7 形态、
-/// `@Metadata` 注解、水印串、反 LLM 资源前缀」这批版本常量。
+/// 本表钉的是8 参 bootstrap 描述符、解密器描述符、mode×extra 7 形态、
+/// `@Metadata` 注解、水印串、反 LLM 资源前缀这批版本常量。
 ///
 /// 常量逐字取自参考实现（kasumi_indy_resolve_pass / kasumi_metadata_cleanup_pass
 /// / kasumi_string_decrypt_pass / KasumiStringDumper.java，源在仓外），
-/// SnakeGame-obf.jar（582,974 B，验收数字见 doc/kasumi-verify.md）实证。
+/// SnakeGame-obf.jar（582,974 B，验收数字见 doc/kasumi-verify.rst）验证。
 #pragma once
 
 #include <string_view>
@@ -62,14 +62,14 @@ inline constexpr std::string_view kKasumiByteKeyPrefix = "byte:";
 
 // ---- mode × extra 7 形态表（S3 级判据的数据；越界组合一律拒绝）------------
 
-/// @brief mode 分量（实现选择，换代需复核——Era 分支唯一合法落点的数据面）。
+/// @brief mode 分量（实现选择，换代需复核，Era 分支唯一合法落点的数据面）。
 inline constexpr ca::u32 kKasumiModeMethod = 0;   ///< 方法调用（extra 分 static/virtual）
 inline constexpr ca::u32 kKasumiModeField  = 1;   ///< 字段访问（extra 分 4 路）
 inline constexpr ca::u32 kKasumiModeCtor   = 2;   ///< 构造器（extra 恒 0，语料未见他用）
 
 /// @brief 7 形态：还原落点指令的投影。数值来自 bootstrap 体 tableswitch 分派
 ///        与 627 站点语料印证（notes §2.4：0/0=247, 0/1=37, 1/0=4, 1/1=4,
-///        1/2=22, 1/3=23, 2/0=2——旧样本口径，SnakeGame-obf 实测见语料账本）。
+///        1/2=22, 1/3=23, 2/0=2，旧样本口径，SnakeGame-obf 实测见语料记录）。
 enum class KasumiIndyForm : ca::u8 {
     Static,       ///< mode 0 extra 0 → invokestatic
     Virtual,      ///< mode 0 extra 1 → invokevirtual / invokeinterface（receiver 走 indy 首参）
@@ -121,7 +121,7 @@ inline constexpr std::string_view kKasumiMetadataAnnoDesc = "Ldev/kasumi/interna
 inline constexpr std::string_view kKasumiWatermarkText = "PROTECTED BY Kasumi";
 
 /// @brief 水印串：`Gruntpocalypse` 子串命中（参考实现 isKasumiWatermarkString 的
-///        第三条判据，逐字取自 kasumi_metadata_cleanup_pass.cpp——参考实现水印
+///        第三条判据，逐字取自 kasumi_metadata_cleanup_pass.cpp，参考实现水印
 ///        口径把姊妹家族的署名串一并当水印清）。
 inline constexpr std::string_view kKasumiWatermarkAltText = "Gruntpocalypse";
 
@@ -136,7 +136,7 @@ inline constexpr std::string_view kKasumiResourceSuffix = ".md";
 
 /// @brief 反 LLM 注入资源内容探针（参考实现 isKasumiAntiLlmResource 的五条逐字
 ///        取自 kasumi_metadata_cleanup_pass.cpp）：URI 形状命中之外，字节里
-///        任一探针子串在场才算注入内容——S1 互证面，删的是内容坐实的资源。
+///        任一探针子串在场才算注入内容，S1 核对面，删的是内容坐实的资源。
 inline constexpr std::string_view kKasumiResourceProbes[] = {
     "anti-llm",
     "developer-message",

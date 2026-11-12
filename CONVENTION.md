@@ -2,11 +2,11 @@
 
 本文件是**本仓代码组织的规范**，同时作为跨仓（`analysis-dasho` / `analysis-allatori` / `analysis-grunt` / 未来的 `zkm-deobf`）的共同约定。
 
-它不规定"怎么判据、怎么改写"——那是各混淆器家族自己的知识。它只规定**代码放在哪、叫什么、按什么顺序写、怎么测**。
+它不规定"怎么判据、怎么改写"，那是各混淆器家族自己的知识。它只规定**代码放在哪、叫什么、按什么顺序写、怎么测**。
 
 ## 0. 一句话
 
-> **deobf 代码的组织单位是「一种残留（residue）」，每种残留 = 一份会变的家族知识 + 三段恒定的动作（scan / rewrite / proof）；跨残留复用只允许发生在三段各自的工具箱里；对接 pipeline 只是一张数据表。**
+> **deobf 代码的组织单位是一种残留（residue），每种残留 = 一份会变的家族知识 + 三段恒定的动作（scan / rewrite / proof）；跨残留复用只允许发生在三段各自的工具箱里；对接 pipeline 只是一张数据表。**
 
 ---
 
@@ -41,7 +41,7 @@
 |---|---|---|
 | `pass` | ❌ | 来自编译器的**遍历**模型，描述"怎么跑"，不描述"在处理什么" |
 | `transform` | ⚠️ 半 | 是**混淆器侧**视角；且变换常是复合的（`dasho.Checks` 覆盖 6 种检查） |
-| **`residue`（残留）** | ✅ | 是 **artifact 侧**视角——deobf 代码唯一能看见的就是它 |
+| **`residue`（残留）** | ✅ | 是 **artifact 侧**视角，deobf 代码唯一能看见的就是它 |
 | `evidence` | ✅ | 残留的超集，把 mapfile 这类旁证也纳进来，`Rename` 才有位置 |
 
 `pass` 这个词**允许出现在 `adapter/` 里**（它是流水线的编排词汇），**禁止出现在 `src/` 里**。
@@ -54,7 +54,7 @@
 | 需要顺序吗 | 需要 | **不需要** |
 | 需要多态吗 | 需要 | **不需要**（就是三组自由函数） |
 
-去掉顺序承诺之后，三段可以是三个自由函数、三个目录、三个编译单元——**关注点分解不产生调用关系约束**。这正是它比"pass 链"强的地方：pass 链强迫你把顺序写进代码结构，而顺序其实是外部知识。
+去掉顺序承诺之后，三段可以是三个自由函数、三个目录、三个编译单元，**关注点分解不产生调用关系约束**。这正是它比"pass 链"强的地方：pass 链强迫你把顺序写进代码结构，而顺序其实是外部知识。
 
 ---
 
@@ -127,7 +127,7 @@ ProofResult proof(const Knowledge&, const mjbase::model::Container&,
 
 **可执行检查**：`pwsh -File tools/check-convention.ps1`。
 三档结果 FAIL（真违规）/ TODO（约定已定、代码未迁移）/ OK；退出码只看 FAIL。
-规则 3/5 靠"分区标记内出现改写调用"来近似——文件一旦打了 `==== SCAN / REWRITE /
+规则 3/5 靠"分区标记内出现改写调用"来近似，文件一旦打了 `==== SCAN / REWRITE /
 PROOF ====` 分区，语义约束就退化成文本约束。
 
 **第 4 条最有价值**，它带来四个直接后果：
@@ -150,7 +150,7 @@ PROOF ====` 分区，语义约束就退化成文本约束。
 // ==== REWRITE =================================================================
 //   改写策略的选择条件：...
 // ==== PROOF ===================================================================
-//   类级门：帧再生 + 校验器 → 失败回滚该类
+//   类级检查：帧再生 + 校验器 → 失败回滚该类
 //   家族特有验收：...
 // =============================================================================
 ```
@@ -178,7 +178,7 @@ struct ScanResult {
 };
 ```
 
-**这是数据形状，不是接口。** 各残留的 `ScanResult` 内容天差地别——
+**这是数据形状，不是接口。** 各残留的 `ScanResult` 内容天差地别，
 
 | 残留 | `Site.why` 里装什么 |
 |---|---|
@@ -188,7 +188,7 @@ struct ScanResult {
 | `dead_filler` | 空转窗口范围 + 活跃性结果 |
 | `renaming_map` | 重映射规则（反演后的 new→old） |
 
-——但**形状相同**，所以 adapter 能用同一段代码处理它们，而不需要 `IStringDecryptStrategy` 这类按功能分的接口。加新混淆器时你加的是新的 `why` 内容，不是新的接口实现。
+，但**形状相同**，所以 adapter 能用同一段代码处理它们，而不需要 `IStringDecryptStrategy` 这类按功能分的接口。加新混淆器时你加的是新的 `why` 内容，不是新的接口实现。
 
 ---
 
@@ -218,7 +218,7 @@ struct ScanContext {
 
 **三种可变性 = 三个类型 = 测试时可单独构造、单独断言。** 塞进一个 `this` 就把三种可变性压成一种，分不清"这是配置还是缓存"，测试就得先 reset 对象。
 
-### 5.1 三段的状态需求**本来就不对称**——别为了对称硬造三个 ctx
+### 5.1 三段的状态需求**本来就不对称**，别为了对称硬造三个 ctx
 
 | 段 | 状态需求 | 为什么 |
 |---|---|---|
@@ -226,14 +226,14 @@ struct ScanContext {
 | **rewrite** | **局部**：按类/按站点的编辑器会话、dirty 表 | 改写是局部动作，站点之间不共享状态 |
 | **proof** | **几乎无**：判定 + 回滚，每次独立 | 帧再生、校验器都是按类一次性调用 |
 
-**签名的不对称本身就是文档**：谁读了都会知道"只有识别这一步需要缓存"。强行给三段都套一个 `XxxContext`，等于用形式对称掩盖实质不对称——这和"每个都叫 pass"是同一类错误。
+**签名的不对称本身就是文档**：谁读了都会知道"只有识别这一步需要缓存"。强行给三段都套一个 `XxxContext`，等于用形式对称掩盖实质不对称，这和"每个都叫 pass"是同一类错误。
 
 ### 5.2 虚函数只允许出现在两处
 
-1. **adapter**——而且正确形态是**数据表，不是类**（见 §9）
-2. **细找内部的 Era 策略**——仅当 `switch (era)` 分支爆炸到不可维护时；**只活在细找内部，不许外溢成三段级别的接口**
+1. **adapter**，而且正确形态是**数据表，不是类**（见 §9）
+2. **细找内部的 Era 策略**，仅当 `switch (era)` 分支爆炸到不可维护时；**只活在细找内部，不许外溢成三段级别的接口**
 
-**除此之外禁止虚函数。** 一旦出现 `virtual ScanResult scan()`，`DashoStringDecryptPass` 那个类就会复活——它同时是编排单元和三段宿主，`pass` 这个词就跟着回来了。
+**除此之外禁止虚函数。** 一旦出现 `virtual ScanResult scan()`，`DashoStringDecryptPass` 那个类就会复活，它同时是编排单元和三段宿主，`pass` 这个词就跟着回来了。
 
 ### 5.3 例外：`.cpp` 内自由，`.hpp` 受约束
 
@@ -248,7 +248,7 @@ struct RegionEditor {   // 不进头文件，不可继承，不算"类"
 }
 ```
 
-判据：**出现在 `.hpp` 里就是接口，出现在 `.cpp` 里就是局部变量的组织方式。** 约定只约束头文件——因为只有头文件会被别人 include、被 adapter 看见、被下一代当成可继承的东西。
+判据：**出现在 `.hpp` 里就是接口，出现在 `.cpp` 里就是局部变量的组织方式。** 约定只约束头文件，因为只有头文件会被别人 include、被 adapter 看见、被下一代当成可继承的东西。
 
 ---
 
@@ -261,7 +261,7 @@ struct RegionEditor {   // 不进头文件，不可继承，不算"类"
 | **粗找** | 召回率 + 便宜 | **可以钉形状**（反正细找会确认） |
 | **细找** | 精度 + 不变量 | **必须钉事实**（混淆器无法在保持功能的前提下改掉） |
 
-**粗找钉形状是合法的**——它只需要"不漏"，不需要"不错"。这一条让粗找可以随版本快速改，细找才需要稳定。
+**粗找钉形状是合法的**，它只需要"不漏"，不需要"不错"。这一条让粗找可以随版本快速改，细找才需要稳定。
 
 ### 6.2 细找的强度分级
 
@@ -307,7 +307,7 @@ Era probeEra(const mjbase::model::Container&);     // 每个家族仓固定提�
 |---|---|---|
 | `scan_toolbox` | 求值器、CFG 后继图、区间/活跃性、纯度判定、锚点 | `jvm_interp` ✅ `cfg.hpp` 的图部分 ✅ `ClassSet::isPure` ✅ |
 | `rewrite_toolbox` | 区域删除、goto 线程化、不可达清理、跳到下一条清理、溢写对折叠、**资源删除**（非类条目写动词） | `pruneUnreachable` `tidyGotoToNext` `foldStoreLoadPairs` `threadGotos` ✅ 已收口进 `cfg.hpp`；`removeResource` ✅（analysis-grunt，metadata_strip 首用） |
-| `proof_toolbox` | 校验器、类数检查、悬垂检查、逐类加载、帧再生、**资源对账**（数只减 + 删除清单逐条不在场） | `ClassSet::commit`（帧链）✅ `test/tools/VerifyJar.java` ✅；`countResources`/`resourcesShrunk` ✅（analysis-grunt，与类数门并列） |
+| `proof_toolbox` | 校验器、类数检查、悬垂检查、逐类加载、帧再生、**资源核对**（数只减 + 删除清单逐条不在场） | `ClassSet::commit`（帧链）✅ `test/tools/VerifyJar.java` ✅；`countResources`/`resourcesShrunk` ✅（analysis-grunt，与类数检查并列） |
 
 ### 7.3 当前落地形态
 
@@ -316,20 +316,20 @@ Era probeEra(const mjbase::model::Container&);     // 每个家族仓固定提�
 加上 `class_set.hpp`（容器层的 proof）。
 
 按 §3.3 的拆文件条件（> 300 行，或被 ≥ 2 个残留引用），`cfg.hpp` 已经 545 行、
-被 4 个残留引用，两条都踩了——**它是下一个该拆的文件**。拆之前先保持现状：
+被 4 个残留引用，两条都踩了，**它是下一个该拆的文件**。拆之前先保持现状：
 工具箱的**归属**必须清楚，物理上是否单独成文件是次要的。
 
 ### 7.1 检查方法（可执行）
 
 > **数三个工具箱各有几份实现，>1 份 = 复用没收口。**
 
-反例（`ZKM-27-Full-Deobfuscator`，44000 行 / 0 测试）：17 份 `verifyArchive`、19 份 `sha256`、11 份 `writeVerifiedArchive`、5 份 `previousCode`——**proof 工具箱没收口**，于是每个残留文件都自带一整套三段。
+反例（`ZKM-27-Full-Deobfuscator`，44000 行 / 0 测试）：17 份 `verifyArchive`、19 份 `sha256`、11 份 `writeVerifiedArchive`、5 份 `previousCode`，**proof 工具箱没收口**，于是每个残留文件都自带一整套三段。
 
 ### 7.2 本仓曾有的问题（本分支已修）
 
 `src/dasho/cfg.hpp` 的头注释曾声称"这里的函数全部是**只读**的"，但文件里同时装着
 scan 工具箱（`buildGraph` `reachSet` `computeAlive`）和 rewrite 工具箱
-（`pruneUnreachable` `tidyGotoToNext` `foldStoreLoadPairs`）——**注释在撒谎，两个
+（`pruneUnreachable` `tidyGotoToNext` `foldStoreLoadPairs`），**注释在撒谎，两个
 工具箱混在一个文件**，而且 `threadGotos` 还单独留在 `cleanup_pass.cpp` 里当私货，
 被 `control_flow` 那边用不上。
 
@@ -339,13 +339,13 @@ REWRITE 段，头注释改成如实描述。`check-convention.ps1` 会对"同一
 直接判 FAIL。
 
 **普查漏计病（analysis-grunt 已修）**：跨类引用普查是删动词的前置证据面，
-「普查里静默跳过的类」等于「引用证据蒸发」——dead_member 曾把压缩失败的类
+普查里静默跳过的类等于引用证据蒸发，dead_member 曾把压缩失败的类
 （cp_compact 封闭集拒绝）排除在普查外，调用方池里的 Methodref 从活引用集
 消失，零明文引用候选整类误删、运行期 NoSuchMethodError（取证与修复数字见
-analysis-grunt `doc/kasumi-verify.md` §3）。修后口径成纪律：**普查必须全
-容器口径**——解不开的类要么按原始字节照常入普查（超集宁误留），要么置
+analysis-grunt `doc/kasumi-verify.rst` §3）。修后口径成纪律：**普查必须全
+容器口径**，解不开的类要么按原始字节照常入普查（超集宁误留），要么置
 blind 让整轮改写放弃；消费普查的删动词（DeadMember、SeedStrip、
-ConstValuePromote、BoogerAnnoStrip 引用门）在普查不完整时 fail-closed。
+ConstValuePromote、BoogerAnnoStrip 引用检查）在普查不完整时 fail-closed。
 
 ---
 
@@ -354,11 +354,11 @@ ConstValuePromote、BoogerAnnoStrip 引用门）在普查不完整时 fail-close
 ### 8.1 文档
 
 ```
-doc/<residue>.md          只写"混淆器会产出什么结构" —— 换个输入 jar 仍成立才写
-src/<family>/<pass>.cpp   "本仓这个残留怎么还原"写在源码文件头 /// 注释 ——
+doc/<residue>.md          只写"混淆器会产出什么结构" ， 换个输入 jar 仍成立才写
+src/<family>/<pass>.cpp   "本仓这个残留怎么还原"写在源码文件头 /// 注释 ，
                           三章固定 Scan / Rewrite / Proof，判据分级与已知边界同处
-仓外笔记                   具体样本取证(哪个 jar、哪条指令、round-trip 值) —— 不进仓
-README 残留一览表           必须有【判据】列 + 等级(S1/S2/S3) —— 这是全仓的"本质声明"
+仓外笔记                   具体样本取证(哪个 jar、哪条指令、round-trip 值) ， 不进仓
+README 残留一览表           必须有【判据】列 + 等级(S1/S2/S3) ， 这是全仓的"本质声明"
 ```
 
 ### 8.2 测试
@@ -369,7 +369,7 @@ README 残留一览表           必须有【判据】列 + 等级(S1/S2/S3) —
 | **改写测试** | rewrite | 喂 `ScanResult` → 断言输出的指令序列/异常表形态 |
 | **语料回归** | 端到端 | 退出码 + **类数不增** + 逐类加载校验 + golden |
 
-**"类数不增 + 逐类加载校验"是跨仓通用验收口径**——不依赖任何混淆器知识，却能抓住大部分改写错误（尤其是帧错误：改写出错往往落在没被执行到的分支上）。
+**"类数不增 + 逐类加载校验"是跨仓通用验收口径**，不依赖任何混淆器知识，却能抓住大部分改写错误（尤其是帧错误：改写出错往往落在没被执行到的分支上）。
 
 ---
 
@@ -397,7 +397,7 @@ struct ReversalEntry {
 | 状态上报（成功/失败/跳过/拒绝计数） | 容器（装载/索引/写回） |
 | 迭代与收敛（fixed-point） | |
 | trace 输出通道 | |
-| 发布门（整包不发布） | |
+| 发布检查（整包不发布） | |
 
 **换 pipeline = 换 adapter 目录，`src/` 一行不动。**
 反过来：`src/` 里出现 pipeline 词汇 = 越界，§3.2 第 1 条直接判违规。
@@ -413,7 +413,7 @@ struct ReversalEntry {
 - [x] `threadGotos` 从 `cleanup_pass.cpp` 收口进 `cfg.hpp` 的 REWRITE 工具箱
 - [x] 5 个残留文件补 `==== SCAN / REWRITE / PROOF ====` 分区标记 + 判据等级标注
 - [x] README 残留一览表加【等级】列（S1/S2/S3）
-- [x] `doc/README.md` 声明 `*-pass.md` 的三章固定结构
+- [x] `doc/index.rst` 声明 `*-pass.md` 的三章固定结构
 - [x] `tools/check-convention.ps1` 把 §3.2 五条禁止句变成可执行检查
       （当前 **FAIL 0 / TODO 9**）
 
@@ -435,5 +435,5 @@ struct ReversalEntry {
 - [ ] `ScanResult` 类型落地，让 5 个残留真正产出它（当前各残留仍是各自的局部容器）
 - [ ] `knowledge/` 落地：`45.3`、反射三连、`RuntimeException` 这些家族常量抽成常量表
 - [ ] `Era` 枚举 + `probeEra()`（当前只有 12.8 一族；落点已定在 `control_flow` 的生成类指纹与 `checks` 的模板）
-- [ ] adapter 目录落地，`pack.cpp` 迁入 —— 迁完后 #1 的 3 处词汇 TODO 清零
+- [ ] adapter 目录落地，`pack.cpp` 迁入 ， 迁完后 #1 的 3 处词汇 TODO 清零
 - [ ] 单测按 `scan_test` / `rewrite_test` 重新分组

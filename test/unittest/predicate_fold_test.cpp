@@ -144,7 +144,7 @@ TEST(PredicateFoldRewrite, FoldsAndPersists)
     }
 }
 
-/// 恒真双常量谓词：iconst_0; iconst_0; if_icmple Ldead——0<=0 恒成立，走
+/// 恒真双常量谓词：iconst_0; iconst_0; if_icmple Ldead，0<=0 恒成立，走
 /// TAKEN 面。折叠必须落 [ICONST_0, IFEQ→Ldead] 恒真条件跳转，不得插无条件
 /// goto（HotSpot 要求无条件跳转后的段首带帧，被擦延续段无帧即炸）。
 const char* kPredTakenSource =
@@ -209,7 +209,7 @@ TEST(PredicateFoldRewrite, TakenFoldsToAlwaysTrueConditional)
     EXPECT_EQ(tgtInsn->op, jbc::core::Op::ICONST_0) << "IFEQ 未指向原分支目标";
 }
 
-/// 自身 TAKEN 形态的不动点：iconst_0; ifeq Ldead 恰是折叠产物形状——扫描
+/// 自身 TAKEN 形态的不动点：iconst_0; ifeq Ldead 恰是折叠产物形状，扫描
 /// 必须排除（否则每轮原样重写、站点永不归零）。
 const char* kPredSelfSource =
     ".super java/lang/Object\n"

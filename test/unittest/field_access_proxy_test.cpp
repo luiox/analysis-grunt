@@ -3,7 +3,7 @@
 ///
 /// 夹具一律 jasm 现场汇编，覆盖分工：
 /// - SCAN：getstatic / putstatic / getfield / putfield 四形状（含 long 宽槽
-///   setter）、零引用静默四类正例；体形多指令、字段-描述符互证错配、
+///   setter）、零引用静默四类正例；体形多指令、字段-描述符核对错配、
 ///   synchronized、外类调用点 + owner clinit 非中性四类拒绝面；
 /// - REWRITE：调用点原地改回字段访问（op + 字段引用换、srcPc 保）、代理
 ///   本体不动；
@@ -230,7 +230,7 @@ TEST(FieldAccessProxyScan, SilentlySkipsZeroReferenceProxies)
 
 TEST(FieldAccessProxyScan, RejectsBrokenBodyShape)
 {
-    // getter 体里多一条 iconst+pop：非「逐槽过手 + 单次字段访问」直线。
+    // getter 体里多一条 iconst+pop：非逐槽过手 + 单次字段访问直线。
     model::ResourceContainer container = makeContainer({
         {"fixture/Data", kDataSource},
         {"fixture/Proxies",
@@ -255,7 +255,7 @@ TEST(FieldAccessProxyScan, RejectsBrokenBodyShape)
 
 TEST(FieldAccessProxyScan, RejectsFieldDescMismatch)
 {
-    // 互证错配：描述符声称取 fixture/Data 的字段，体里转发的却是别的类——
+    // 核对错配：描述符声称取 fixture/Data 的字段，体里转发的却是别的类，
     // 改回 getfield 会砸到描述符没承诺的类上，拒绝。
     model::ResourceContainer container = makeContainer({
         {"fixture/Data", kDataSource},
@@ -338,7 +338,7 @@ TEST(FieldAccessProxyScan, RejectsExposedOwnerInit)
 TEST(FieldAccessProxyScan, AllowsExternalCallerWithNeutralOwner)
 {
     // 调用点在 owner 类外，但 owner 无 <clinit>（初始化无副作用）：
-    // 门放行——生成面的外置 `C$FieldProxy` 类就是这个形态。
+    // 检查放行，生成面的外置 `C$FieldProxy` 类就是这个形态。
     model::ResourceContainer container = makeContainer({
         {"fixture/Data", kDataSource},
         {"fixture/Proxies", kProxiesSource},

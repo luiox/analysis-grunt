@@ -38,8 +38,8 @@ constexpr ca::u16 kAccSynthetic = 0x1000;
 
 /// @brief 一份类字节上的成员标志是否可清（判据本体，scan 专用）。
 ///
-/// 门：非枚举类（`$VALUES` 等枚举机制字段是真实的 static synthetic）+ 成员
-/// static + 名字不以 `$` 开头——各工具链的编译器合成物一律带 `$`
+/// 检查：非枚举类（`$VALUES` 等枚举机制字段是真实的 static synthetic）+ 成员
+/// static + 名字不以 `$` 开头，各工具链的编译器合成物一律带 `$`
 /// （`access$000`、`$SWITCH_TABLE$`、`$assertionsDisabled`），混淆器注入的
 /// 伪标志成员是改名后的普通名字，两者按名字形状可分。方法清 BRIDGE|
 /// SYNTHETIC，字段清 SYNTHETIC。
@@ -101,7 +101,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     std::unordered_map<std::string, std::vector<const FlagSite*>> byUri;
     for (const FlagSite& site : result.sites) byUri[site.uri].push_back(&site);
 
-    // 两遍式：上面只收动作清单，这里逐类「开会话 → 清位 → 编码 → 立即回写」。
+    // 两遍式：上面只收动作清单，这里逐类开会话 → 清位 → 编码 → 立即回写。
     // pending 全量驻留会在整 jar 级站点（数千类 × 类字节）把内存打穿；逐类
     // 写回的峰值是单类会话。
     for (auto& [uri, sites] : byUri) {

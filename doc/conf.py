@@ -1,8 +1,8 @@
-"""Sphinx 配置：analysis-grunt 行为账与 pass 规格层。
+"""Sphinx 配置：analysis-grunt 行为记录与 pass 规格层。
 
-规范见家族口径（mjbase/libjbc doc 站同款）：本目录收 RST 行为账与 pass 规格；
+规范见家族口径（mjbase/libjbc doc 站同款）：本目录收 RST 行为记录与 pass 规格；
 markdown 属人读/AI 方向层（逐面 ``<residue>.md`` 行为描述），实现说明在各 pass
-源码文件头 /// 注释，不进 doctree，markdown 按批次逐篇迁移。CI 以 -W
+源码文件头 /// 注释，不进 doctree，markdown 层的文档已全部迁入 RST 站。CI 以 -W
 --keep-going 构建，警告即失败。
 """
 
@@ -21,12 +21,12 @@ exclude_patterns = ["_build", "_apidoc", "Thumbs.db", ".DS_Store"]
 # 引用必须可解析：未定义的 :ref:/:doc: 目标在 -W 下即失败。
 nitpicky = True
 nitpick_ignore = [
-    # 行为账里点名的 C++/pass 符号不做跨域解析（微观契约归 Doxygen 层）。
+    # 行为记录里点名的 C++/pass 符号不做跨域解析（微观契约归 Doxygen 层）。
     ("py:class", "doc"),
 ]
 
 html_theme = "alabaster"
-html_title = "analysis-grunt 行为账与 pass 规格"
+html_title = "analysis-grunt 行为记录与 pass 规格"
 html_baseurl = ""
 html_search_language = "zh"  # 需 jieba；未装分词器时仅影响站内搜索，不影响门禁
 html_use_opensearch = ""

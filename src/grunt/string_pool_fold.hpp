@@ -35,18 +35,18 @@
 ///
 /// ## 判据分级（README 残留一览表口径）
 ///
-/// - **S2 结构事实**：池链锚——clinit 前导四连（ANEWARRAY 钉
+/// - **S2 结构事实**：池链锚，clinit 前导四连（ANEWARRAY 钉
 ///   `java/lang/String` + PUTSTATIC 钉 `[Ljava/lang/String;` + INVOKESTATIC
 ///   `()V`）、arrayInit 逐块 store 序列逐条钉形（直线无标签）、解密器体内
-///   三窗口（init 四连 / 循环头 / 循环核 48 条逐字钉形，槽位互证）。
+///   三窗口（init 四连 / 循环头 / 循环核 48 条逐字钉形，槽位核对）。
 /// - **S1 语义后果**：seed/key/classKey 全为装载期常量、解密器纯函数（循环
-///   核钉形保证）、store 序列固定——`owner.field[idx] → 明文` 映射编译期
+///   核钉形保证）、store 序列固定，`owner.field[idx] → 明文` 映射编译期
 ///   可建，读取点换 `ldc` 明文语义恒等。判据不读解密算法语义细节，只读池
 ///   结构 + 调用点三元组（obf-behaviors 文档口径）；算法本体是知识转写
 ///   （grunt2@36c0eef / `grunt3@e41e852` 逐行，源锚点见各函数头注）。
-/// - **无 Era 门**：v2/v3 共用全部形态常量（含解密算法），形态内无版本
+/// - **无 Era 检查**：v2/v3 共用全部形态常量（含解密算法），形态内无版本
 ///   敏感判据；Era 判别是缺口 #15，不在本残留（era.hpp 不消费本文件）。
-///   家族门由池链结构自证：Kasumi 缓存字段同形三元组（`getstatic
+///   家族检查由池链结构自证：Kasumi 缓存字段同形三元组（`getstatic
 ///   String[]; idx; aaload`）不带 Grunt 池分配前导与 `([CJI)` 填池链，
 ///   结构上不可命中。
 ///
@@ -55,17 +55,17 @@
 /// 对齐 string_cache_fold 的读点折叠口径：锚点（getstatic）**原地换**
 /// `ldc <明文>`（srcPc 保留，pcmap/调试行落点不变），三元组其余两条
 /// `eraseBatch` 擦除（kRejectIfUsed 拒收即回滚锚点整站放弃）；三元组内部
-/// 有标签（合并点）整站拒绝。**池字段 / arrayInit / 解密器不删**——读点
+/// 有标签（合并点）整站拒绝。**池字段 / arrayInit / 解密器不删**，读点
 /// 归零后由 DeadCode / DeadMember / 压池统一回收（与 eskid opaque-table
 /// 同口径）。帧链走 mutateMethodWithFrames 整体重算；明文 UTF-16 →
 /// classfile MUTF-8 转码（代理对各落 3 字节形，与 javac 同构），转码失败
 /// 整站拒绝。
 ///
-/// ## 台账
+/// ## 统计
 ///
 /// DirtySet 按两密文形态分列计数 + failed/skippedByRoundTrip；ProofResult
-/// 在类数门 + 脏类重解析门之外统计 residual（改写后容器里仍「池链在场 +
-/// 三元组命中池表」的站点数——语料单罐门要求 0）。
+/// 在类数检查 + 脏类重解析检查之外统计 residual（改写后容器里仍池链在场 +
+/// 三元组命中池表的站点数，语料单 jar 检查要求 0）。
 #pragma once
 
 #include <string>
@@ -104,11 +104,11 @@ struct Site
     ca::i32     index      = 0;    ///< 池下标
     CipherForm  form       = CipherForm::Literal;
     PlainUnits  plainUnits;        ///< 明文码元（改写面按 MUTF-8 编码 intern）
-    std::string plaintext;         ///< 明文 UTF-8 记录形（trace/台账/单测；
+    std::string plaintext;         ///< 明文 UTF-8 记录形（trace/统计/单测；
                                    ///< 代理对重组 4 字节；孤立代理整站拒绝）
 };
 
-/// @brief 拒绝（fail-closed 记账：拒绝原因进 trace，站点不动）。
+/// @brief 拒绝（fail-closed 计数：拒绝原因进 trace，站点不动）。
 struct Reject
 {
     std::string uri;
@@ -145,8 +145,8 @@ struct DirtySet
     ca::usize foldedArrayed = 0;   ///< arrayed 密文形态改写数
 };
 
-/// @brief 验收结果。residual = 改写后容器里仍「池链在场 + 三元组命中池表」
-///        的站点数（还原不彻底的残留，语料单罐门要求 0）。
+/// @brief 验收结果。residual = 改写后容器里仍池链在场 + 三元组命中池表
+///        的站点数（还原不彻底的残留，语料单 jar 检查要求 0）。
 struct ProofResult
 {
     bool                     ok = true;
