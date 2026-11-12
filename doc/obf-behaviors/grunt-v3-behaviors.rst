@@ -3,7 +3,7 @@
 Grunt v3（Grunteon）obf 行为核心描述
 ======================================
 
-   适用对象：Grunt 混淆家族 v3 代（Kotlin 重写的 "Grunteon"）。本仓知识源锚定 ``grunt3`` 分支本地 HEAD ``bda0b1a``——\ ``origin/grunt3``\ （``a088924``）曾领先 ``e41e852`` 的 13 个 fix 级提交已并入锚内，差异点见 §0.4。
+   适用对象：Grunt 混淆家族 v3 代（Kotlin 重写的 "Grunteon"）。本仓知识源锚定 ``grunt3`` 分支本地 HEAD ``bda0b1a``\ ，``origin/grunt3`` 增量提交并入情况见 §0.4。
 
    知识来源：Grunt 源码仓（只读）\ ``grunt3`` 分支 ``transformers/`` 树 39 个 transformer（35 个常规 + 4 个 ``@HiddenTransformer``）逐个源码盘点，另加 grunt-glsl 插件 transformer 与 NativePipeline 独立执行阶段；\ ``analysis-grunt`` 仓现有 residue 面做处理现状对照。
 
@@ -14,8 +14,6 @@ Grunt v3（Grunteon）obf 行为核心描述
    排版：正文一句话/一段落一整行，不做 80 列硬断；代码块与表格内自然换行。
 
    日期：2026-11-06。迁移注记：2026-11-07 由 markdown 分账逐段转 RST；行为状态列与 :ref:`obf-behaviors` / :ref:`corpus-ledger` 逐行对账，滞后行同步处标注「随迁移对账更新」。
-
-   补账注记：2026-11-12 按 ``grunt3@bda0b1a`` 补账——§0.4 并入口径更新；§4.5 新增产物面全局配置登记（corruptCRC32 / corruptHeaders）；§1.1 / §5.3 / §6.1 / §7 补 ``830295b`` / ``cf8639a`` / ``a088924`` 带入的配置面增量。
 
 .. _grunt-v3-base:
 
@@ -294,7 +292,7 @@ v3 是 Kotlin 重写的管线：\ ``Grunteon`` 持 ``transformers: List<Pair<Tra
    * - G
      - 全局配置
      - corruptCRC32 / corruptHeaders
-     - 写罐产物面反分析：逐 entry 破坏 CRC32 / 破坏 jar 头（默认全关）
+     - 写罐产物面反分析：逐条目破坏 CRC32 或破坏 jar 头（默认全关）
      - 登记面
      - 无处理（数据本体不受影响，读取侧容错即可，见 §4.5）
 
@@ -310,7 +308,7 @@ v3 共 11 个样例文件（v3-01 ~ v3-10，其中 native 面两个类拆 v3-09/
 0.4 origin/grunt3 增量提交并入注记（差异标注）
 ------------------------------------------------
 
-本地锚 ``grunt3`` 已随上游前移至 ``bda0b1a``：\ ``origin/grunt3@a088924`` 曾领先 ``e41e852`` 13 个 fix 级提交，现已全部并入本地锚——\ ``bda0b1a`` = ``e41e852`` + 14 个提交（上述 13 个 + 1 个纯 README 提交）。其中引入行为面/配置面变化的登记点三条：\ ``830295b`` StringArrayedEncrypt / RuntimeMaterial 各新增 ``Native candidate`` 开关（默认 false，见 §1.1 / §6.1）；\ ``cf8639a`` native 输出命名可配置化——loader 类名 / 库基名 / 资源目录 / DLL 名入 ``NativePipelineConfig``\ （默认值不变，见 §5.3）；\ ``aec7905`` CRC 破坏实现修复——全局配置 ``Corrupt CRC32`` 自此真正生效（见 §4.5，此前破坏未落在真实 entry 压缩器上）。其余维持 fix 级、不引入新行为面：renamer exclusions 修正（\ ``a088924`` FieldRenamer 新增 ``Field exclusions`` 配置，§7 补记）、record 组件名保留、DeclaredFieldsExtract 收紧为仅 static ``ConstantValue``\ （本文按收紧后口径描述）等；后续语料升级时按此清单复核差异即可。
+本地锚 ``grunt3`` 已随上游前移至 ``bda0b1a``\ ，``origin/grunt3`` 增量提交已全部并入。其中引入行为面/配置面变化的登记点三条：\ ``830295b`` StringArrayedEncrypt / RuntimeMaterial 各新增 ``Native candidate`` 开关（默认 false，见 §1.1 / §6.1）；\ ``cf8639a`` native 输出命名可配置化——loader 类名 / 库基名 / 资源目录 / DLL 名入 ``NativePipelineConfig``\ （默认值不变，见 §5.3）；\ ``aec7905`` CRC 破坏实现修复——全局配置 ``Corrupt CRC32`` 自此真正生效（见 §4.5，此前破坏未落在真实 entry 压缩器上）。其余维持 fix 级、不引入新行为面：renamer exclusions 修正（\ ``a088924`` FieldRenamer 新增 ``Field exclusions`` 配置，§7 补记）、record 组件名保留、DeclaredFieldsExtract 收紧为仅 static ``ConstantValue``\ （本文按收紧后口径描述）等；后续语料升级时按此清单复核差异即可。
 
 .. _grunt-v3-encryption:
 

@@ -101,7 +101,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
      - NumberEncrypt
      - 常量藏进等价运算跨度（classic 三式 + 位形包装 + arrayed 池）
      - S1
-     - 部分（NumberFold 覆盖 XOR 走廊/基 32/位形包装，并已扩 IAND·LAND 位拼两式——缺口 #8 闭环；arrayed 池无面 → 缺口 #17。2026-11-12 补账批更新）
+     - 部分（NumberFold 已覆盖全部六式，缺口 #8 闭环；arrayed 池形态未覆盖，挂缺口 #17）
    * - 13
      - ArithmeticEncrypt
      - 算术指令换恒等替换序列
@@ -111,7 +111,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
      - Controlflow
      - 控制流混淆（跳转变异/假跳转/mangled if/switch 变体/junk 六个条件步）
      - S1/S2
-     - 部分（TrampolineSqueeze / PredicateFold / NumberFold / DeadCode / SeedStrip 处理静态可裁决子集；跳转变异步 IAND 形随位拼折、IADD/ISUB/IXOR 直线形挂缺口 #7；缺 junk 调用残留、陷进环 → 缺口 #16。2026-11-12 补账批更新）
+     - 部分（TrampolineSqueeze / PredicateFold / NumberFold / DeadCode / SeedStrip 覆盖静态可裁决子集；垃圾调用残留与陷进环挂缺口 #16，跳转变异直线算术形挂缺口 #7）
    * - 15
      - ConstBuilder
      - int 常量换成 switch 常量构造器
@@ -146,7 +146,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
      - SyntheticBridge
      - 伪 ``ACC_SYNTHETIC``/``ACC_BRIDGE`` 撒标志
      - S2
-     - 已处理（FlagsStrip——static ∧ 无 ``$`` 门内；v2 撒标志不挑 static，实例伪标志保守宁留）
+     - 已处理（FlagsStrip 摘 static 成员上的伪标志，名字含 ``$`` 的跳过；实例成员的伪标志保守保留）
    * - 22
      - LocalVariableRename
      - 局部变量改名/删表
@@ -308,7 +308,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **判据分级**：S1——跨度纯常量封闭求值（base-32 严格解析、XOR 封闭、位形换算 JDK 语义确定），折回单条常量装载是精确逆。
 
-**本仓现状**：部分。\ ``NumberFold`` 覆盖长走廊、短走廊（``I2L..LXOR..L2I`` / ``L2I..IXOR``\）、基 32 long、位形包装，并已扩 int/long 的 IAND/LAND 位拼两式（缺口 #8 闭环——罐 B 位拼面 354090 全折、旧四式站点数逐位不动）；\ **缺口**：arrayed 池形态 → 缺口 #17（P2，与 #1 共链：池在 ``<clinit>`` 由一次性解密方法整体填充、外层 key 经 classic 跨度加密，折面依赖 classic 跨度先折；开关默认 ``Arrayed=false``、罐 B 未启用，语料零暴露）。（随迁移对账更新：IAND·LAND 位拼模板原记「不在 NumberFold 词汇表」，已随缺口 #8 落地。）
+**本仓现状**：部分。\ ``NumberFold`` 覆盖长走廊、短走廊（``I2L..LXOR..L2I`` / ``L2I..IXOR``\）、基 32 long、位形包装、int/long 位拼两式（缺口 #8 闭环——罐 B 位拼面 354090 全折、旧四式站点数逐位不动）。\ **缺口**：arrayed 池形态挂缺口 #17（与 #1 共链：池在 ``<clinit>`` 由一次性解密方法整体填充、外层 key 经 classic 跨度加密，折面依赖 classic 跨度先折；开关默认 ``Arrayed=false``、罐 B 未启用，语料零暴露）。
 
 **样例**\ （五式合并呈现；常量按编码关系可逆，\ ``17202 ^ 16602 = 1000``、\ ``4649 & 10485803 = 41``\）：
 
@@ -548,7 +548,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 2.1 Controlflow（order 400，可选 200 加密前）：六个条件步 + 局部槽增量
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**做什么**\ 。按 ``Intensity``\ （1~3）整轮重复六个条件步（2026-11-12 审计补账批更正：原账漏记源码第 2 步 MutateJumps，步数按 ``ControlflowTransformer.kt:109-229`` 六个 ``if`` 门实数）：
+**做什么**\ 。按 ``Intensity``\ （1~3）整轮重复六个条件步：
 
 1. **switch 保护**\ （``SwitchProtect``\，\ ``ProtectRate=30``\）：已有 switch 的键经随机 magic XOR 重映射，入口插 ``INT magic; IXOR``，case 键全换 ``key ^ magic``，原 default 外挂转发 label。
 2. **跳转变异**\ （``MutateJumps``\，\ ``MutateRate=10``\，默认开；``ControlflowTransformer.kt:123-136`` + ``flow/process/MutateJumps.kt``\）：非 GOTO 条件跳转 ``ifxx L`` 换成「原条件跳转保锚 + 常量键 TABLESWITCH 重路由」结构——原跳转保留 opcode、目标改指镜像块，两键 ``random-1``/``random``（\ ``0xF..0xFFFF``\）各经 ``obfuscateBasic`` 常量对 + ``GOTO`` 汇入表；真臂经 ``proxyTrue`` 陷阱块（``NOP`` + 第三常量对 ``random-2``\）二次落表 default 回原目标，假臂键落表首 case 直通后续。\ ``obfuscateBasic`` 四形：\ ``INT(v-key); INT(key); IADD`` / ``INT(v+key); INT(key); ISUB`` / ``INT(v^key); INT(key); IXOR`` / 位拼对 ``a; b; IAND``（\ ``a=rnd&key|v``、\ ``b=rnd&~key|v``\，与 1.2 位拼同构；思路取自 binscure，源码头注）。
@@ -562,7 +562,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **判据分级**：S1（比较门的操作数全为紧邻常量/局部常量链、可静态裁决的子集）/ S2（junk 调用与陷进环的识别是结构事实）。
 
-**本仓现状**：部分。TrampolineSqueeze 吃蹦床 ``goto``；PredicateFold 吃常量可裁决的分支/switch（含被假跳转/摘除步产出的常量门——操作数区有标签即放弃）；NumberFold 解锁被藏形跨度夹住的实参区；DeadCode 清不可达垃圾；SeedStrip 吃 ``int[]`` 种子建表跨度。跳转变异步（第 2 步 MutateJumps）的 ``obfuscateBasic`` 常量对：IAND 位拼形随 NumberFold 位拼（缺口 #8）折掉；IADD/ISUB/IXOR 直线形不在 NumberFold 词汇表，属恒等简化面（缺口 #7）——形内常量对被折后其 TABLESWITCH 键窗即成常量可裁决形，由 PredicateFold 吃。\ **缺口**：junk 调用残留（垃圾调用点本身不是常量可裁决形态）、陷进环与 ChaosSwitch 双 switch 环（→ 缺口 #16）、ArithmeticExpr 表达式（同 1.3 缺口，缺口 #7）。（2026-11-12 审计补账批：原 #10/#14 指针系迁移错位——#10 已闭环属 v3 ControlflowJump 面、#14 是垃圾类删除面——改挂 #16；补第 2 步 MutateJumps 登记与四形还原面口径。）
+**本仓现状**：部分。TrampolineSqueeze 吃蹦床 ``goto``；PredicateFold 吃常量可裁决的分支/switch（含被假跳转/摘除步产出的常量门——操作数区有标签即放弃）；NumberFold 解锁被藏形跨度夹住的实参区；DeadCode 清不可达垃圾；SeedStrip 吃 ``int[]`` 种子建表跨度。跳转变异（第 2 步 MutateJumps）的 ``obfuscateBasic`` 常量对：IAND 位拼形随 NumberFold 位拼（缺口 #8）折掉；IADD/ISUB/IXOR 直线形不在 NumberFold 词汇表，属恒等简化面（缺口 #7）——形内常量对被折后其 TABLESWITCH 键窗即成常量可裁决形，由 PredicateFold 吃。\ **缺口**：junk 调用残留（垃圾调用点本身不是常量可裁决形态）、陷进环与 ChaosSwitch 双 switch 环挂缺口 #16、ArithmeticExpr 表达式（同 1.3 缺口，挂缺口 #7）。
 
 **样例**\ （第 3 步门 + 垃圾出口 + UseLocalVar Type1 变体；switch 保护与摘除形态并入 switch 样例）：
 
@@ -935,7 +935,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **做什么**\ 。把字段的 ``ConstantValue``\ （``field.value``\）搬进初始化器：static 字段在 ``<clinit>`` 头部插 ``INT/LONG/BIPUSH/SIPUSH/LDC <value>; PUTSTATIC``，实例字段在全部 ``<init>`` 头部插同样写（``PUTFIELD``\），随后清掉 ``ConstantValue``。目的是让下游加密 transformer（NumberEncrypt 等）能处理这些值。
 
-**判据分级**：S1——初始化器单次常量写 + 全容器无其他写（读不限：回填值与原常量恒等，读侧无感——与实现口径对齐，2026-11-12 单测批核实），回填 ``ConstantValue``\ （并补 ``ACC_FINAL``\）是语义恒等；这正是本仓 ConstValuePromote 的判据。
+**判据分级**：S1——初始化器单次常量写 + 全容器无其他写（读不限：回填值与原常量恒等，读侧无感），回填 ``ConstantValue``\ （并补 ``ACC_FINAL``\）是语义恒等；这正是本仓 ConstValuePromote 的判据。
 
 **本仓现状**：已处理——\ ``grunt.ConstValuePromote`` 是该行为的精确逆（判据链互为镜像：单次常量写 / 类型与常量种类吻合 / 全容器无其他写，读不限）。
 
@@ -1169,20 +1169,8 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 ::
 
-   已处理：DeclareFields→ConstValuePromote、FieldScramble→FieldAccessProxy、
-           MethodScramble→ProxyInline、SyntheticBridge→FlagsStrip、
-           StringEncrypt→StringPoolFold（literal 形折叠，缺口 #1 闭环）
-   部分  ：NumberEncrypt→NumberFold（走廊/基 32/位形/IAND·LAND 位拼两式——
-           缺口 #8 闭环；arrayed 池缺口 → #17）、
-           ConstPoolEncrypt→NumberFold+ConstValuePromote（调用点回填缺口 #5）、
-           Controlflow→TrampolineSqueeze/PredicateFold/NumberFold/DeadCode/SeedStrip
-           （junk 调用残留、陷进环 → 缺口 #16；ArithmeticExpr 与 MutateJumps
-           IADD·ISUB·IXOR 直线形 → 缺口 #7）
-   部分  ：InvokeDynamic→IndyRestore（simple 直接解密回填，缺口 #2 闭环；
-           heavy 待 Era::Grunt2 判据）+ IndyFold（S3 兜底，语料 foldable=0）
-   无处理：MethodExtractor、ConstBuilder、ArithmeticEncrypt、
-           StringEqualsRedirect、Crasher、Watermark、垃圾类三面、改名族、HWID
-   清理面：SourceDebugRemove、KotlinOptimize、EnumOptimize、DeadCodeRemove、
-           Shrinking、PostProcess、ShuffleMembers、LocalVariableRename
-
-（随迁移对账更新：StringEncrypt 行随缺口 #1 闭环移入已处理；NumberEncrypt 行位拼两式随缺口 #8 落地移出缺口。2026-11-12 审计补账批：junk/陷进环悬空指针 #10/#14 改挂 #16、arrayed 池挂 #17、Controlflow 补第 2 步 MutateJumps 登记。）
+   已处理：DeclareFields→ConstValuePromote、FieldScramble→FieldAccessProxy、MethodScramble→ProxyInline、SyntheticBridge→FlagsStrip、StringEncrypt→StringPoolFold（literal 形折叠，缺口 #1 闭环）
+   部分  ：NumberEncrypt→NumberFold（六式全折，缺口 #8 闭环；arrayed 池形态挂缺口 #17）、ConstPoolEncrypt→NumberFold+ConstValuePromote（调用点回填挂缺口 #5）、Controlflow→TrampolineSqueeze/PredicateFold/NumberFold/DeadCode/SeedStrip（垃圾调用残留与陷进环挂缺口 #16；ArithmeticExpr 与跳转变异直线算术形挂缺口 #7）
+   部分  ：InvokeDynamic→IndyRestore（simple 直接解密回填，缺口 #2 闭环；heavy 待 Era::Grunt2 判据）+ IndyFold（S3 兜底，语料 foldable=0）
+   无处理：MethodExtractor、ConstBuilder、ArithmeticEncrypt、StringEqualsRedirect、Crasher、Watermark、垃圾类三面、改名族、HWID
+   清理面：SourceDebugRemove、KotlinOptimize、EnumOptimize、DeadCodeRemove、Shrinking、PostProcess、ShuffleMembers、LocalVariableRename
