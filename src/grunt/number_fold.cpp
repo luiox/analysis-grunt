@@ -334,7 +334,9 @@ bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, ca::u32 classIdx,
         Span span;
         if (tryMatchAt(s, cu->dom, order, pos, span)
             && !labelBlocked(cu->dom, order, span.firstPos, span.lastPos)) {
-            result.sites.push_back(Site{classIdx, methodIndex, in->srcPc, in->op, span.value});
+            // 折叠值收进 POD 位形：匹配成功后 kind 恒为数值四形（基 32 键已就地折叠并清串），跨段数据流只留 kind + bits。
+            result.sites.push_back(Site{classIdx, methodIndex, in->srcPc, in->op,
+                                        SiteValue{span.value.kind, span.value.bits}});
             pos = span.lastPos + 1;   ///< 跨度内部不再起锚（锚点类型互斥，无嵌套站点）
             continue;
         }

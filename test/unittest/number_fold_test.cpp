@@ -609,7 +609,7 @@ TEST(NumberFoldScan, FindsLongSplice)
     ASSERT_EQ(scanned.sites.size(), 1u);
     EXPECT_EQ(scanned.sites[0].value.kind, ValueLoad::Kind::I64);
     EXPECT_EQ(scanned.sites[0].value.i64(), -8646574489311087747LL);
-    EXPECT_EQ(scanned.sites[0].value.slots, 2u);
+    EXPECT_EQ(scanned.sites[0].value.slots(), 2u);
 }
 
 TEST(NumberFoldScan, FindsIntSpliceFloatWrapper)

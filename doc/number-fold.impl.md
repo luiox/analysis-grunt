@@ -3,10 +3,11 @@
 ## 数据流
 
 `Site{classIdx, methodIndex, anchorSrcPc, anchorOp, value}`（value =
-`const_args::ValueLoad`，I32/I64/F32/F64 位形；classIdx 是容器
-visitResources 的类序号，scan/rewrite 两段同序遍历故跨段一致——万类大罐上
-数十万站点不带 uri 字符串，聚类按序号走）→ `DirtySet{uris, sites,
-attempted, failed, skippedByRoundTrip}`。
+`SiteValue` 紧凑 POD：kind + u64 位形，无字符串驻留——基 32 键在匹配期就地
+折叠成 i64 并清串，跨段数据流只留数值四形；slots 是 kind 的纯函数走访问器。
+classIdx 是容器 visitResources 的类序号，scan/rewrite 两段同序遍历故跨段
+一致——万类大罐上数十万站点不带 uri 字符串，聚类按序号走）→
+`DirtySet{uris, sites, attempted, failed, skippedByRoundTrip}`。
 
 ## Scan
 
