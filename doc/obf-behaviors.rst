@@ -18,7 +18,7 @@ grunt 行为账总表
 ----------
 
 - :doc:`obf-behaviors/grunt-v2-behaviors`\ ——v2（``grunt2`` 分支 ``36c0eef``，tag 线 2.0.0 ~ 2.4.5）35 个 transformer 行为账 + 16 个已验证 jasm 样例。
-- :doc:`obf-behaviors/grunt-v3-behaviors`\ ——v3（``grunt3`` 分支 ``e41e852``，Grunteon）39 个 transformer（35 常规 + 4 ``@HiddenTransformer``）+ GlslObfuscator 插件 + NativePipeline 阶段的行为账 + 11 个已验证 jasm 样例 + origin/grunt3 领先 13 提交差异标注。
+- :doc:`obf-behaviors/grunt-v3-behaviors`\ ——v3（``grunt3`` 分支 ``bda0b1a``，Grunteon）39 个 transformer（35 常规 + 4 ``@HiddenTransformer``）+ GlslObfuscator 插件 + NativePipeline 阶段的行为账 + 11 个已验证 jasm 样例 + origin/grunt3 增量提交并入注记（原领先的 13 个 fix 级提交已并入锚内）+ 产物面全局配置登记（corruptCRC32 / corruptHeaders）。
 - jasm 样例验证口径与已知校验器边界（``xaload`` 族误报、\ ``<init>`` 栈帧分析缺陷）见 v2 分账 §0.3：\ **27/27 通过（25 relaxed + 2 off 通道）**。
 - Kasumi 家族专面在 ``doc/kasumi-verify.md``\ （K0~K4），不属本篇。
 - residue 逐面文档（number-fold / proxy-inline / predicate-fold / …）在 ``doc/`` 根目录，本篇的状态列以它们为事实源。
@@ -52,7 +52,7 @@ grunt 行为账总表
    * - SyntheticBridge
      - S2
      - 已处理
-     - FlagsStrip
+     - FlagsStrip（static 门内；v2 撒标志不挑 static，实例伪标志保守宁留）
    * - NumberEncrypt
      - S1
      - 部分
@@ -64,11 +64,11 @@ grunt 行为账总表
    * - Controlflow
      - S1/S2
      - 部分
-     - TrampolineSqueeze / PredicateFold / NumberFold / DeadCode / SeedStrip（缺 junk 调用残留、陷进环 → 缺口 #10/#14）
+     - TrampolineSqueeze / PredicateFold / NumberFold / DeadCode / SeedStrip（缺 junk 调用残留、陷进环 → 缺口 #16；MutateJumps IADD/ISUB/IXOR 直线形 → 缺口 #7）
    * - InvokeDynamic
      - S1
      - 部分
-     - IndyRestore（simple 直接解密回填，缺口 #2 闭环；heavy 待 Era::Grunt2 判据，material 类 fail-closed）+ IndyFold（S3 兜底）
+     - IndyRestore（simple 直接解密回填，缺口 #2 闭环；heavy 待 Era::Grunt2 判据按保守口径关闭）+ IndyFold（S3 兜底）
    * - StringEncrypt
      - S1
      - 已处理
@@ -124,8 +124,8 @@ grunt 行为账总表
 
 .. _obf-behaviors-v3:
 
-4 v3 行为 × 处理状态总表（39 transformer + 插件 + 阶段）
---------------------------------------------------------
+4 v3 行为 × 处理状态总表（39 transformer + 插件 + 阶段 + 产物面全局配置）
+--------------------------------------------------------------------------
 
 .. list-table::
    :header-rows: 1
@@ -243,6 +243,10 @@ grunt 行为账总表
      - 资源面
      - 无处理
      - GLSL 文本改写，字节码 residue 不适用，登记
+   * - corruptCRC32 / corruptHeaders（产物面全局配置）
+     - 登记面
+     - 无处理
+     - 产物 zip 逐 entry 破坏 CRC32 / 头混淆，反分析开关；还原侧无动作，读取侧容错即可（v3 分账 §4.5）
 
 .. _obf-behaviors-gaps:
 
@@ -286,6 +290,12 @@ grunt 行为账总表
 13. **噪声与检测面清理**：Watermark（两代水印字段/方法）、Crasher/DecompilerCrasher（massive Signature 属性）、AntiLLM 四渠道噪声、HWID 校验调用摘除（删除需 CFG 副作用证明）。
 14. **垃圾类删除面**：v2 ClonedClass/TrashClass + v3 TrashClassGenerator——零引用 + 生成面形状识别，删除需引用普查兜底（反射/资源文本引用）。
 15. **probeEra Grunt2/Grunt3 可靠判据**：Grunt3 半边已闭环（随 indy_restore 落 era.hpp：Grunt BSM desc 指纹 ∧ 类级 ``@Metadata`` 注解或 ``grunteon`` 命名空间，双半边钉版本）；Grunt2 半边仍缺——两代 ``U+200E`` 尾缀同源、indy BSM desc 逐字同源、模板无稳定差异——待语料积累出真正版本敏感的残留形状再补（era.hpp 明文记载）；v2 现场的 heavy 面按保守口径关闭（simple 面全结构自证不挂 Era，不受影响）。
+
+**追加——2026-11-12 v2 审计补账批（P2 级）**：详见 v2 分账 Controlflow 与 NumberEncrypt 条目。
+
+16. **v2 Controlflow junk 调用残留与陷进环**：假跳转步（``BogusConditionJump``）落空侧的垃圾调用点（垃圾值 + 压实参调用 + 按返回类型死出口）不是常量可裁决形态，PredicateFold 判据天然不吃；``TrappedSwitchCase`` 陷进环与 ``ChaosSwitch`` 双 switch 环的假 case 互跳结构无专项还原面——还原口径 = 静态识别（假 case 互跳闭包 + 校验器式不可达）+ 剪枝落 PredicateFold/DeadCode 形。v2 分账原挂「缺口 #10/#14」系 markdown→RST 迁移错位（#10 已闭环且属 v3 ControlflowJump 面、#14 是垃圾类删除面），本条为真挂点。语料：罐 B switch 总面 121236（其中 104263 前窗 GETSTATIC+IXOR）属 Controlflow SwitchProtect/ChaosSwitch 面（``corpus-ledger`` §2）。
+17. **v2 NumberEncrypt arrayed 池折回**：``long[]`` 池字段 + ``<clinit>`` 一次性解密方法整体填充（外层 key 经 classic 跨度加密）+ 调用点 ``GETSTATIC pool; idx; LALOAD``（float/double 外包位形换算）——与 #1 字符串池同构的池读折面（与 #1 共链：classic 外层先折）。开关默认 ``Arrayed=false``、罐 B 未启用，语料零暴露；v2 分账三处挂「缺口清单 P2」无编号，本条为真挂点。
+18. **v2 MutateJumps 直线常量对折叠（登记条目，还原面归 #7）**：跳转变异步（``ControlflowTransformer.kt:123-136`` + ``MutateJumps.kt``，``MutateJumps=true`` 默认开、``MutateRate=10``）的 ``obfuscateBasic`` 四形中，IAND 位拼形与 #8 同构已随 NumberFold 折掉；IADD/ISUB/IXOR 直线形（``INT(v±k); INT(k); IADD/ISUB`` / ``INT(v^k); INT(k); IXOR``）不在 NumberFold 词汇表——形状上属 #7 恒等简化面（const-fed 双常量 + 单算术指令），由 #7 的简化链一并吃，此处只登记行为来源（v2 Controlflow 第 2 步，原账漏记）与站点形状，不另建还原面。
 
 .. _obf-behaviors-corpus:
 

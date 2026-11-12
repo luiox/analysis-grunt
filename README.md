@@ -6,7 +6,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 
 代码组织遵循 [CONVENTION.md](CONVENTION.md)：以「一种残留（residue）」为单位，每种残留 = 家族知识 + 三段恒定动作（scan / rewrite / proof）。
 
-混淆行为侧：Grunt 两代（v2 / v3）每个 obf 行为的形态描述、jasm 样例与 residue 映射见 [doc/obf-behaviors/](doc/obf-behaviors/README.md)；与 morpher 仓 `mjt-deobf/doc_ai/obf-forms/` 的分工——那边是跨家族形态库（artifact 侧形态判据与还原链序），本仓 `doc/obf-behaviors/` 是本工具行为账（逐 transformer 行为 + 配置面 + residue 现状 + 闭环缺口清单）。
+混淆行为侧：Grunt 两代（v2 / v3）每个 obf 行为的形态描述、jasm 样例与 residue 映射见 [doc/obf-behaviors.rst](doc/obf-behaviors.rst)（行为 × residue 总表与闭环缺口清单）与两代分账 [doc/obf-behaviors/](doc/obf-behaviors/)（`grunt-v2-behaviors.rst` / `grunt-v3-behaviors.rst`）；与 morpher 仓 `mjt-deobf/doc_ai/obf-forms/` 的分工——那边是跨家族形态库（artifact 侧形态判据与还原链序），本仓 `doc/obf-behaviors/` 是本工具行为账（逐 transformer 行为 + 配置面 + residue 现状 + 闭环缺口清单）。
 
 ## 残留一览
 
@@ -18,7 +18,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 | `grunt.TrampolineSqueeze` | 把「跳到顺序后继」的 `goto` 置 NOP（混淆器蹦床），保留 `srcPc` 让下游实参收集看穿 | `goto`/`goto_w` 的目标恰是顺序下一条指令（等价于无操作，与混淆器版本无关）；布局缩短后新产生的蹦床同样命中 | S2 |
 | `grunt.PredicateFold` | 常量操作数的分支 / `switch` 静态裁决。TAKEN 落恒真条件跳转 `[ICONST_0, IFEQ→T]`（锚改常量、分支本体原地换 op+目标、其余操作数擦除），NOT-TAKEN 锚 NOP、区域整段消失走 fallthrough | 分支操作数全部由紧邻常量装载产生 ∧ 裁决只依赖常量值与 JVM 语义；操作数区中段或分支本体有标签（合并点）则整站放弃 | S1 |
 | `grunt.DeadCode` | 清掉不可达指令，并收敛因此失效的异常表项 | CFG 可达性之外的指令；可达性**含异常边**——保护区间内任一可达指令都可能抛进 handler，故 handler 以「区间∩可达集」为根迭代到不动点。全死区间删表项，端点锚在死指令上时向前吸附到存活指令 | S2 |
-| `grunt.ConstValuePromote` | 把 `clinit` 里对该字段的单条常量 `putstatic` 回填成字段 `ConstantValue` 属性（并补 `ACC_FINAL`） | 字段在 `clinit` 里恰有一次常量写 ∧ 全容器无其他读写 ∧ 类型与常量种类吻合 | S1 |
+| `grunt.ConstValuePromote` | 把 `clinit` 里对该字段的单条常量 `putstatic` 回填成字段 `ConstantValue` 属性（并补 `ACC_FINAL`） | 字段在 `clinit` 里恰有一次常量写 ∧ 全容器无其他写（读不限——回填值与原常量恒等，读侧无感）∧ 类型与常量种类吻合 | S1 |
 | `grunt.SeedStrip` | 拆掉 `clinit` 里的 `int[]` 种子建表跨度（首条 NOP 保锚，其余擦除） | `NEWARRAY` + `PUTSTATIC` 头 + `GETSTATIC`/`IASTORE` 组的固定形状 ∧ 跨度内运算只含整长算术与转换（除法族排除，可能抛异常）；中段有标签放弃 | S2 |
 | `grunt.DeadMember` | 删零引用方法、零引用私有/孤儿数组字段、空 `<clinit>`；先压池再算引用闭包 | 引用普查为零（先 `compact` 常量池，否则池常量虚撑引用）；普查按全容器对外引用全集口径——压缩失败的类照常入普查（原始字节枚举，超集宁误留），骨架都解不开的类 census-blind 整轮零删除；方法面另有纯算术 / `synthetic+bridge` / 私有门三道保守门；容器有未收敛 BSM 时 public `synthetic+bridge` 候选整档宁留（indy 目标无 CP 明文引用，dead_member.impl.md 有取证结论） | S2 |
 | `grunt.BoogerAnnoStrip` | 容器里已无类引用 Booger 解密类后，摘掉残留的 `@Booger` 运行时注解条目 | 全容器无 `Booger` 类引用（解密体已被 `ConstantCall` 折成常量；引用普查有类打不开时按引用在册关死）∧ 注解描述符指向 `@Booger` | S2 |
@@ -41,7 +41,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 
 ## 链序
 
-主线（15 pass，BoogerV2 语料整链验收；FieldAccessProxy 为后续批次接入）：
+主线（15 pass，BoogerV2 语料整链验收；链序清单含 FieldAccessProxy）：
 
 ```
 grunt.TrampolineSqueeze,grunt.NumberFold,grunt.StringPoolFold,grunt.IndyFold,grunt.ConstMethod,
@@ -118,9 +118,7 @@ processor 键的解锁面）再 `ExcBridgeRestore`（异常桥摘除——桥插
 islands 逐项不动）再 `CffUnflatten` 最后 `DispatcherRestore`。`CffUnflatten` 对
 DispatcherRestore 的分发器原生头是反误伤面（alias 缺席整岛拒，wave2c
 正例罐 290 候选全数此桶、产物逐条目 CRC 全等），组合链零干扰；
-boar 全链罐上 DispatcherRestore 的头锚缺席由 post-Redirect junk 前缀
-所致（非 CFF 摊平，`doc/cff-unflatten.impl.md` 语料账本有归因量化），
-junk 摘除与 processor 键解锁同属缺口 #4 余量。
+boar 全链罐上 DispatcherRestore 的头锚缺席经二轮归因修正为 desc 形状与 `__grt$indy$` indy 蹬床/数值走廊方法碰撞（anti-候选；非 post-Redirect junk 前缀，jar 内 `[iload N; tableswitch]` 头形=0，`doc/dispatcher-restore.impl.md` / `doc/cff-unflatten.impl.md` 有归因量化）；缺口 #4 余量现口径为 processor 键 native 天花板 + SSA exp 变体。
 
 
 ## 全局不变量
@@ -197,9 +195,9 @@ xmake build grunt_cli && ./test/corpus-regress.sh
 ## Doc index
 
 - [doc/README.md](doc/README.md)：索引与口径分工。
-- [doc/obf-behaviors/README.md](doc/obf-behaviors/README.md)：grunt 行为账总表（行为 × residue 状态）与闭环缺口清单（P1/P2/P3）。
-- [doc/obf-behaviors/grunt-v2-behaviors.md](doc/obf-behaviors/grunt-v2-behaviors.md)：v2（Gruntpocalypse 2.x）35 个 transformer 逐行为描述 + 16 个已验证 jasm 样例。
-- [doc/obf-behaviors/grunt-v3-behaviors.md](doc/obf-behaviors/grunt-v3-behaviors.md)：v3（Grunteon）39 个 transformer + GlslObfuscator 插件 + NativePipeline 阶段逐行为描述 + 11 个已验证 jasm 样例。
+- [doc/obf-behaviors.rst](doc/obf-behaviors.rst)：grunt 行为账总表（行为 × residue 状态）与闭环缺口清单（P1/P2/P3）。
+- [doc/obf-behaviors/grunt-v2-behaviors.rst](doc/obf-behaviors/grunt-v2-behaviors.rst)：v2（Gruntpocalypse 2.x）35 个 transformer 逐行为描述 + 16 个已验证 jasm 样例。
+- [doc/obf-behaviors/grunt-v3-behaviors.rst](doc/obf-behaviors/grunt-v3-behaviors.rst)：v3（Grunteon）39 个 transformer + GlslObfuscator 插件 + NativePipeline 阶段逐行为描述 + 11 个已验证 jasm 样例 + 产物面全局配置登记（corruptCRC32 / corruptHeaders）。
 - [doc/constant-call.md](doc/constant-call.md) / [.impl.md](doc/constant-call.impl.md)：常量调用。
 - [doc/flags-strip.md](doc/flags-strip.md) / [.impl.md](doc/flags-strip.impl.md)：伪 `synthetic`/`bridge` 标志。
 - [doc/const-method.md](doc/const-method.md) / [.impl.md](doc/const-method.impl.md)：常量方法。
