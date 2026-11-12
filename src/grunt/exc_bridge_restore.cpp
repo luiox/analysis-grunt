@@ -15,6 +15,52 @@
 /// 改写全程句柄制：rewriteMethod 入口一次性把 plan 位置解析成 DOM 句柄
 /// （promote 后未改动，位置 ↔ 句柄一一对应），此后插入/擦除不使句柄失效
 /// （CodeDom 句柄带 owner/gen，插入只追加槽位），位置账不再参与。
+///
+/// ## SCAN（planMethod：scan/rewrite 共用一套判据）
+///
+/// 单方法内先做全表锚位预解析，再逐表项过六道门：
+///
+/// 1. **形状钉**：catchType 一跳解析 = java/lang/RuntimeException；保护区
+///    [start,end) 恰 4 条（end 锚 exclusive，end 哨兵 = 方法末合法）且逐字
+///    `NEW RTE; DUP; INVOKESPECIAL RTE.<init> ()V; ATHROW`（Methodref 三元
+///    组全钉）；handler 恰 `POP; GOTO|GOTO_W`。X 局部门：goto 靶可解析非方
+///    法末 + handler goto 无字段引用（跳入 POP 空栈校验器拒）+ 非头受害者
+///    （DUP/INVOKESPECIAL/ATHROW/POP/goto）无字段引用。任一缺席 =
+///    shapeMiss（真实 try 区的反误伤面在这桶）。
+/// 2. **覆盖门**：其他表项保护区覆盖 trap 头或 handler 头 = 派发歧义拒
+///    （covered；生成面自恰时为 0）。
+/// 3. **handler 碰撞门**：其他表项 handler 锚在本桥六个受害者位置上任一 =
+///    擦即侵占他人 handler，拒（handlerCollide）。
+/// 4. **X 落点门**：X 位置 ∈ 全量形状命中站点的受害者并集——被判拒的桥
+///    原样保留，X 落进保留块同样是改指错位，拒（xInvalid）。
+/// 5. **位置落入门**：trap 头 = 方法头（入口位置边）或布局前驱非无条件终
+///    结符 → needsPin，钉点 = 前驱（方法头变体 = insertAtStart）。
+/// 6. **吸附安排**：擦除面 = 已采纳站点受害者并集（被判拒站点不在擦除面，
+///    锚不吸附）；存活表项 handler 锚落在擦除面上 → 整方法拒
+///    （rebindBlocked）；start 锚被擦 → 前移吸附（越界整方法拒——start 不
+///    能落方法末哨兵）；end 锚被擦 → 前移吸附（落方法末哨兵合法）。
+///
+/// ## REWRITE 执行序（任一步失败整方法回滚）
+///
+/// plan 在 mutate lambda 内做——此刻零改动，位置 ↔ 句柄一一对应；scan 侧
+/// plan 只记账。入口一次定位：plan 全部位置 → DOM 句柄（trap 头 / 六受害
+/// 者 / X / 钉前驱 / 本桥三标签），复核 handler goto 靶 = X（防 plan-DOM
+/// 漂移）。执行次序有两条硬约束：存活表项锚吸附必须**先于一切删除**
+/// （Boundary 标签保护锚点，`editor.bindLabel` 移锚；end 哨兵 = anchor
+/// kNoInsn）；本桥三个标签必须在 eraseBatch **之前** destroyLabel——表项
+/// 删除后标签失主，不先销毁擦除直接拒收。中间步：replaceAllUses(trap 头,
+/// X) 全体 jump/switch 字段直连（旧标签随改写销毁）→ 位置落入钉
+/// （createLabel(X) + GOTO 插前驱尾/方法头，插入前定靶——kNoLabel 靶过不
+/// 了句柄校验）→ 本桥异常表项从 cu->exc 移除 → 单批 eraseBatch（六受害者
+/// /站，kRejectIfUsed 全有或全无）。诊断面：`GRUNT_EXC_BRIDGE_TRACE=1` 打
+/// rewrite-fail/method-fail 逐站行。
+///
+/// ## PROOF
+///
+/// 类数不增 + 脏类可重解析 + residual 复扫（脏类集上重跑 planMethod，仍
+/// 通过形状钉 + 互证门的站点数；语料单罐门要求 0）。**residual 口径 =
+/// 脏类集**：整类全方法失败时不进 dirtySet，其站点由外部 census 复核（罐
+/// A 实测独立可达普查 bridge=0，无遗漏类）。
 
 #include "grunt/exc_bridge_restore.hpp"
 

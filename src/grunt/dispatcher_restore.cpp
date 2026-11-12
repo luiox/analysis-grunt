@@ -6,10 +6,61 @@
 /// 判据分级与锚保留/槽位面设计见头文件；骨架对齐 string_pool_fold（scan
 /// 只读、rewrite 只写（mutateMethodWithFrames 正统帧链写回）、proof 只判）。
 /// 分发器生成面是知识转写（grunt3@e41e852 `redirect/InvokeDispatcher.kt`
-/// buildStageImpl 逐行，源锚点见各函数头注与 doc/dispatcher-restore.impl.md
-/// 摘录）；v2 分支（grunt2@36c0eef）redirect/ 下无此 transformer——v3-only。
-/// 键表是纯常量直查（tableswitch 静态编码 + 调用点紧邻 key 常量），不需要
-/// jsim；key 经算术混淆时常量缺席 → fail-closed 保留（NumberFold 先折）。
+/// buildStageImpl 逐行，源锚点见各函数头注）；v2 分支（grunt2@36c0eef）
+/// redirect/ 下无此 transformer——v3-only。键表是纯常量直查（tableswitch
+/// 静态编码 + 调用点紧邻 key 常量），不需要 jsim；key 经算术混淆时常量缺
+/// 席 → fail-closed 保留（NumberFold 先折）。
+///
+/// ## SCAN
+///
+/// 分发器识别（buildDispatcher，候选预筛 static + desc 形 `(Object×N; I)R`）：
+/// 头锚 = 首条 ILOAD 恰为 key 槽 N + 第二条 TABLESWITCH + default 回跳方法
+/// 首条指令 + 方法无异常表，任一缺席整表拒绝（`分发器形状不符：`前缀记
+/// 账）。键表 lo = switch 下界，case 数 = 目标数（连续区间，下标 =
+/// key - lo），case 数 < 2 拒。case 体从目标起直线走：允许 ALOAD 家族 /
+/// CHECKCAST / NOP，恰一个 INVOKESTATIC|INVOKEVIRTUAL（多候选或成员引用不
+/// 可解析即拒），收尾必须 ret 型 return；中段含标签（合并点）拒；转发目标
+/// 返回类型与键表 ret 恒等互证。virtual 分支的实参从槽 0 起连载、无显式
+/// receiver load——生成面源码 quirk，case 门两侧都不依赖它。
+///
+/// 调用点反查（分发器方法自身跳过）：INVOKESTATIC owner=self + desc 形命中
+/// 已识别键表后，key 位回走 NOP 跳过（squeeze 遗留口径；途中标签 = 合并
+/// 点 fail-closed）；key 非常量（含 NumberBasicEncrypt 藏形）→ keyNotConst，
+/// 不在键表区间 → keyNotInTable。null 跑互证：key 前连续 ACONST_NULL 计数
+/// 与补位数对表（padCount = N - 目标消费实参数，virtual 含 receiver 槽）；
+/// null 跑长于补位数 = 原实参尾带 null 字面量，合法——站点记 padCount，
+/// 擦除只动末段补位，保留前段 null 实参。
+///
+/// **promote 纪律**：每方法只 promote 一次——promoteMethod 重复调用幂等但
+/// 重建 CodeUnit，旧 Insn* 全作废；scanClass 预循环单点持有，
+/// buildDispatcher 复用调用方视图绝不自行 promote（boar 正例罐实证：双
+/// promote 后调用点反查用旧视图，UAF 直接硬崩）。
+///
+/// ## REWRITE
+///
+/// 按类聚类，方法级 roundTripSafe 前置门。单站点：srcPc + INVOKESTATIC 重
+/// 定位后形状复核（身份 / key / null 跑全部重钉——scan 之后字节可能已被同
+/// 方法前站改写，不盲改），调用指令原地换真目标（srcPc 保留，opcode 换
+/// case 转发形，成员 intern 成真目标），跨度 [NOP 夹层; 末段 padCount 个
+/// 补位; key] 单批 eraseBatch（全有或全无，kRejectIfUsed 拒收即整体还原
+/// 放弃）。逐站失败诊断走 `GRUNT_DISPATCHER_RESTORE_TRACE`，帧链失败走
+/// `[grunt.Frame]`（rewrite_toolbox 共享面）。
+///
+/// ## PROOF
+///
+/// 类数不增 + 脏类可重解析 + residual（countOnly 复扫：仍「分发器识别通
+/// 过 + 调用点全形状命中键表」的站点数）。语料单罐门要求 0。
+///
+/// ## 已知边界
+///
+/// 全链罐（boar）不产此面：InvokeDispatcher 排在 ControlflowFlattening 之
+/// 前、调用点又被 ReferenceObfuscate indy 化，罐内真分发器全部被摊平成岛；
+/// desc 形候选与 `__grt$indy$` 蹬床 / 数值走廊方法形状碰撞，全数形状拒绝
+/// ——反误伤门工作正常，不是缺陷。正例罐（仅 InvokeDispatcher
+/// chance=1.0）实证识别与回填链路（语料数字见 corpus-ledger）。帧重算
+/// type conflict 的宿主方法 fail-closed 保留——无编辑帧链探针复现同一冲突
+/// （原方法既有形态，与改写无关）；roundTripSafe 只测 promote→lower 不测
+/// rewire，查不出该形态，不手剪 StackMapTable。
 
 #include "grunt/dispatcher_restore.hpp"
 
