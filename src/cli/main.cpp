@@ -25,8 +25,11 @@
 #include "cli/argv_utf8.hpp"
 #include "cli/sim_probe.hpp"
 
-#include "mjbase/analysis/class_scan.hpp"
+#include "libca/core/tag_cast.hpp"
+#include "jbc/ir/units.hpp"
 #include "mjbase/hierarchy/class_hierarchy.hpp"
+#include "mjbase/hierarchy/summary.hpp"
+#include "mjbase/model/resource_container.hpp"
 #include "mjbase/hierarchy/summary.hpp"
 #include "mjbase/keys.hpp"
 #include "mjbase/log/log_init.hpp"
@@ -259,14 +262,24 @@ int main(int argc, char** argv)
         // 帧链接线（pass-contract §9：resolver 数据获取是调用方的事）：本 jar 的类
         // 登记成层次图，Strict resolver 注入管线选项。折叠会改变方法体长度，既有
         // StackMapTable 必须整体重算——未注入 resolver 时管线只做 relocation。
-        mjbase::KeyPool                                   pool;
-        mjbase::hierarchy::ClassHierarchy                 hierarchy(pool);
-        const std::vector<mjbase::analysis::ScannedClass> scanned =
-            mjbase::analysis::scanClassResources(container);
-        for (const mjbase::analysis::ScannedClass& sc : scanned) {
-            if (!sc.session) continue;
-            (void)hierarchy.addClass(mjbase::hierarchy::fillSummary(*sc.session, pool));
-        }
+        // 层次图流式装配（与 FrameContext 同款解绑）：逐类开会话 → fillSummary 抽骨架 →
+        // addClass 入库 → 会话当场弃置，任何时刻至多一个会话在场。骨架自持于 pool 与
+        // hierarchy（fillSummary 产出仅这两处落点），装配完成后无数据活引用 session；
+        // 遍历序沿用容器资源序，驻留键 intern 序逐位一致。
+        mjbase::KeyPool                   pool;
+        mjbase::hierarchy::ClassHierarchy hierarchy(pool);
+        container.visitResources(
+            [&hierarchy, &pool](std::string_view, const mjbase::model::IResource& resource) {
+                if (resource.getType() != mjbase::model::ResourceType::Class) return;
+                const auto* cls =
+                    ca::core::tag_cast::cast<const mjbase::model::ClassResource>(&resource);
+                if (cls == nullptr || cls->get().empty()) return;
+                auto session = jbc::ir::makeSessionFromBytes(
+                    jbc::core::ByteView{cls->get().data(), cls->get().size()});
+                if (session.is_err()) return;
+                (void)hierarchy.addClass(
+                    mjbase::hierarchy::fillSummary(*session.unwrap(), pool));
+            });
         mjbase::spi::CommonSuperClassResolver  superResolver(hierarchy);
         mjbase::spi::StrictTypeResolverAdapter typeResolver(superResolver);
         mjbase::spi::PassPipelineOptions       options;
