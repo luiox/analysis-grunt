@@ -2,25 +2,25 @@
 /// @brief       残留 `metadata_strip`：Kasumi 元数据与水印残留清理三段
 ///              （`@Metadata` 注解三面摘除 + 水印字段删除 + 反 LLM 资源删除）。
 ///
-/// ## 三面（对位树版 kasumi_metadata_cleanup_pass）
+/// ## 三面（对位参考实现 kasumi_metadata_cleanup_pass）
 ///
 /// Kasumi 每类挂一个 `@Ldev/kasumi/internal/Metadata;`（mv/d1/d2）注解、
 /// 留水印串与 `META-INF/Kasumi/cybersecurity/analysis-*.md` 反 LLM 注入资
-/// 源。树版口径（逐字对齐）：
+/// 源。参考实现口径（逐字对齐）：
 ///
 /// - **注解面**：类/字段/方法三张挂载面的 Runtime{Visible,Invisible}Annotations
 ///   里摘 `@Metadata` 条目（其余注解保留）；
 /// - **字段面**：带 `@Metadata` 的字段与 ConstantValue 为水印串的字段整字段
 ///   删除（水印串判据：含 `PROTECTED BY Kasumi` / 含 `Gruntpocalypse` /
-///   前缀 `kasumi_`，树版 isKasumiWatermarkString 三条全收）；
+///   前缀 `kasumi_`，参考实现 isKasumiWatermarkString 三条全收）；
 /// - **资源面**：URI 前缀 `META-INF/Kasumi/` + `.md` 后缀 + 内容探针
 ///   （anti-llm / developer-message / jailbreak / prompt injection /
-///   PROTECTED BY Kasumi 五条任一子串在场）三证齐才删——树版
+///   PROTECTED BY Kasumi 五条任一子串在场）三证齐才删——参考实现
 ///   isKasumiAntiLlmResource 的三面判定，形状命中而探针缺席的资源**保留**
-///   （树版返回 false 同口径），本仓以 `resourceCandidates` 如实记账。
+///   （参考实现返回 false 同口径），本仓以 `resourceCandidates` 如实记账。
 ///
 /// 方法体不动：bootstrap/解密器在 indy 全还原后由下游 DeadMember/DeadCode
-/// 清理，本残留不碰代码（树版同口径）。
+/// 清理，本残留不碰代码（参考实现同口径）。
 ///
 /// ## 判据分级（README 残留一览表口径）
 ///
@@ -82,7 +82,7 @@ struct ScanResult
 
     ca::usize totalAnnos         = 0;  ///< 三面 `@Metadata` 总条目数
     ca::usize totalFields        = 0;  ///< 水印字段总数
-    ca::usize resourceCandidates = 0;  ///< 资源前缀命中但删除判据不全（树版保留，如实盘点）
+    ca::usize resourceCandidates = 0;  ///< 资源前缀命中但删除判据不全（参考实现保留，如实盘点）
     ca::usize annoBlocked        = 0;  ///< 深度预检拦下的注解槽数（fail-closed 不摘）
     bool      eraBlocked         = false;  ///< Era 未判：整个改写面关闭（fail-closed）
     ca::usize classesSkipped     = 0;  ///< 会话开不了的类
@@ -118,7 +118,7 @@ struct ProofResult
 ///        Era 门在面外先关（未判即空手而回，一个字节不看内容判据）。
 ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInput& input);
 
-/// @brief REWRITE：纯写。只消费 ScanResult：资源先删（树版序），类按
+/// @brief REWRITE：纯写。只消费 ScanResult：资源先删（参考实现序），类按
 ///        uri 复核后清理（摘注解 → 删水印字段 → 压池带走死条目 → 写回）。
 DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result);
 

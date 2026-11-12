@@ -27,9 +27,9 @@
 /// 法落点）→ 旁证降级门（TSV 未装载整站拒绝：Absent = CLI 未注入，
 /// Unreadable = 文件缺失/不可读）→ S1 明文表互证（(owner, fieldKey, idx)
 /// 精确命中 = 定案；无命中 = noPlaintext——dumper 只导出运行期缓存非空的
-/// 槽位，覆盖是部分的，缺席不是异常，树版同样静默跳过）。S1 无旁证不可定
+/// 槽位，覆盖是部分的，缺席不是异常，参考实现同样静默跳过）。S1 无旁证不可定
 /// 案是数据流事实（明文本身就是要回填的内容）；本仓把无旁证显式记账进
-/// rejects，改写面语义与树版逐位一致。
+/// rejects，改写面语义与参考实现逐位一致。
 ///
 /// ## REWRITE
 ///
@@ -50,12 +50,12 @@
 ///
 /// ## 已知边界
 ///
-/// char[][] 密文载体（`a([CII)` 解密器）不在面内——树版同样只处理
+/// char[][] 密文载体（`a([CII)` 解密器）不在面内——参考实现同样只处理
 /// byte[][] 形态 2 与 String[] 形态 1，样本未见 char 站点。明文表是运行期
-/// 快照：缓存槽为 null 的下标旁证缺席，树版语义 = 跳过，本仓 = noPlaintext
+/// 快照：缓存槽为 null 的下标旁证缺席，参考实现语义 = 跳过，本仓 = noPlaintext
 /// 计数。换代面（TSV 列格式 / `byte:` 前缀 / 两形态描述符都钉自当前
 /// Kasumi 版本）由 Era 门整站拒绝兜底。形态 2 的解密方法 owner 不与本站
-/// getstatic owner 互钉（树版同口径）——数据流由栈形锁定，表键只认
+/// getstatic owner 互钉（参考实现同口径）——数据流由栈形锁定，表键只认
 /// getstatic 侧 owner/field/idx。
 
 #include "grunt/string_cache_fold.hpp"
@@ -229,7 +229,7 @@ bool tryMatchAt(ir::ClassSession& s, const ir::CodeDom& dom,
     }
     if (form == Form::CacheRead) {
         // 形态 1：锚 + idx + aaload（跨度是前缀钉面——aaload 之后是什么指令
-        // 与本站无关，树版 nextRealAfter 同口径）。
+        // 与本站无关，参考实现 nextRealAfter 同口径）。
         out.owner    = std::string(sem.owner);
         out.fieldKey = std::string(sem.name);
         out.index    = idx;
@@ -253,7 +253,7 @@ bool tryMatchAt(ir::ClassSession& s, const ir::CodeDom& dom,
         return false;
     }
     // 方法名不钉（样本相关）；明文表 key 用 byte: 前缀 + getstatic 字段名
-    // （树版口径：表键与解密方法名无关，栈形已保证 invoke 消费的正是本
+    // （参考实现口径：表键与解密方法名无关，栈形已保证 invoke 消费的正是本
     // getstatic 装载的密文行）。
     out.owner    = std::string(sem.owner);
     out.fieldKey = std::string(knowledge::kKasumiByteKeyPrefix) + std::string(sem.name);
@@ -264,7 +264,7 @@ bool tryMatchAt(ir::ClassSession& s, const ir::CodeDom& dom,
 }
 
 /// @brief 明文表互证（S1）：命中产出含明文的完整 Site；无命中返回 false
-///        （noPlaintext，树版静默跳过对齐——旁证覆盖是部分的，缺席不是异常）。
+///        （noPlaintext，参考实现静默跳过对齐——旁证覆盖是部分的，缺席不是异常）。
 bool lookupPlaintext(const PlaintextTable& table, const Site& shape, Site& out)
 {
     const auto oit = table.find(shape.owner);
@@ -320,7 +320,7 @@ void scanMethod(ir::ClassSession& s, const std::string& uri, ca::usize methodInd
             ++result.eraBlocked;
             continue;
         }
-        // ---- 旁证降级面：Absent / Unreadable 全拒（树版对齐：无旁证不改写；
+        // ---- 旁证降级面：Absent / Unreadable 全拒（参考实现对齐：无旁证不改写；
         //      本仓把「无旁证」显式记账）----
         if (input.tsvState != TsvState::Loaded) {
             Reject rej;
@@ -334,7 +334,7 @@ void scanMethod(ir::ClassSession& s, const std::string& uri, ca::usize methodInd
             ++result.tsvBlocked;
             continue;
         }
-        // ---- S1：明文表互证定案；无命中不猜（树版静默跳过对齐）----
+        // ---- S1：明文表互证定案；无命中不猜（参考实现静默跳过对齐）----
         Site site;
         if (!lookupPlaintext(input.plaintexts, shape, site)) {
             ++result.noPlaintext;
@@ -527,7 +527,7 @@ std::string unescapeTsv(std::string_view s)
 
 namespace {
 
-/// @brief 严格十进制 int 解析（树版 std::stoi 的 fail-closed 替身：越界/
+/// @brief 严格十进制 int 解析（参考实现 std::stoi 的 fail-closed 替身：越界/
 ///        尾随垃圾都拒，不猜）。
 bool parseIndex(std::string_view s, ca::i32& out)
 {
@@ -570,7 +570,7 @@ ca::usize parseTsv(std::string_view content, PlaintextTable& out)
         if (t.empty()) continue;
 
         // 按 \t 分 4 列：plaintext 内的真实 \t 已被 dumper 转义（\t → "\\t"），
-        // 前三个 \t 恰是列分隔（树版 find 三连同口径）。
+        // 前三个 \t 恰是列分隔（参考实现 find 三连同口径）。
         const ca::usize a = t.find('\t');
         if (a == std::string_view::npos) continue;
         const ca::usize b = t.find('\t', a + 1);

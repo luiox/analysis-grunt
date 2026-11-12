@@ -1,18 +1,16 @@
 # Kasumi 端到端复现记录（SnakeGame-obf）
 
-> 样本：`SnakeGame-obf.jar`（run-lab 语料位；= morpher 树版样本
-> SnakeGame-obf (1).jar，来源与 jar 形态见 doc/indy-decode.md），
+> 样本：`SnakeGame-obf.jar`（run-lab 语料位，来源与 jar 形态见 doc/indy-decode.md），
 > 582,974 B，sha256 `c3481fb16f66ea9fade86e601a73b651db984666de18fe356bb439cc874f77fc`。
 > 专链：`grunt.IndyDecode,grunt.StringCacheFold,grunt.MetadataStrip`（MetadataStrip 收尾，
 > 先还原再清理）。jar / TSV / 产物一律不进仓，本文只记数字与来源。
-> 对位：morpher 树版 `mjt-deobf/test/kasumi/verify.md`（origin/main）。
 > 记录批次：K4 收官（代码基线 `6b38297`，unittest 155/155）；§3 普查修复批次
 > 补记（代码基线 `f9b25ce`，unittest 158/158）。
 
 ## 0. 还原命令（两步：dump 字符串 + 专链）
 
 ```sh
-# 1. 导出字符串明文映射（dumper 为 morpher 树版 Java 工具，源不进 grunt 仓）
+# 1. 导出字符串明文映射（dumper 为仓外 Java 工具，源不进仓）
 javac -encoding UTF-8 KasumiStringDumper.java
 java -cp . KasumiStringDumper SnakeGame-obf.jar > SnakeGame-obf.strings.tsv
 
@@ -42,18 +40,18 @@ CORPUS=<run-lab> ONLY=SnakeGame-obf \
 
 | # | 门 | 数字 |
 |---|---|---|
-| ① | indy 站点 | scan `total=627 sites=627 rejects=0`（六桶全 0）；rewrite `sites=627 failed=0`（static=478 / virtual=72 / getfield=4 / putfield=4 / getstatic=28 / putstatic=34 / new=7）；proof `residual=0`——与树版逐项同 |
-| ② | 字符串回填 | scan `total-shape=174 sites=171 no-plain=3`；rewrite `cache-read=84 direct-decrypt=87 failed=0`；proof `residual=0`——合计 171，与树版 84+87 逐项同（单 pass 隔离口径 168=84+84，见 §2-2） |
+| ① | indy 站点 | scan `total=627 sites=627 rejects=0`（六桶全 0）；rewrite `sites=627 failed=0`（static=478 / virtual=72 / getfield=4 / putfield=4 / getstatic=28 / putstatic=34 / new=7）；proof `residual=0`——与参考实现逐项同 |
+| ② | 字符串回填 | scan `total-shape=174 sites=171 no-plain=3`；rewrite `cache-read=84 direct-decrypt=87 failed=0`；proof `residual=0`——合计 171，与参考实现 84+87 逐项同（单 pass 隔离口径 168=84+84，见 §2-2） |
 | ③ | 三面残留 | scan `annos=25 fields=10 resources=4 candidates=0 anno-blocked=0`；rewrite `failed=0`；proof `residual(a/f/r)=0/0/0` |
 | ④ | 类数 / 条目 | 类数 25 → 25（不变）；文件条目 30 → 26（恰删 4 个反 LLM 资源，只减成立） |
 | ⑤ | VerifyJar | 输入 / 输出各 `classes=25 ok=25 failed=0`，失败集逐类同（双侧零失败） |
 
-## 2. 与树版口径的差异点
+## 2. 与参考实现口径的差异点
 
-1. **功能运行不过（帧初始帧掉 receiver）**：树版 deobf jar 正常启动到超时；
+1. **功能运行不过（帧初始帧掉 receiver）**：参考实现 deobf jar 正常启动到超时；
    本仓专链产物五项门全过但 `java -cp` 实跑 `VerifyError`（`h.c()V` 分支目标
    帧不一致）。定位：改写后的 StackMapTable 以 `full_frame(@0, locals={})` 开头
-   ——实例方法的初始帧掉了 receiver 槽（树版保原帧 `same off=0`，初始帧由
+   ——实例方法的初始帧掉了 receiver 槽（参考实现保原帧 `same off=0`，初始帧由
    JVM 按描述符推导）。这是帧重序列化面的缺陷（mjbase 侧），五项门照不到：
    `VerifyJar` 用 `Class.forName(n, false, cl)` 懒链接，方法级校验延迟到首次
    执行才触发，类加载门全绿掩盖帧错。**挂账 mjbase 帧序列化**；修好后本节
@@ -61,8 +59,8 @@ CORPUS=<run-lab> ONLY=SnakeGame-obf \
 2. **字符串站点口径（168 vs 171）**：单 pass 隔离验收 168（cache 84 + direct
    84，`total-shape=170 no-plain=2`）；专链上 `IndyDecode` 先行把 3 个本被
    indy 化的站点还原成裸形状（`total-shape=174`、`no-plain=3`），回填 171 =
-   84+87，恰与树版逐项同——组合链优于单跑，是链序「先还原再清理」的实证。
-3. **javap 可读性**：树版 kasumi pipeline 清非法 `Signature`（javap 恢复
+   84+87，恰与参考实现逐项同——组合链优于单跑，是链序「先还原再清理」的实证。
+3. **javap 可读性**：参考实现 kasumi pipeline 清非法 `Signature`（javap 恢复
    可读）；本仓 `MetadataStrip` 三面（注解 / 水印 / 资源）不含 Signature 面，
    产物对 `javap -v` 仍崩（`IllegalStateException: ! !`）。Signature 清理
    面不在 K0~K4 范围，遗留。

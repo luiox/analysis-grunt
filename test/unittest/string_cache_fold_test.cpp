@@ -1,5 +1,5 @@
 /// @file        string_cache_fold_test.cpp
-/// @brief       残留 `string_cache_fold` 的三段判据测试（树版两形态迁移 +
+/// @brief       残留 `string_cache_fold` 的三段判据测试（参考实现两形态迁移 +
 ///              拒绝面反证）。
 ///
 /// 夹具是「缩小版 Kasumi 字符串缓存形态」（jasm 现场汇编，不落二进制、不
@@ -214,7 +214,7 @@ TEST(StringCacheScan, AcceptsDirectDecryptSiteOnTableHit)
     EXPECT_EQ(site.form, Form::DirectDecrypt);
     EXPECT_EQ(site.fieldKey, "byte:b");
     EXPECT_EQ(site.plaintext, "direct-plain");
-    EXPECT_EQ(result.noPlaintext, 1u);   // 形态 1 无表条目：树版静默跳过 + 计数
+    EXPECT_EQ(result.noPlaintext, 1u);   // 形态 1 无表条目：参考实现静默跳过 + 计数
     EXPECT_EQ(result.rejects.size(), 0u);
 }
 
@@ -261,7 +261,7 @@ TEST(StringCacheScan, CountsNoPlaintextWhenTableMisses)
     model::ResourceContainer container =
         makeContainer({{"CacheHost", hostSource("CacheHost", false)}});
 
-    // 表已注入但下标对不上：树版静默跳过对齐，站点不产出。
+    // 表已注入但下标对不上：参考实现静默跳过对齐，站点不产出。
     ScanInput input = kasumiInput();
     input.plaintexts.clear();
     input.plaintexts["CacheHost"]["a"][7]      = "wrong-index";

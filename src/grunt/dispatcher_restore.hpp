@@ -119,7 +119,7 @@ struct ScanResult
     ca::usize classesSkipped     = 0;  ///< 会话开不了的类
 };
 
-/// @brief 被改写的类 + 站点级统计（回填 opcode 分列，morpher RewriteStats 口径）。
+/// @brief 被改写的类 + 站点级统计（回填 opcode 分列，参考实现 RewriteStats 口径）。
 struct DirtySet
 {
     std::vector<std::string> uris;

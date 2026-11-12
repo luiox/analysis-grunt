@@ -16,10 +16,10 @@ Kasumi Obfuscator 在产物里留三类「署名/恐吓」残留：每类一条 
 ## 水印字符串
 
 水印以**字段的 ConstantValue** 在场（编译期常量，混淆器往产物里塞自己的
-署名），判据三条（树版 kasumi_metadata_cleanup_pass 逐字口径）：
+署名），判据三条（参考实现 kasumi_metadata_cleanup_pass 逐字口径）：
 
 - 含 `PROTECTED BY Kasumi`；
-- 含 `Gruntpocalypse`（姊妹家族署名串，树版一并清）；
+- 含 `Gruntpocalypse`（姊妹家族署名串，参考实现一并清）；
 - 前缀 `kasumi_`（随机后缀的会话 key，如 `kasumi_19rzezp3uywn6`）。
 
 方法体内的同名串常量（引导方法参数、解密器体）**不是**本残留的清理面——
@@ -32,7 +32,7 @@ jar 资源面：`META-INF/Kasumi/cybersecurity/analysis-{0..3}-*.md`，每份
 子串有 `anti-llm`、`developer-message`、`jailbreak`、`prompt injection`、
 `PROTECTED BY Kasumi`。
 
-删除判据三面齐（树版 isKasumiAntiLlmResource 口径）：URI 前缀
+删除判据三面齐（参考实现 isKasumiAntiLlmResource 口径）：URI 前缀
 `META-INF/Kasumi/` + `.md` 后缀 + 字节里任一探针子串在场。形状命中而探针
 缺席的资源保留（可能是同前缀的合法文档），如实盘点为候选。
 
@@ -42,4 +42,4 @@ jar 资源面：`META-INF/Kasumi/cybersecurity/analysis-{0..3}-*.md`，每份
   引用解密类」的容器级前置门；`metadata-strip` 清 Kasumi 的注解/水印/
   资源三面，前置门是家族判定（Era=Kasumi）。
 - `dead-member` 删零引用成员的口径是引用普查；`metadata-strip` 删字段
-  不做引用普查——水印字段是混淆器署名位，树版按直接删除处理。
+  不做引用普查——水印字段是混淆器署名位，参考实现按直接删除处理。
