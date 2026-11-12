@@ -136,6 +136,13 @@ std::vector<ca::u8> reachability(const ir::CodeUnit& cu)
 /// reachability），全死区间删表项，端点锚在死指令上时向前吸附到存活
 /// 指令（区间吞并被删段，与 frame_rewire 的 LNT/LVT 吸附规则一致），
 /// 尾部全死落到方法末尾哨兵。
+///
+/// 端点吸附用 bindLabel 搬移旧 Boundary 标签（句柄身份不变，表项引用
+/// 不动）；createLabel 换新引用而不销毁旧标签的形态不可用——旧标签仍
+/// 锚在被擦指令上，eraseBatch 按「批内成员被存活 Boundary 标签锚定 →
+/// Err 且整批不删」契约拒绝，方法整体 fail-closed（2026-11-12 修复的
+/// 根因）。删表项的孤儿端点/handler 标签在销毁前按句柄身份清点存活
+/// 表项引用。
 ca::usize rewriteMethod(ir::CodeUnit* cu)
 {
     if (cu == nullptr) return 0;
@@ -157,8 +164,11 @@ ca::usize rewriteMethod(ir::CodeUnit* cu)
         return it != posOf.end() ? it->second : kNo;
     };
 
-    // 异常表收敛（先于擦除：吸附目标须在存活指令上，擦前全部可解析）。
+    // 异常表收敛（先于擦除：Boundary 标签保护锚点，吸附必须在擦除前落
+    // 定）。遍历与处置均按 cu->exc 向量序、孤儿标签线性清点——无集合
+    // 遍历，双跑产物确定性不引入遍历序依赖。
     std::vector<ir::CodeUnit::Exc> liveExc;
+    std::vector<ir::LabelId>       orphanLabels;   // 删表项的端点/handler 标签
     bool                           excChanged = false;
     for (ir::CodeUnit::Exc e : cu->exc) {
         const ca::usize sBgn = labelPos(e.start, false);
@@ -173,12 +183,15 @@ ca::usize rewriteMethod(ir::CodeUnit* cu)
         }
         if (firstLive == kNo) {
             excChanged = true;   // 区间全死：异常无从抛出，表项删除
+            orphanLabels.push_back(e.start);
+            orphanLabels.push_back(e.end);
+            orphanLabels.push_back(e.handler);
             continue;
         }
         if (firstLive != sBgn) {
-            auto lbl = cu->dom.createLabel(order[firstLive]);
-            if (lbl.is_err()) return 0;
-            e.start = lbl.unwrap();
+            // start 锚在死指令上：旧 Boundary 标签搬移到区间内第一条存活
+            // 指令，表项引用不动。
+            if (cu->dom.bindLabel(e.start, order[firstLive]).is_err()) return 0;
             excChanged = true;
         }
         if (sEnd < order.size() && reach[sEnd] == 0) {
@@ -189,13 +202,30 @@ ca::usize rewriteMethod(ir::CodeUnit* cu)
                     break;
                 }
             }
-            auto lbl = clamp == kNo ? cu->dom.createLabel()
-                                    : cu->dom.createLabel(order[clamp]);
-            if (lbl.is_err()) return 0;
-            e.end = lbl.unwrap();
+            // end 锚在死指令上：搬移到其后第一条存活指令；尾部全死落方法
+            // 末哨兵（bindLabel 无参形态）。
+            const ir::InsnId anchor = clamp == kNo ? ir::kNoInsn : order[clamp];
+            if (cu->dom.bindLabel(e.end, anchor).is_err()) return 0;
             excChanged = true;
         }
         liveExc.push_back(e);
+    }
+
+    // 孤儿标签销毁：句柄无效（含 kNoLabel）跳过——无效标签不锚定任何
+    // 指令，无害；同一句柄在孤儿集里重复出现或被存活表项共享时保留
+    // （线性清点，序确定）。
+    for (ca::usize oi = 0; oi < orphanLabels.size(); ++oi) {
+        const ir::LabelId& lbl = orphanLabels[oi];
+        bool               keep = !cu->dom.validLabel(lbl);
+        for (ca::usize oj = 0; !keep && oj < oi; ++oj) {
+            keep = orphanLabels[oj] == lbl;   // 孤儿集内重复句柄只销毁一次
+        }
+        for (ca::usize ki = 0; !keep && ki < liveExc.size(); ++ki) {
+            const ir::CodeUnit::Exc& kept = liveExc[ki];
+            keep = kept.start == lbl || kept.end == lbl || kept.handler == lbl;
+        }
+        if (keep) continue;
+        if (cu->dom.destroyLabel(lbl).is_err()) return 0;
     }
 
     std::vector<ir::InsnId> victims;
@@ -204,6 +234,11 @@ ca::usize rewriteMethod(ir::CodeUnit* cu)
     }
     if (victims.empty() && !excChanged) return 0;
     if (excChanged) cu->exc = std::move(liveExc);
+    // 断言注记（不另设遍历）：被存活 Boundary 标签锚定或被存活指令跳转
+    // 引用的指令必然可达（异常边已入 reachability），不会进受害者集合；
+    // 受害者内部互指（死块内 goto 等）的 ControlFlow 标签不保护锚点，
+    // 按 eraseBatch 契约随批消亡。若收敛逻辑漏处置某枚 Boundary 标签，
+    // eraseBatch 返回 Err，本函数保守放弃——fail-closed 兜底即断言。
     if (!victims.empty() && cu->dom.eraseBatch(victims).is_err()) return 0;
     return victims.size();
 }
