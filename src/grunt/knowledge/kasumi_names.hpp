@@ -12,7 +12,7 @@
 /// kasumi_metadata_cleanup_pass,kasumi_string_decrypt_pass}.{hpp,cpp}`、
 /// `tools/kasumi_string_dumper/KasumiStringDumper.java` 与
 /// morpher 仓 `doc_ai/notes/kasumi_reverse_notes.md`，
-/// SnakeGame-obf.jar（582,974 B，语料账本见 doc/indy-decode.impl.md）实证。
+/// SnakeGame-obf.jar（582,974 B，验收数字见 doc/kasumi-verify.md）实证。
 #pragma once
 
 #include <string_view>

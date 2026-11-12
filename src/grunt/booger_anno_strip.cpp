@@ -1,5 +1,38 @@
 /// @file        booger_anno_strip.cpp
 /// @brief       残留 `booger_anno_strip` 的三段实现：SCAN / REWRITE / PROOF。
+///
+/// 判据：属性槽 decodeAttr 得 AnnotationsAttr，按 anno.typeCp 的 utf8 全等
+/// 比对 @Booger 描述符；保留列表非空走 AttrSlot::mutate() 置 Modified，为
+/// 空把整槽从属性表删除（倒序 erase 防下标漂移）。
+///
+/// ## 注解码码深度守卫接线（mjbase #158 随升批的全景）
+///
+/// mjbase #158 的守卫（annotation_depth）原本只落在 member_remapper 的注
+/// 解族解码收口；本仓 grunt 侧有**直调 libjbc decodeAttr 的路径**，不在
+/// 该守卫面内，逐位盘点并接线（mjbase::util::attrSafeToDecode 预检，预检
+/// 拒绝按「解不开原样保真」fail-open 跳过，调用点形状不变）：
+///
+/// - booger_anno_strip.cpp stripTable / countIn——类/方法/字段属性槽；
+/// - constant_call.cpp dumpPcRefs——Code 与嵌套（诊断面属性槽）；
+/// - dead_member.cpp annotationStrings——注解族属性槽普查；
+/// - indy_fold.cpp bsmEntries——BootstrapMethods（守卫恒放行，形状归一）。
+///
+/// 负例测试还咬出第 7 面：jbc::ir::cp_compact 会对全部属性槽（类/字段/
+/// 方法 + Code 嵌套）decodeAttr 重映射注解内 CP 引用，敌意深嵌注解不走
+/// Result 错误通道、直接栈溢出（单测进程实证）。libjbc 上游不动，grunt
+/// 侧在 container.hpp 加 classAnnoDepthSafe（同一批槽位过
+/// attrSafeToDecode，Code 槽借道下探嵌套属性），compact 前置到三处调用
+/// 点：dead_member 首轮压缩与二次压缩、booger_anno_strip 剥注解后压缩
+/// ——越限类按既有 compact 失败通道「原样保真」（CP 不重编号、字节不动，
+/// 宁少带走死 Utf8）。
+///
+/// 负例测试 test/unittest/annotation_guard_test.cpp（原始字节夹具，jasm
+/// 表达不了千层嵌套）：5000 层深嵌注解类过 BoogerAnnoStrip / DeadMember
+/// 不栈溢出、字节原样保真、不牵连同容器普通类清理；合法浅嵌 @Booger 照
+/// 常普查剥离（fail-open 回归）。
+///
+/// 注解类本体（混淆器注解类的类文件）的删除属死类删除面，交 DeadMember
+/// 的引用普查与死类摘除。
 #include "grunt/booger_anno_strip.hpp"
 
 #include <cstdio>

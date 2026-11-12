@@ -1,5 +1,52 @@
 /// @file        dead_member.cpp
 /// @brief       残留 `dead_member` 的三段实现：SCAN / REWRITE / PROOF。
+///
+/// ## scan/rewrite 分工
+///
+/// scan 只产**形状候选**（方法体形状 / 字段访问位 / clinit 拆空）；零引用
+/// 判定必须发生在 rewrite——它依赖「先压缩再普查」这个改写动作，scan 不能
+/// 改容器。rewrite 里候选可能被引用门拒掉（rejectedByRef），这是设计内的。
+///
+/// ## 压缩的双重身份
+///
+/// (1) 普查前提——死条目会污染零引用判定；(2) 删除后的收尾——被删成员的
+/// 描述符 utf8 从池里带走。两步都落盘；仅压缩变小的类也进 dirty.uris（落
+/// 过盘就要过 proof 的可重解析门）。
+///
+/// ## 引用键口径与普查分层
+///
+/// 方法键 owner::name::desc，字段键 owner::name。BootstrapMethods 引用的
+/// MethodHandle→Methodref 在压缩闭包内存活，自然计入活引用——indy 引导方
+/// 法引用的成员不会被误删。普查**分层兜底**（Kasumi 批修复的教训：普查曾
+/// 是「压缩成功类才作引用方」，压缩失败类被整体排除后其对外引用从活引用
+/// 集蒸发，下游类被误删、运行期 NoSuchMethodError，取证见 kasumi-verify
+/// §3）：会话可开 → 枚举池；会话打不开 / 普查异常 → 原始字节骨架解析
+/// （readClass，只解头/池/成员目录，Raw 面不挡路）再枚举；骨架也解不开 →
+/// census-blind，本轮成员删除与空壳回收整体放弃。压缩失败的类仍不作删除
+/// 候选（两边宁留），但引用照入普查；普查挂起时间片跑全量（proof 类数门
+/// 同门）。同病同修：field_census（ConstValuePromote / SeedStrip 的访问面
+/// 普查）补完整性台账、不完整整轮放弃；booger_anno_strip 引用门对会话打
+/// 不开的类按引用在册关死。
+///
+/// ## ACC_BRIDGE 豁免的核查结论（不改门）
+///
+/// ACC_BRIDGE 零引用豁免在 Grunteon 生成面不携带信息：FakeSyntheticBridge
+/// 给全体非 abstract 方法补 ACC_BRIDGE|ACC_SYNTHETIC——真方法、indy 目标、
+/// 死代理同一形状，「真桥排除面」会把这类罐里几乎所有成员从豁免里摘出去，
+/// 恰好打掉豁免要保的对象。豁免的触发条件是 bsmUnresolved（容器存在未收
+/// 敛 BSM）：该前提下任何 public synthetic/bridge 成员都无法证明零引用死
+/// （BSM 运行时 findStatic 的目标没有 CP 明文引用），误保死代理是设计内的
+/// 保守价；indy_fold 收敛后豁免不再触发，死代理走 gateB + 引用普查正常删
+/// 除（链序上 indy_fold 恒在本残留之前）。「带操作数 xload 的伪 bridge」
+/// 体形排除对 indy 目标同样成立不了——indy 目标是真方法体普遍带操作数装
+/// 载，与死代理形状无法区分；pureArithShape（gateA）已是唯一不进豁免的体
+/// 形删除面。
+///
+/// ## 空壳摘除门的放行边界
+///
+/// `<init>`-only + 零字段 + 全容器引用普查 + main 门是空壳摘除的现行形态；
+/// **不新增「仅 public 无参构造 + 零字段」放行形态**——没有活样本支撑，放
+/// 行只会在无证据面扩大摘除权；语料再现此形态时先补罐再议。
 #include "grunt/dead_member.hpp"
 
 #include <algorithm>
