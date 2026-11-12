@@ -3,7 +3,7 @@
 Grunt v3（Grunteon）obf 行为核心描述
 ======================================
 
-   适用对象：Grunt 混淆家族 v3 代（Kotlin 重写的 "Grunteon"）。本仓知识源锚定 ``grunt3`` 分支本地 HEAD ``e41e852``；\ ``origin/grunt3``\ （``a088924``）领先 13 个 fix 级提交，差异点见 §0.4。
+   适用对象：Grunt 混淆家族 v3 代（Kotlin 重写的 "Grunteon"）。本仓知识源锚定 ``grunt3`` 分支本地 HEAD ``bda0b1a``——\ ``origin/grunt3``\ （``a088924``）曾领先 ``e41e852`` 的 13 个 fix 级提交已并入锚内，差异点见 §0.4。
 
    知识来源：Grunt 源码仓（只读）\ ``grunt3`` 分支 ``transformers/`` 树 39 个 transformer（35 个常规 + 4 个 ``@HiddenTransformer``）逐个源码盘点，另加 grunt-glsl 插件 transformer 与 NativePipeline 独立执行阶段；\ ``analysis-grunt`` 仓现有 residue 面做处理现状对照。
 
@@ -14,6 +14,8 @@ Grunt v3（Grunteon）obf 行为核心描述
    排版：正文一句话/一段落一整行，不做 80 列硬断；代码块与表格内自然换行。
 
    日期：2026-11-06。迁移注记：2026-11-07 由 markdown 分账逐段转 RST；行为状态列与 :ref:`obf-behaviors` / :ref:`corpus-ledger` 逐行对账，滞后行同步处标注「随迁移对账更新」。
+
+   补账注记：2026-11-12 按 ``grunt3@bda0b1a`` 补账——§0.4 并入口径更新；§4.5 新增产物面全局配置登记（corruptCRC32 / corruptHeaders）；§1.1 / §5.3 / §6.1 / §7 补 ``830295b`` / ``cf8639a`` / ``a088924`` 带入的配置面增量。
 
 .. _grunt-v3-base:
 
@@ -28,10 +30,10 @@ v3 是 Kotlin 重写的管线：\ ``Grunteon`` 持 ``transformers: List<Pair<Tra
 
 .. _grunt-v3-table:
 
-0.2 行为清单总表（39 transformer + 插件 + 阶段）
---------------------------------------------------
+0.2 行为清单总表（39 transformer + 插件 + 阶段 + 产物面全局配置）
+--------------------------------------------------------------------
 
-等级与现状列口径同 v2 文档 §0.2（S1 语义后果 / S2 结构事实 / S3 预留面；已处理 / 部分 / 预留 / 无处理 / 清理面 / 伴随面 / 检测-only）。
+等级与现状列口径同 v2 文档 §0.2（S1 语义后果 / S2 结构事实 / S3 预留面；已处理 / 部分 / 预留 / 无处理 / 清理面 / 伴随面 / 检测-only；产物面反分析项记「登记面」）。
 
 .. list-table::
    :header-rows: 1
@@ -289,6 +291,12 @@ v3 是 Kotlin 重写的管线：\ ``Grunteon`` 持 ``transformers: List<Pair<Tra
      - 方法体 native 化 + loader 类 + 库资源嵌入
      - 检测-only
      - 无处理（不可静态还原，见 §5）
+   * - G
+     - 全局配置
+     - corruptCRC32 / corruptHeaders
+     - 写罐产物面反分析：逐 entry 破坏 CRC32 / 破坏 jar 头（默认全关）
+     - 登记面
+     - 无处理（数据本体不受影响，读取侧容错即可，见 §4.5）
 
 .. _grunt-v3-validation:
 
@@ -299,10 +307,10 @@ v3 共 11 个样例文件（v3-01 ~ v3-10，其中 native 面两个类拆 v3-09/
 
 .. _grunt-v3-origin-ahead:
 
-0.4 origin/grunt3 领先的 13 个提交（差异标注）
+0.4 origin/grunt3 增量提交并入注记（差异标注）
 ------------------------------------------------
 
-本地锚定 ``grunt3@e41e852``；\ ``origin/grunt3@a088924`` 领先 13 个 fix 级提交，内容：renamer exclusions 修正、native 库 CRC 修复、record 组件名保留、DeclaredFieldsExtract 收紧为仅 static ``ConstantValue``\ （本文按收紧后口径描述）。其余为 fix 级，不引入新行为面；后续语料升级时按此清单复核差异即可。
+本地锚 ``grunt3`` 已随上游前移至 ``bda0b1a``：\ ``origin/grunt3@a088924`` 曾领先 ``e41e852`` 13 个 fix 级提交，现已全部并入本地锚——\ ``bda0b1a`` = ``e41e852`` + 14 个提交（上述 13 个 + 1 个纯 README 提交）。其中引入行为面/配置面变化的登记点三条：\ ``830295b`` StringArrayedEncrypt / RuntimeMaterial 各新增 ``Native candidate`` 开关（默认 false，见 §1.1 / §6.1）；\ ``cf8639a`` native 输出命名可配置化——loader 类名 / 库基名 / 资源目录 / DLL 名入 ``NativePipelineConfig``\ （默认值不变，见 §5.3）；\ ``aec7905`` CRC 破坏实现修复——全局配置 ``Corrupt CRC32`` 自此真正生效（见 §4.5，此前破坏未落在真实 entry 压缩器上）。其余维持 fix 级、不引入新行为面：renamer exclusions 修正（\ ``a088924`` FieldRenamer 新增 ``Field exclusions`` 配置，§7 补记）、record 组件名保留、DeclaredFieldsExtract 收紧为仅 static ``ConstantValue``\ （本文按收紧后口径描述）等；后续语料升级时按此清单复核差异即可。
 
 .. _grunt-v3-encryption:
 
@@ -316,11 +324,11 @@ v3 共 11 个样例文件（v3-01 ~ v3-10，其中 native 面两个类拆 v3-09/
 
 **做什么**\ 。逐类收集非空字符串 ``ldc`` 建每类一个 ``String[]`` 池字段 + 随机名解密方法 + ``arrayInit`` 静态方法，\ ``<clinit>`` 头部插池分配前导，调用点原地换 ``GETSTATIC pool; idx; AALOAD``——骨架与 v2 StringEncrypt 同构（v2 文档 §1.1），差别两点：\ ``Carray=true``\ （默认开）时密文以 ``char[]`` 直存——\ ``arrayInit`` 逐项 ``NEWARRAY T_CHAR`` + 逐码元 ``CASTORE`` 写密文，免去 ``ldc`` 密文串与 ``toCharArray``，池里不再出现明文形态的字符串常量；\ ``InvokeDynamics=true``\ （默认开）把 ``makeConcatWithConstants`` indy 调用点先替换成 ``ldc`` 模板串 + 每类一个 concat wrapper 方法再一并进池。解密器 desc 固定 ``([CJI)Ljava/lang/String;``\ （char[] + long seed + int key），体是带循环的 char 级 XOR 流。
 
-**配置面**：\ ``Carray=true`` / ``InvokeDynamics=true`` / ``Exclusion``。
+**配置面**：\ ``Carray=true`` / ``InvokeDynamics=true`` / ``Native candidate=false`` / ``Exclusion``。\ ``Native candidate``\ （\ ``830295b``\ ）开启后给生成的解密器 / ``arrayInit`` / concat wrapper 挂 ``NATIVE_INCLUDED`` 注解进 native 管线；默认 false 不改变默认产物形状。
 
 **判据分级**：S1——与 v2 StringEncrypt 同级：池读三元组（``GETSTATIC`` String[] + 常量下标 + ``AALOAD``\）编译期可建映射，读取点换 ``ldc`` 明文是语义恒等；carray 形态下密文在 ``arrayInit`` 的 ``CASTORE`` 序列里，仍全为装载期常量。
 
-**本仓现状**：已处理——\ ``grunt.StringPoolFold`` 的 arrayed 面（缺口 #1 闭环）：按常量 KIND 判形（``carray`` 是配置不是版本键），\ ``NEWARRAY T_CHAR`` 直存码元解密折回（见 ``doc/string-pool-fold.md``\）。indy 藏面依赖上游 indy 还原（缺口 #2）接通。morpher obf-forms §3.1 的池读三元组判据两代共用。
+**本仓现状**：已处理——\ ``grunt.StringPoolFold`` 的 arrayed 面（缺口 #1 闭环）：按常量 KIND 判形（``carray`` 是配置不是版本键），\ ``NEWARRAY T_CHAR`` 直存码元解密折回（见 ``doc/string-pool-fold.md``\）。indy 藏面依赖上游 indy 还原（缺口 #2）接通。morpher obf-forms §3.1 的池读三元组判据两代共用。余量通道：\ ``Native candidate=true`` 时解密器（含 ``arrayInit`` / concat wrapper）被摘成 native 无体，该类整站 fail-closed——native 无体静态不可解，与 §6.1 native materialKey / §2.2 native action 键同族天花板桶。
 
 **样例**\ （carray 形态；本样例走 ``validation=off`` 通道，误报记录见 v2 文档 §0.3）：
 
@@ -817,6 +825,17 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProvide
 - **ShuffleMembers**：成员/注解/异常表顺序打乱，清理面，登记即可。
 - **ReflectionSupport**：改名后反射串重映射，伴随面，产物无独立形态。
 
+.. _grunt-v3-output-artifact-config:
+
+4.5 产物面全局配置：corruptCRC32 / corruptHeaders（反分析开关）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**做什么**\ 。\ ``GlobalConfig``「Output jar archive」节的两个反分析开关（非 transformer，JarDumper 写罐时生效）：\ ``Corrupt CRC32=false``\ （``process/ObfConfig.kt:104-106``\ ）开启后写罐的每个 entry 压缩器与外层 zip 流被换上一个 CRC 子类——\ ``getValue`` 返回真值 xor 非零随机掩码（\ ``util/file/CRC32.kt:11-23``\ ，掩码 per-entry 派生自受控随机种子，经 Unsafe 注入 ``ZipOutputStream.crc`` 字段），写进 zip 的 CRC32 字段与 entry 数据实际校验值不符（\ ``process/resource/JarDumper.kt:60-64`` per-entry、\ ``:162-171`` 外层流）——entry 数据本体不动，只是校验值说谎，按 CRC 校验罐的下游工具（解压器/校验器）读罐会报坏。\ ``Corrupt headers=false``\ （\ ``process/ObfConfig.kt:101-103``\ ）是同节姊妹开关：破坏 jar 文件头使产物不能按 zip 打开，本文点名不展开。
+
+**判据分级**：登记面（不入 S 级）——反分析产物面：效果是「CRC 字段 ≠ 数据校验值」的容器元数据事实，无字节码形态、无还原对象；实现自 PR#79（\ ``aec7905``\ ）起才真正生效（此前破坏未落在真实 entry 压缩器上），登记按生效后口径。
+
+**本仓现状**：无处理（如实登记）——还原侧无动作：CRC 破坏不改变任何字节码/资源字节，本仓 jar 读取/还原面无 CRC 校验依赖时天然免疫，读取侧若走 CRC 校验路径按需容错（跳过校验）即可。
+
 .. _grunt-v3-native:
 
 5 Native 面（检测-only / 不可静态还原）
@@ -871,9 +890,9 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProvide
 5.3 NativePipeline（NativeObfuscation 阶段）：方法体 native 化
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**做什么**\ 。独立执行阶段（非 transformer）：\ ``NativePipelineRunner`` 串 ``NativeCandidateScanner``\ （收集候选注解方法）→ ``NativeCompiler``/``NativeCppBackend``\ （经 ``NativeJvmCppMethodTranslator`` / ``NativeSsaDirectTranslator``\ （SSA IR 直译）/ ``NativeJvmExceptionDispatchPlanner`` 把方法体译成 C++）→ ``NativeCommitter``\ （``makeNative``：方法挂 ``ACC_NATIVE`` 并清空字节码体；\ ``<clinit>`` 改写为调 ``registerNativesForClass`` 的代理方法并挂 ``LambdaForm$Hidden`` + ``jdk/internal/vm/annotation/Hidden``；接口类 clinit 与接口方法有专门重写路径）→ ``NativeLoaderClassFactory``\ （生成 loader 类：native ``registerNativesForClass(I,Class)V`` + ``private static volatile boolean loaded`` + ``normalizeOs``/``normalizeArch`` + ``selectNativeLibraryResource`` 按平台选路径 + ``load()`` 幂等加载）→ 库以 jar 资源嵌入（``/grunteon/native/<os>/<arch>/grunteon.{dll,so,dylib}`` 形路径）。
+**做什么**\ 。独立执行阶段（非 transformer）：\ ``NativePipelineRunner`` 串 ``NativeCandidateScanner``\ （收集候选注解方法）→ ``NativeCompiler``/``NativeCppBackend``\ （经 ``NativeJvmCppMethodTranslator`` / ``NativeSsaDirectTranslator``\ （SSA IR 直译）/ ``NativeJvmExceptionDispatchPlanner`` 把方法体译成 C++）→ ``NativeCommitter``\ （``makeNative``：方法挂 ``ACC_NATIVE`` 并清空字节码体；\ ``<clinit>`` 改写为调 ``registerNativesForClass`` 的代理方法并挂 ``LambdaForm$Hidden`` + ``jdk/internal/vm/annotation/Hidden``；接口类 clinit 与接口方法有专门重写路径）→ ``NativeLoaderClassFactory``\ （生成 loader 类：native ``registerNativesForClass(I,Class)V`` + ``private static volatile boolean loaded`` + ``normalizeOs``/``normalizeArch`` + ``selectNativeLibraryResource`` 按平台选路径 + ``load()`` 幂等加载）→ 库以 jar 资源嵌入（``grunteon/native/<os>-<arch>/<库名>`` 形路径，默认如 ``grunteon/native/windows-x86_64/grunteon_native.dll``——windows 直 ``<库基名>.dll``\ （``DLL name`` 可覆盖），非 windows 加 ``lib`` 前缀与 ``.so``/``.dylib`` 尾）。
 
-**如实标注**：\ **检测-only / 不可静态还原**\ ——方法体已离开字节码域（``ACC_NATIVE`` + 空体），静态还原无对象；本仓可做的是识别与计数（native 方法 + loader 类形状 + 库资源路径），行为重建只能反编译/运行库本体。形态还原 = 识别三类锚点（``ACC_NATIVE`` 空体方法、loader 类形状、库资源），登记为缺口清单的检测-only 项。
+**如实标注**：\ **检测-only / 不可静态还原**\ ——方法体已离开字节码域（``ACC_NATIVE`` + 空体），静态还原无对象；本仓可做的是识别与计数（native 方法 + loader 类形状 + 库资源路径），行为重建只能反编译/运行库本体。形态还原 = 识别三类锚点（``ACC_NATIVE`` 空体方法、loader 类形状、库资源），登记为缺口清单的检测-only 项。锚点文本自 ``cf8639a`` 起可配置（\ ``NativePipelineConfig``：loader 基名 ``net/spartanb312/grunteon/runtime/NativeLoader`` / 库基名 ``grunteon_native`` / 资源目录 ``grunteon/native`` / DLL 名，默认值不变）——可配置性只改锚文本不改形状，判据仍按默认形锚定。
 
 **样例**\ （native 目标类 + loader 类，两文件）：
 
@@ -915,9 +934,9 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProvide
 
        .method private static selectResource ()Ljava/lang/String; {
            code: {
-               ldc "/grunteon/native/windows/x64/grunteon.dll"
+               ldc "/grunteon/native/windows-x86_64/grunteon_native.dll"
                areturn                          // 判据锚点：库资源路径形
-           }                                    //   /grunteon/native/<os>/<arch>/…
+           }                                    //   grunteon/native/<os>-<arch>/<库名>
        }
 
        .method public static load ()V {
@@ -952,7 +971,7 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProvide
 6.1 RuntimeMaterial：分布式材料扰动
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**做什么**\ 。给类注入运行时完整性材料：per-class 四个静态字段（源注释口径：\ ``shareA``/``shareB``\ （long) + ``canonicalKey``\ （long) + ``poison``\ （int)），\ ``<clinit>`` 注入类级扰动（``Clinit=true``\）、\ ``<init>`` 注入实例路径扰动（``Constructors=true``，\ ``ConstructorLimit=8``\）。clean 扰动让 ``shareA += delta; shareB -= delta``\ （原始和在等价类内滑动，canonical 不变）；可疑扰动（``DetectSources``/``DetectTokens`` 检测调试器/篡改）置 sticky poison 并扰动 canonicalKey；canonical 操作符为 ``CANONICAL_SHARE_SUM_STICKY_POISON``\ （canonicalKey = shareA + shareB 与 poison 的组合）。\ ``DraftMaterialMetadata=true`` 给 ReferenceObfuscate 输出材料草稿（canonicalKey + poison 作 heavy BSM 的 KDF 输入——两 transformer 联动）。判据 S2（材料字段组 + clinit/init 扰动形状）。\ **本仓现状**：\ ``grunt.MaterialKeyRestore`` 承载（缺口 #15 联动面闭环，见 ``doc/material-key-restore.md``\）——材料通道解密器窗口的 ``INVOKESTATIC materialKey()I`` 按「清洁运行环境语义」静态折回 ``LDC``\ （key = ``fold(keyField 初值) ^ poison 初值``，初值链在上游供给链 ``IndyRestore`` + ``StringPoolFold`` 跑完后全静态、固定 JVM 语义 C++ 直解），indy_restore 第二轮按既有 Plain 通道消化 materialLane 桶；判据 S2 结构（窗口形 + materialKey() 体 9 条逐字 + 写者普查 + 守卫指纹）→ S1 互证（路由 indy 站点按候选 key 解密 + desc 互证），fail-closed 逐桶记账（初值链断/多写/外写/守卫缺席/native materialKey）；反调试扰动路径与材料字段本体不摘（缺口清单 P3 检测/摘除面仍在）。boar 语料：656 材料类折回 586（70 native materialKey 余量），组合链 materialLane 42228 → 5060。
+**做什么**\ 。给类注入运行时完整性材料：per-class 四个静态字段（源注释口径：\ ``shareA``/``shareB``\ （long) + ``canonicalKey``\ （long) + ``poison``\ （int)），\ ``<clinit>`` 注入类级扰动（``Clinit=true``\）、\ ``<init>`` 注入实例路径扰动（``Constructors=true``，\ ``ConstructorLimit=8``\）。clean 扰动让 ``shareA += delta; shareB -= delta``\ （原始和在等价类内滑动，canonical 不变）；可疑扰动（``DetectSources``/``DetectTokens`` 检测调试器/篡改）置 sticky poison 并扰动 canonicalKey；canonical 操作符为 ``CANONICAL_SHARE_SUM_STICKY_POISON``\ （canonicalKey = shareA + shareB 与 poison 的组合）。\ ``DraftMaterialMetadata=true`` 给 ReferenceObfuscate 输出材料草稿（canonicalKey + poison 作 heavy BSM 的 KDF 输入——两 transformer 联动）。\ ``Native candidate=false``\ （\ ``830295b``\ ）开启后给生成的 guard 方法挂 ``NATIVE_INCLUDED`` 进 native 管线；默认 false 不改变默认产物形状。判据 S2（材料字段组 + clinit/init 扰动形状）。\ **本仓现状**：\ ``grunt.MaterialKeyRestore`` 承载（缺口 #15 联动面闭环，见 ``doc/material-key-restore.md``\）——材料通道解密器窗口的 ``INVOKESTATIC materialKey()I`` 按「清洁运行环境语义」静态折回 ``LDC``\ （key = ``fold(keyField 初值) ^ poison 初值``，初值链在上游供给链 ``IndyRestore`` + ``StringPoolFold`` 跑完后全静态、固定 JVM 语义 C++ 直解），indy_restore 第二轮按既有 Plain 通道消化 materialLane 桶；判据 S2 结构（窗口形 + materialKey() 体 9 条逐字 + 写者普查 + 守卫指纹）→ S1 互证（路由 indy 站点按候选 key 解密 + desc 互证），fail-closed 逐桶记账（初值链断/多写/外写/守卫缺席/native materialKey）；反调试扰动路径与材料字段本体不摘（缺口清单 P3 检测/摘除面仍在）。余量通道：\ ``Native candidate=true`` 时 guard 方法被摘成 native 无体——守卫指纹缺席即该类整站 fail-closed，与既有「native materialKey」余量桶（ReferenceObfuscate ``GeneratedHelperNativeCandidate`` 摘 materialKey 体）同族天花板。boar 语料：656 材料类折回 586（70 native materialKey 余量），组合链 materialLane 42228 → 5060。
 
 **样例**\ （字段以 int 简化示意；真实字段形为 long shareA/shareB + canonicalKey + int poison）：
 
@@ -1025,7 +1044,7 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProvide
 7 改名与清理面（要点账）
 --------------------------
 
-改名族（ClassRenamer / MethodRenamer / FieldRenamer / LocalVarRenamer / MixinClassRenamer / MixinFieldRenamer）：字典/前缀/``U+200E`` 尾缀口径与 v2 家族同源（origin/grunt3 修了 exclusions 边界）；MappingApplier 走外部 mapping 应用（``MappingSource``/``NameMapping`` infra）替代生成式改名。\ **本仓现状：无处理**\ （改名还原走 mapping 旁证，不在 residue 面）。清理族：MethodInliner（同类小方法内联，真优化）、ClassShrink（删 InnerClasses/未用标签/NOP/方法 Signature）、KotlinClassShrink（删 Kotlin Metadata + Intrinsics 检查）、DeadCodeRemove（删 load+POP 族无用序列）、EnumOptimize（values() 摘 clone+CHECKCAST）、SourceDebugInfoHide（删 source file/行号）、PostProcess（Manifest/YML/JSON 主类重映射 + 收尾清理）、ShuffleMembers（成员序打乱）——全部清理面，还原侧无动作，如实登记。StringEqualsOptimize（``equals``/``equalsIgnoreCase`` 换比较，\ ``IgnoreCase`` 开关）判据 S2、本仓无处理（缺口清单 P3，与 v2 StringEqualsRedirect 同面）。
+改名族（ClassRenamer / MethodRenamer / FieldRenamer / LocalVarRenamer / MixinClassRenamer / MixinFieldRenamer）：字典/前缀/``U+200E`` 尾缀口径与 v2 家族同源（origin/grunt3 修了 exclusions 边界；\ ``a088924`` 起 FieldRenamer 新增 ``Field exclusions`` 配置、默认空——条目按 ``owner.name.field`` 精确匹配或以 ``**`` 结尾作前缀匹配，命中即保留不参与改名）；MappingApplier 走外部 mapping 应用（``MappingSource``/``NameMapping`` infra）替代生成式改名。\ **本仓现状：无处理**\ （改名还原走 mapping 旁证，不在 residue 面）。清理族：MethodInliner（同类小方法内联，真优化）、ClassShrink（删 InnerClasses/未用标签/NOP/方法 Signature）、KotlinClassShrink（删 Kotlin Metadata + Intrinsics 检查）、DeadCodeRemove（删 load+POP 族无用序列）、EnumOptimize（values() 摘 clone+CHECKCAST）、SourceDebugInfoHide（删 source file/行号）、PostProcess（Manifest/YML/JSON 主类重映射 + 收尾清理）、ShuffleMembers（成员序打乱）——全部清理面，还原侧无动作，如实登记。StringEqualsOptimize（``equals``/``equalsIgnoreCase`` 换比较，\ ``IgnoreCase`` 开关）判据 S2、本仓无处理（缺口清单 P3，与 v2 StringEqualsRedirect 同面）。
 
 .. _grunt-v3-plugins-infra:
 
@@ -1064,5 +1083,6 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProvide
    清理面：MethodInliner、ClassShrink、KotlinClassShrink、DeadCodeRemove、EnumOptimize、
            SourceDebugInfoHide、ShuffleMembers、LocalVarRenamer、PostProcess
    资源面：GlslObfuscator（GLSL，非字节码）
+   登记面：corruptCRC32 / corruptHeaders（GlobalConfig 产物面反分析开关，读取侧容错，见 §4.5）
 
 （随迁移对账更新：ControlflowJump 行两缺口 #10 已闭环——ExcBridgeRestore / GateProcessorFold；ReferenceObfuscate 行材料通道随缺口 #15 联动面闭环消化，原「materialLane/keyMissing fail-closed」口径随总表收窄。）

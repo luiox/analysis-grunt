@@ -54,7 +54,7 @@ heavy 的 `@Metadata` 注解（v2 `@GruntMetadata` / v3 `@Metadata`，注解类�
 - **S3 版本敏感面**：heavy 的 `@Metadata` 数组解释（mv 门 + 59557 模数）
   挂 Era 门——`probeEra` 判 `Era::Grunt3` 才激活（Grunt3 双指纹：Grunt BSM
   desc ∧ 类级 `@Metadata` 注解或 `grunteon` 命名空间，见
-  [doc/obf-behaviors/README.md](obf-behaviors/README.md) 缺口 #15 v3 半边；
+  `doc/obf-behaviors.rst` 缺口 #15 v3 半边；
   v2 专面判据仍缺、如实挂账）。**simple 面不挂 Era**：判据全部结构自证
   （key 静态在场 + 产物与 indy desc 互证），误判需要「随机密文恰好解出与
   indy desc 吻合的合法方法描述符」，概率上排除——两代 simple 形逐字同源，

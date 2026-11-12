@@ -163,8 +163,11 @@ residual=41 与 `failed=41` 同源（processor 相邻面遗留，见语料账本
 - SSA exp 变体（LookupSwitch + per-case stub + passArgs 编组）不同构，
   挂账缺口 #4 余量；v2 Controlflow junk 分支面无 state 槽摊平，不在
   家族内。
-- DispatcherRestore 的 boar 头锚缺席是 junk 前缀面（见语料账本），本
-  pass 不动 junk（保留形桥的 junk 前缀必须保持执行）；junk 摘除属
-  NumberFold/未来 junk 面批次。
+- DispatcherRestore 的 boar 头锚缺席**非 junk 前缀面**——归因见上方
+  语料账本「DispatcherRestore 联动（boar）」条的二轮修正：desc 形候选
+  与 `__grt$indy$` indy 蹬床 / NumberBasicEncrypt 数值走廊方法碰撞
+  （anti-候选），jar 内 `[iload N; tableswitch]` 头形 = 0；剩余瓶颈是
+  native action 键墙。本 pass 不动 junk（保留形桥的 junk 前缀必须保持
+  执行）；junk 摘除属 NumberFold/未来 junk 面批次。
 - 分发器原生头（`default 回跳方法头`）整体不在岛家族：alias face 缺席
   拒绝即天然反误伤面，无需另设方法名判据。
