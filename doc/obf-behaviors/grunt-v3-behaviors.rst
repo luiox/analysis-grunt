@@ -9,7 +9,7 @@ Grunt v3（Grunteon）obf 行为核心描述
 
    jasm 样例为按行为描述自写的完整可汇编样例，全部经 mjt-py SDK ``class_validate_jasm``\ （libjhasm 汇编 + 校验门）逐类验证，口径与 v2 文档 §0.3 相同；判据锚点以行内注释标注，样例中的类名/方法名/密文与常量数值只作形状示意，不是判据。
 
-   与 morpher 仓 ``mjt-deobf/doc_ai/obf-forms/grunt-obfuscation-forms.md`` 的分工：那边是\ **跨家族形态库**\ （artifact 侧形态判据与还原链序），本文是\ **本工具行为账**\ （v3 逐 transformer 行为 + 配置面 + 本仓 residue 现状 + 闭环缺口），同面判据以那边为准、不重复定义。
+   与 morpher 仓 ``mjt-deobf/doc_ai/obf-forms/grunt-obfuscation-forms.md`` 的分工：那边是\ **跨家族形态库**\ （artifact 侧形态判据与还原链序），本文是\ **本工具行为账**\ （v3 逐 transformer 行为 + 配置面 + 本仓 residue 现状 + 遗留缺口），同面判据以那边为准、不重复定义。
 
    排版：正文一句话/一段落一整行，不做 80 列硬断；代码块与表格内自然换行。
 
@@ -22,7 +22,7 @@ Grunt v3（Grunteon）obf 行为核心描述
 
 v3 是 Kotlin 重写的管线：\ ``Grunteon`` 持 ``transformers: List<Pair<Transformer<*>, TransformerConfig>>``，\ ``PipelineBuilder`` 用指令式 DSL（``Seq`` / ``Pre`` / ``Post`` / ``SeqForEach`` / ``ParForEach`` + ``ScopeValue`` 全局/局部作用域状态）把各 transformer 的 ``buildStageImpl`` 编成执行计划，按 ``ExecutionStage`` 三段跑：\ ``JvmObfuscation`` → ``NativeObfuscation``\ （NativePipeline，见 §5）→ ``FinalOutput``\ （JarDumper + 可选 mapping dump）。Transformer 基类带 ``Category`` 排序约束（如 Optimization 先于 Encryption/Controlflow/AntiDebug/Redirect/Renaming，由 ``before(...)`` 声明）、\ ``@Stability`` 稳定级、\ ``@CreditMultiplier`` 计费乘数与 ``@HiddenTransformer`` 隐藏标记；配置是 ``TransformerConfig`` data class + ``@SettingName``/``@SettingDesc``/区间注解（JSON 序列化），类级过滤统一走 ``ClassFilterConfig``。
 
-四个 ``@HiddenTransformer``：\ ``ControlflowFlatteningSSA``\ （exp/，SSA 摊平实验面）、\ ``FlowIRRoundTrip`` / ``SSARoundTrip``\ （roundtrip/，IR 往返 infra transformer）、\ ``ArithmeticSubstitute``\ （encrypt/，v2 ArithmeticEncrypt 同构，标 deprecated 沿用）。\ **Era 现状**：与 v2 文档 §0.1 同口径——本仓 ``probeEra`` 现有 Kasumi 可靠判据与 Grunt3 半边可靠判据（Grunt BSM desc 指纹 ∧ 类级 ``@Metadata`` 注解或 ``grunteon`` 命名空间，双半边钉版本——缺口 #15 v3 半边已闭环），Grunt2 半边仍缺（``U+200E`` 尾缀两代同源、调用点模板无稳定差异），v3 行为判据一律按 S1/S2 通用语义事实写、heavy 互证面挂 ``Era::Grunt3`` 门。（随迁移对账更新：原「Grunt3 无可靠判据、一律不挂 Era 门」的表述滞后——era.hpp 已落 Grunt3 双指纹半边，heavy 面按该门回填，见 §3.3。）
+四个 ``@HiddenTransformer``：\ ``ControlflowFlatteningSSA``\ （exp/，SSA 摊平实验面）、\ ``FlowIRRoundTrip`` / ``SSARoundTrip``\ （roundtrip/，IR 往返 infra transformer）、\ ``ArithmeticSubstitute``\ （encrypt/，v2 ArithmeticEncrypt 同构，标 deprecated 沿用）。\ **Era 现状**：与 v2 文档 §0.1 同口径——本仓 ``probeEra`` 现有 Kasumi 可靠判据与 Grunt3 半边可靠判据（Grunt BSM desc 指纹 ∧ 类级 ``@Metadata`` 注解或 ``grunteon`` 命名空间，双半边钉版本——缺口 #15 v3 半边已处理完），Grunt2 半边仍缺（``U+200E`` 尾缀两代同源、调用点模板无稳定差异），v3 行为判据一律按 S1/S2 通用语义事实写、heavy 互证面挂 ``Era::Grunt3`` 门。（随迁移对账更新：原「Grunt3 无可靠判据、一律不挂 Era 门」的表述滞后——era.hpp 已落 Grunt3 双指纹半边，heavy 面按该门回填，见 §3.3。）
 
 **v3 新面（相对 v2）**：一是 IR 化——\ ``grunt-ir`` 提供 Flow IR（``flow/``：FlowBytecode/FlowFrame/FlowGraph/JvmFlowExporter/JvmFlowImporter/FlowVerifier）与 SSA IR（``ssa/``：SSAFunction/SSARegion/SSAValue/JvmSSAExporter/JvmSSAImporter），控制流摊平在 IR 上做再导回字节码；二是 hierarchy 面——\ ``ClassHierarchy``/``FieldHierarchy``/``MethodHierarchy`` + ``ClassHierarchyFlowTypeHierarchy`` 供 CFF 的 ``FlowAnalyzer=Hierarchy`` 模式做帧重建的精确类型判定；三是 native 化管线——独立执行阶段把方法体编译进 C++ 库（§5）；四是插件体系——\ ``PluginManager``/``GruntPlugin``，grunt-glsl 即插件形态的 GLSL shader 混淆（§8）。\ ``grunt-index``\ （类索引库）/ ``grunt-backend``\ （作业调度 Web 服务）/ ``grunt-bootstrap``\ （LaunchClassLoader 运行壳）是基础设施模块，不产 obf 形态，登记不展开。
 
@@ -96,7 +96,7 @@ v3 是 Kotlin 重写的管线：\ ``Grunteon`` 持 ``transformers: List<Pair<Tra
      - StringArrayedEncrypt
      - ``String[]`` 池加密（carray 密文直存）
      - S1
-     - 已处理（StringPoolFold arrayed 形折叠，缺口 #1 闭环。随迁移对账更新）
+     - 已处理（StringPoolFold 折叠 arrayed 形，对应缺口 #1。随迁移对账更新）
    * - 10
      - Encryption
      - ArithmeticSubstitute（Hidden）
@@ -108,7 +108,7 @@ v3 是 Kotlin 重写的管线：\ ``Grunteon`` 持 ``transformers: List<Pair<Tra
      - ControlflowJump
      - junk 分支/mangled IF/opaque predicate 门/异常桥
      - S1/S2
-     - 部分（异常桥 + processor 门已闭环：ExcBridgeRestore / GateProcessorFold。随迁移对账更新）
+     - 部分（异常桥 + processor 门已处理完：ExcBridgeRestore / GateProcessorFold。随迁移对账更新）
    * - 12
      - Controlflow
      - ControlflowFlattening
@@ -228,7 +228,7 @@ v3 是 Kotlin 重写的管线：\ ``Grunteon`` 持 ``transformers: List<Pair<Tra
      - RuntimeMaterial
      - 分布式材料扰动（shareA/shareB/canonicalKey/poison）
      - S2
-     - 部分（MaterialKeyRestore：材料通道 key 静态折回，缺口 #15 联动面闭环——indy_restore ``materialLane`` 桶随之消化；反调试扰动路径/材料字段不摘，还原口径 = 清洁运行环境语义；native materialKey 余量挂账）
+     - 部分（MaterialKeyRestore：材料通道 key 静态折回，缺口 #15 联动面已处理完——indy_restore ``materialLane`` 桶随之消化；反调试扰动路径/材料字段不摘，还原口径 = 清洁运行环境语义；native materialKey 余量挂账）
    * - 32
      - AntiDebug
      - AntiLLM
@@ -240,7 +240,7 @@ v3 是 Kotlin 重写的管线：\ ``Grunteon`` 持 ``transformers: List<Pair<Tra
      - ReferenceObfuscate
      - 调用点 indy 化 simple/heavy + ``@Metadata`` 注解
      - S1
-     - 部分——IndyRestore（缺口 #2 闭环：simple 直接解密回填 + heavy ``@Metadata`` 互证回填，\ ``Era::Grunt3`` 门；RuntimeMaterial 联动的材料通道曾静态不可解 fail-closed，现由 MaterialKeyRestore 折回 key 后第二轮本 pass 消化）+ IndyFold（S3 兜底）
+     - 部分——IndyRestore（缺口 #2 已处理完：simple 直接解密回填 + heavy ``@Metadata`` 互证回填，\ ``Era::Grunt3`` 门；RuntimeMaterial 联动的材料通道曾静态不可解 fail-closed，现由 MaterialKeyRestore 折回 key 后第二轮本 pass 消化）+ IndyFold 作模拟执行备用还原
    * - 34
      - Other
      - FakeSyntheticBridge
@@ -326,7 +326,7 @@ v3 共 11 个样例文件（v3-01 ~ v3-10，其中 native 面两个类拆 v3-09/
 
 **判据分级**：S1——与 v2 StringEncrypt 同级：池读三元组（``GETSTATIC`` String[] + 常量下标 + ``AALOAD``\）编译期可建映射，读取点换 ``ldc`` 明文是语义恒等；carray 形态下密文在 ``arrayInit`` 的 ``CASTORE`` 序列里，仍全为装载期常量。
 
-**本仓现状**：已处理——\ ``grunt.StringPoolFold`` 的 arrayed 面（缺口 #1 闭环）：按常量 KIND 判形（``carray`` 是配置不是版本键），\ ``NEWARRAY T_CHAR`` 直存码元解密折回（见 ``doc/string-pool-fold.md``\）。indy 藏面依赖上游 indy 还原（缺口 #2）接通。morpher obf-forms §3.1 的池读三元组判据两代共用。余量通道：\ ``Native candidate=true`` 时解密器（含 ``arrayInit`` / concat wrapper）被摘成 native 无体，该类整站 fail-closed——native 无体静态不可解，与 §6.1 native materialKey / §2.2 native action 键同族天花板桶。
+**本仓现状**：已处理——\ ``grunt.StringPoolFold`` 的 arrayed 面（缺口 #1 已处理完）：按常量 KIND 判形（``carray`` 是配置不是版本键），\ ``NEWARRAY T_CHAR`` 直存码元解密折回（见 ``doc/string-pool-fold.md``\）。indy 藏面依赖上游 indy 还原（缺口 #2）接通。morpher obf-forms §3.1 的池读三元组判据两代共用。余量通道：\ ``Native candidate=true`` 时解密器（含 ``arrayInit`` / concat wrapper）被摘成 native 无体，该类整站 fail-closed——native 无体静态不可解，与 §6.1 native materialKey / §2.2 native action 键同族天花板桶。
 
 **样例**\ （carray 形态；本样例走 ``validation=off`` 通道，误报记录见 v2 文档 §0.3）：
 
@@ -483,7 +483,7 @@ v2 ``ArithmeticEncrypt`` 的 v3 同构（``encrypt/ArithmeticSubstitute.kt``，�
 
 **判据分级**：S1（门操作数全为紧邻常量/processor 体常量封闭、静态可裁决的子集）/ S2（垃圾块、异常桥的结构事实）。
 
-**本仓现状**：部分。TrampolineSqueeze 吃蹦床 ``goto``；PredicateFold 吃常量可裁决的分支/switch 门；NumberFold 解锁藏形实参区；DeadCode 清不可达垃圾块；异常桥面（合成 try + ``POP; GOTO handler``\）由 ``grunt.ExcBridgeRestore`` 还原（缺口 #10 面 b 闭环，罐 A 13566 站还原 13442 residual=0）；\ ``IF_ICMPxx`` 门落在 processor 方法调用上的形态（操作数不是紧邻常量而是 ``INVOKESTATIC`` 返回值）由 ``grunt.GateProcessorFold`` 折叠（缺口 #10 面 a 闭环——罐 A 单跑 7643/7643、组合链 4282/4282 residual=0，判据与算法见 :ref:`gate-processor-fold-spec`）。\ **余量**：material 类门点蹬床求值不可解（缺口 #15 联动面）、TLR 运行期随机面永久排除、上游 ConstantCall 专用求值面刻意不装包 fail-closed。（随迁移对账更新：processor 门与异常桥原记「PredicateFold 不吃 / 无还原面」，两缺口 #10 已分别由 GateProcessorFold / ExcBridgeRestore 闭环；实测数字与余量口径见 :ref:`obf-behaviors` 缺口清单与 :ref:`corpus-ledger`。）
+**本仓现状**：部分。TrampolineSqueeze 吃蹦床 ``goto``；PredicateFold 吃常量可裁决的分支/switch 门；NumberFold 解锁藏形实参区；DeadCode 清不可达垃圾块；异常桥面（合成 try + ``POP; GOTO handler``\）由 ``grunt.ExcBridgeRestore`` 还原（缺口 #10 面 b 已处理完，罐 A 13566 站还原 13442 residual=0）；\ ``IF_ICMPxx`` 门落在 processor 方法调用上的形态（操作数不是紧邻常量而是 ``INVOKESTATIC`` 返回值）由 ``grunt.GateProcessorFold`` 折叠（缺口 #10 面 a 已处理完——罐 A 单跑 7643/7643、组合链 4282/4282 residual=0，判据与算法见 :ref:`gate-processor-fold-spec`）。\ **余量**：material 类门点蹬床求值不可解（缺口 #15 联动面）、TLR 运行期随机面永久排除、上游 ConstantCall 专用求值面刻意不装包 fail-closed。（随迁移对账更新：processor 门与异常桥原记「PredicateFold 不吃 / 无还原面」，两缺口 #10 已分别由 GateProcessorFold / ExcBridgeRestore 处理完；实测数字与余量口径见 :ref:`obf-behaviors` 缺口清单与 :ref:`corpus-ledger`。）
 
 **样例**\ （processor 门 + 异常桥两形并列）：
 
@@ -551,7 +551,7 @@ v2 ``ArithmeticEncrypt`` 的 v3 同构（``encrypt/ArithmeticSubstitute.kt``，�
 
 **判据分级**：S1（dispatcher 键表与 state 传播在块序已知时编译期可重建——单 dispatcher 岛可反摊平）/ S2（多岛、key processor 藏形、fake/junk case 识别是结构事实）。
 
-**本仓现状**：\ ``grunt.CffUnflatten`` 承载（缺口 #4 主面闭环，见 ``doc/cff-unflatten.md`` / ``cff-unflatten.impl.md``\）。dispatcher 岛识别 + 单岛反摊平（桥 span 常量闭链静态求值回查键表 → 前驱 goto 直连真实块，出表键剪到 default——直连 default 与原「经岛分发落 default」逐位等价）+ **alias-face 剪枝**\ （default 落岛首真块，入口键 case 同址）+ 入口块归位（异常保护区/junk 前缀退蹦床）+ handler 桥重绑；位置边单独守卫（usersOf 只看字段引用，条件载体紧邻岛头补 GOTO 钉落空臂）。boar 全链罐 9880 岛还原 1481（类 653）；processor 键藏形（``__grt$indy$`` proc 体）经解锁链落地批消化 80 座（ConstantCall 同类豁免 + Math.max 接管，6201→6121）——剩余 6121 为静态天花板（boar ``keyProcessorNativeCandidateRatio=1.0``，proc 恢复目标 100% native 无体，算术不在 jar 里）——缺口 #4 余量 = native action 键（须 native 库）+ SSA exp 变体。morpher obf-forms §3.7 已给 dispatcher 岛形态判据。
+**本仓现状**：\ ``grunt.CffUnflatten`` 承载（缺口 #4 主面已处理完，见 ``doc/cff-unflatten.md`` / ``cff-unflatten.impl.md``\）。dispatcher 岛识别 + 单岛反摊平（桥 span 常量闭链静态求值回查键表 → 前驱 goto 直连真实块，出表键剪到 default——直连 default 与原「经岛分发落 default」逐位等价）+ **alias-face 剪枝**\ （default 落岛首真块，入口键 case 同址）+ 入口块归位（异常保护区/junk 前缀退蹦床）+ handler 桥重绑；位置边单独守卫（usersOf 只看字段引用，条件载体紧邻岛头补 GOTO 钉落空臂）。boar 全链罐 9880 岛还原 1481（类 653）；processor 键藏形（``__grt$indy$`` proc 体）经解锁链实现批消化 80 座（ConstantCall 同类豁免 + Math.max 接管，6201→6121）——剩余 6121 为静态天花板（boar ``keyProcessorNativeCandidateRatio=1.0``，proc 恢复目标 100% native 无体，算术不在 jar 里）——缺口 #4 余量 = native action 键（须 native 库）+ SSA exp 变体。morpher obf-forms §3.7 已给 dispatcher 岛形态判据。
 
 **样例**\ （单 dispatcher 岛 + fake case + alias face；boar-main.jar ``AD.a`` 实证同构）：
 
@@ -625,7 +625,7 @@ v2 ``ArithmeticEncrypt`` 的 v3 同构（``encrypt/ArithmeticSubstitute.kt``，�
 
 **判据分级**：S2——分发器表 + 连续键 + default 回跳头 + case 转发关系全是结构事实，可静态重建 key → case → 真目标映射。
 
-**本仓现状**：\ ``grunt.DispatcherRestore`` 承载（缺口 #3 闭环，见 ``doc/dispatcher-restore.md``\）。头锚（ILOAD key 槽 + TABLESWITCH default 回跳方法头 + 无异常表）钉分发器、逐 case 直线转发体（载实参 + 唯一 invoke + ret 型 return）重建键 → 目标表、调用点 key 常量反查回填真实 invoke——调用指令原地换（srcPc 保留）、末段补位/key ``eraseBatch`` 擦除（null 跑 ∈ [addNulls, N] 互证，原实参尾部 null 字面量保留）；分发器本体与键表不删，交 DeadCode/DeadMember 回收。纯常量键表直查，不需要 jsim；v2 无此 transformer，无 Era 门。正例罐（Grunteon 仅 InvokeDispatcher 自产）1181 站点回填 1081，residual=49 为宿主方法 Strict 帧重算既有冲突（无编辑探针复现）fail-closed；boar 全链罐不覆盖（config 顺序 InvokeDispatcher 先于 CFF/ReferenceObfuscate，5827 desc 形候选全数头锚缺席），组合链 ``IndyRestore,DispatcherRestore`` corpus-regress 绿 + JVM verify 零新增。
+**本仓现状**：\ ``grunt.DispatcherRestore`` 承载（缺口 #3 已处理完，见 ``doc/dispatcher-restore.md``\）。头锚（ILOAD key 槽 + TABLESWITCH default 回跳方法头 + 无异常表）钉分发器、逐 case 直线转发体（载实参 + 唯一 invoke + ret 型 return）重建键 → 目标表、调用点 key 常量反查回填真实 invoke——调用指令原地换（srcPc 保留）、末段补位/key ``eraseBatch`` 擦除（null 跑 ∈ [addNulls, N] 互证，原实参尾部 null 字面量保留）；分发器本体与键表不删，交 DeadCode/DeadMember 回收。纯常量键表直查，不需要 jsim；v2 无此 transformer，无 Era 门。正例罐（Grunteon 仅 InvokeDispatcher 自产）1181 站点回填 1081，residual=49 为宿主方法 Strict 帧重算既有冲突（无编辑探针复现）fail-closed；boar 全链罐不覆盖（config 顺序 InvokeDispatcher 先于 CFF/ReferenceObfuscate，5827 desc 形候选全数头锚缺席），组合链 ``IndyRestore,DispatcherRestore`` corpus-regress 绿 + JVM verify 零新增。
 
 **样例**：
 
@@ -690,7 +690,7 @@ v3 的方法/字段代理与 v2 MethodScramble/FieldScramble 同构（``Chance``
 
 **判据分级**：S1——BSM 参数结构与 ``@Metadata`` 互证（``data1 % 59557 == magic2``\）是语义后果：混淆器要保链接就必须让解密产物与调用点吻合；还原判据按 BSM 参数结构 + 注解值直接解密（key/magic 全部静态在场）。
 
-**本仓现状**：\ ``grunt.IndyRestore`` 承载（缺口 #2 闭环，见 ``doc/indy-restore.md``\）。simple 形三段串按 ``encrypt`` 自逆 XOR 纯算术直解 + 三路键链（同名解密器 / BSM 体跟随 / 名字族推导，第三路覆盖 NativePipeline 把 BSM 摘成 native 空壳的死现场）回填真实 invoke；heavy 形 generalKey 取 BSM 体窗口 + owner 类 ``@Metadata``\ （mv≥100 门）d1/d2 数组 ``data1 % 59557 == magic2`` 自证回填，挂 ``Era::Grunt3`` 门（era.hpp Grunt3 双指纹：Grunt BSM desc ∧ 类级 ``@Metadata`` 注解或 ``grunteon`` 命名空间，缺口 #15 v3 半边随之闭环）。RuntimeMaterial 联动的材料通道（``decryptKey ^ materialKey()``，materialKey 运行期值静态不可解）fail-closed 挂 ``materialLane`` 桶——\ **缺口 #15 联动面已闭环**\ ：\ ``grunt.MaterialKeyRestore`` 把窗口折成 ``LDC <materialKey>``\ （清洁口径 key 静态求值）后，第二轮本 pass 按既有 Plain 通道消化（boar 专链 materialLane 42228 → 5060，余 5060 = native materialKey 类）。boar 语料（Grunteon 全链）实证：78154 指纹站点还原 30924（static 29847 + virtual 1077，failed=0），residual=47230（materialLane 42228 + keyMissing 5002）；组合链接通 ``grunt.StringPoolFold`` 0 → 19244 折叠。\ ``grunt.IndyFold``\ （S3）保留为兜底；Kasumi 的 ``IndyDecode``\ （8 参 BSM 指纹）与本行为互斥。
+**本仓现状**：\ ``grunt.IndyRestore`` 承载（缺口 #2 已处理完，见 ``doc/indy-restore.md``\）。simple 形三段串按 ``encrypt`` 自逆 XOR 纯算术直解 + 三路键链（同名解密器 / BSM 体跟随 / 名字族推导，第三路覆盖 NativePipeline 把 BSM 摘成 native 空壳的死现场）回填真实 invoke；heavy 形 generalKey 取 BSM 体窗口 + owner 类 ``@Metadata``\ （mv≥100 门）d1/d2 数组 ``data1 % 59557 == magic2`` 自证回填，挂 ``Era::Grunt3`` 门（era.hpp Grunt3 双指纹：Grunt BSM desc ∧ 类级 ``@Metadata`` 注解或 ``grunteon`` 命名空间，缺口 #15 v3 半边随之处理完）。RuntimeMaterial 联动的材料通道（``decryptKey ^ materialKey()``，materialKey 运行期值静态不可解）fail-closed 挂 ``materialLane`` 桶——\ **缺口 #15 联动面已处理完**\ ：\ ``grunt.MaterialKeyRestore`` 把窗口折成 ``LDC <materialKey>``\ （清洁口径 key 静态求值）后，第二轮本 pass 按既有 Plain 通道消化（boar 专链 materialLane 42228 → 5060，余 5060 = native materialKey 类）。boar 语料（Grunteon 全链）实证：78154 指纹站点还原 30924（static 29847 + virtual 1077，failed=0），residual=47230（materialLane 42228 + keyMissing 5002）；组合链接通 ``grunt.StringPoolFold`` 0 → 19244 折叠。\ ``grunt.IndyFold``\ （模拟执行）作为备用还原手段；Kasumi 的 ``IndyDecode``\ （8 参 BSM 指纹）与本行为互斥。
 
 **样例**\ （simple/heavy 站点 + 双 BSM 骨架 + ``@Metadata`` 注解）：
 
@@ -810,7 +810,7 @@ v2 DeclareFields 的 v3 对应物，差异一点：v3 只处理 \ **static**\ �
 4.3 TrashClassGenerator：provider 化垃圾类生成
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProviderRegistry``，\ ``Provider`` + ``ProviderOptions`` 可插拔）：\ ``ClassCount=32``，\ ``Packages``\ （``MirrorInputPackages`` 可镜像输入包名）、\ ``ClassPrefix=Trash``、\ ``MemberPrefix=t``、字典可选；每类随机 ``Min/MaxFields(1~4)``、\ ``Min/MaxMethods(2~6)``、\ ``Min/MaxMethodSteps(2~8)``、\ ``StringMethodChance=0.25`` 混入字符串方法、\ ``GeneratedMarkers=true`` 带生成标记。判据 S2（零引用 + provider 形状），本仓无处理——垃圾类删除面（引用普查兜底）是缺口清单 P3，与 v2 垃圾类两式同一缺口。
+v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProviderRegistry``，\ ``Provider`` + ``ProviderOptions`` 可插拔）：\ ``ClassCount=32``，\ ``Packages``\ （``MirrorInputPackages`` 可镜像输入包名）、\ ``ClassPrefix=Trash``、\ ``MemberPrefix=t``、字典可选；每类随机 ``Min/MaxFields(1~4)``、\ ``Min/MaxMethods(2~6)``、\ ``Min/MaxMethodSteps(2~8)``、\ ``StringMethodChance=0.25`` 混入字符串方法、\ ``GeneratedMarkers=true`` 带生成标记。判据 S2（零引用 + provider 形状），本仓无处理——垃圾类删除面（引用普查确认）是缺口清单 P3，与 v2 垃圾类两式同一缺口。
 
 .. _grunt-v3-misc-batch:
 
@@ -969,7 +969,7 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProvide
 6.1 RuntimeMaterial：分布式材料扰动
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**做什么**\ 。给类注入运行时完整性材料：per-class 四个静态字段（源注释口径：\ ``shareA``/``shareB``\ （long) + ``canonicalKey``\ （long) + ``poison``\ （int)），\ ``<clinit>`` 注入类级扰动（``Clinit=true``\）、\ ``<init>`` 注入实例路径扰动（``Constructors=true``，\ ``ConstructorLimit=8``\）。clean 扰动让 ``shareA += delta; shareB -= delta``\ （原始和在等价类内滑动，canonical 不变）；可疑扰动（``DetectSources``/``DetectTokens`` 检测调试器/篡改）置 sticky poison 并扰动 canonicalKey；canonical 操作符为 ``CANONICAL_SHARE_SUM_STICKY_POISON``\ （canonicalKey = shareA + shareB 与 poison 的组合）。\ ``DraftMaterialMetadata=true`` 给 ReferenceObfuscate 输出材料草稿（canonicalKey + poison 作 heavy BSM 的 KDF 输入——两 transformer 联动）。\ ``Native candidate=false``\ （\ ``830295b``\ ）开启后给生成的 guard 方法挂 ``NATIVE_INCLUDED`` 进 native 管线；默认 false 不改变默认产物形状。判据 S2（材料字段组 + clinit/init 扰动形状）。\ **本仓现状**：\ ``grunt.MaterialKeyRestore`` 承载（缺口 #15 联动面闭环，见 ``doc/material-key-restore.md``\）——材料通道解密器窗口的 ``INVOKESTATIC materialKey()I`` 按「清洁运行环境语义」静态折回 ``LDC``\ （key = ``fold(keyField 初值) ^ poison 初值``，初值链在上游供给链 ``IndyRestore`` + ``StringPoolFold`` 跑完后全静态、固定 JVM 语义 C++ 直解），indy_restore 第二轮按既有 Plain 通道消化 materialLane 桶；判据 S2 结构（窗口形 + materialKey() 体 9 条逐字 + 写者普查 + 守卫指纹）→ S1 互证（路由 indy 站点按候选 key 解密 + desc 互证），fail-closed 逐桶记账（初值链断/多写/外写/守卫缺席/native materialKey）；反调试扰动路径与材料字段本体不摘（缺口清单 P3 检测/摘除面仍在）。余量通道：\ ``Native candidate=true`` 时 guard 方法被摘成 native 无体——守卫指纹缺席即该类整站 fail-closed，与既有「native materialKey」余量桶（ReferenceObfuscate ``GeneratedHelperNativeCandidate`` 摘 materialKey 体）同族天花板。boar 语料：656 材料类折回 586（70 native materialKey 余量），组合链 materialLane 42228 → 5060。
+**做什么**\ 。给类注入运行时完整性材料：per-class 四个静态字段（源注释口径：\ ``shareA``/``shareB``\ （long) + ``canonicalKey``\ （long) + ``poison``\ （int)），\ ``<clinit>`` 注入类级扰动（``Clinit=true``\）、\ ``<init>`` 注入实例路径扰动（``Constructors=true``，\ ``ConstructorLimit=8``\）。clean 扰动让 ``shareA += delta; shareB -= delta``\ （原始和在等价类内滑动，canonical 不变）；可疑扰动（``DetectSources``/``DetectTokens`` 检测调试器/篡改）置 sticky poison 并扰动 canonicalKey；canonical 操作符为 ``CANONICAL_SHARE_SUM_STICKY_POISON``\ （canonicalKey = shareA + shareB 与 poison 的组合）。\ ``DraftMaterialMetadata=true`` 给 ReferenceObfuscate 输出材料草稿（canonicalKey + poison 作 heavy BSM 的 KDF 输入——两 transformer 联动）。\ ``Native candidate=false``\ （\ ``830295b``\ ）开启后给生成的 guard 方法挂 ``NATIVE_INCLUDED`` 进 native 管线；默认 false 不改变默认产物形状。判据 S2（材料字段组 + clinit/init 扰动形状）。\ **本仓现状**：\ ``grunt.MaterialKeyRestore`` 承载（缺口 #15 联动面已处理完，见 ``doc/material-key-restore.md``\）——材料通道解密器窗口的 ``INVOKESTATIC materialKey()I`` 按「清洁运行环境语义」静态折回 ``LDC``\ （key = ``fold(keyField 初值) ^ poison 初值``，初值链在上游供给链 ``IndyRestore`` + ``StringPoolFold`` 跑完后全静态、固定 JVM 语义 C++ 直解），indy_restore 第二轮按既有 Plain 通道消化 materialLane 桶；判据 S2 结构（窗口形 + materialKey() 体 9 条逐字 + 写者普查 + 守卫指纹）→ S1 互证（路由 indy 站点按候选 key 解密 + desc 互证），fail-closed 逐桶记账（初值链断/多写/外写/守卫缺席/native materialKey）；反调试扰动路径与材料字段本体不摘（缺口清单 P3 检测/摘除面仍在）。余量通道：\ ``Native candidate=true`` 时 guard 方法被摘成 native 无体——守卫指纹缺席即该类整站 fail-closed，与既有「native materialKey」余量桶（ReferenceObfuscate ``GeneratedHelperNativeCandidate`` 摘 materialKey 体）同族天花板。boar 语料：656 材料类折回 586（70 native materialKey 余量），组合链 materialLane 42228 → 5060。
 
 **样例**\ （字段以 int 简化示意；真实字段形为 long shareA/shareB + canonicalKey + int poison）：
 
@@ -1067,11 +1067,11 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProvide
            InvokeDispatcher→DispatcherRestore（缺口 #3）、
            ControlflowFlattening→CffUnflatten（缺口 #4 主面；processor 键 + SSA 余量挂账）
    部分  ：ControlflowJump→TrampolineSqueeze/PredicateFold/NumberFold/DeadCode
-           + ExcBridgeRestore/GateProcessorFold（processor 门与异常桥已闭环——
+           + ExcBridgeRestore/GateProcessorFold（processor 门与异常桥已处理完——
            缺口 #10 面 a/b；余量：material 蹬床/TLR）
-           ReferenceObfuscate→IndyRestore（缺口 #2 闭环；材料通道经 MaterialKeyRestore
-           第二轮消化，余 native materialKey）+ IndyFold（S3 兜底）
-           RuntimeMaterial→MaterialKeyRestore（缺口 #15 联动面闭环；扰动摘除面挂 P3，
+           ReferenceObfuscate→IndyRestore（缺口 #2 已处理完；材料通道经 MaterialKeyRestore
+           第二轮消化，余 native materialKey）+ IndyFold 作模拟执行备用还原
+           RuntimeMaterial→MaterialKeyRestore（缺口 #15 联动面已处理完；扰动摘除面挂 P3，
            native materialKey 余量）
    无处理：ControlflowFlatteningSSA（缺口 #4 余量）、ArithmeticSubstitute、StringEqualsOptimize、
            ParameterObfuscate、TrashClassGenerator、AntiLLM、Watermark、
@@ -1083,4 +1083,4 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProvide
    资源面：GlslObfuscator（GLSL，非字节码）
    登记面：corruptCRC32 / corruptHeaders（GlobalConfig 产物面反分析开关，读取侧容错，见 §4.5）
 
-（随迁移对账更新：ControlflowJump 行两缺口 #10 已闭环——ExcBridgeRestore / GateProcessorFold；ReferenceObfuscate 行材料通道随缺口 #15 联动面闭环消化，原「materialLane/keyMissing fail-closed」口径随总表收窄。）
+（随迁移对账更新：ControlflowJump 行两缺口 #10 已处理完——ExcBridgeRestore / GateProcessorFold；ReferenceObfuscate 行材料通道随缺口 #15 联动面已处理完消化，原「materialLane/keyMissing fail-closed」口径随总表收窄。）

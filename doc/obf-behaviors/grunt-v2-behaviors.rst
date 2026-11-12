@@ -9,7 +9,7 @@ Grunt v2（Gruntpocalypse 2.x）obf 行为核心描述
 
    jasm 样例为按行为描述自写的完整可汇编样例，全部经 mjt-py SDK ``class_validate_jasm``\ （libjhasm 汇编 + 校验门）逐类验证；判据锚点以行内注释标注，样例中的类名/方法名/密文与常量数值只作形状示意，不是判据。已知校验器边界如实注明（§0.3）。
 
-   与 morpher 仓 ``mjt-deobf/doc_ai/obf-forms/grunt-obfuscation-forms.md`` 的分工：那边是\ **跨家族形态库**\ （artifact 侧形态判据与还原链序），本文是\ **本工具行为账**\ （v2 逐 transformer 行为 + 配置面 + 本仓 residue 现状 + 闭环缺口），同面判据以那边为准、不重复定义。
+   与 morpher 仓 ``mjt-deobf/doc_ai/obf-forms/grunt-obfuscation-forms.md`` 的分工：那边是\ **跨家族形态库**\ （artifact 侧形态判据与还原链序），本文是\ **本工具行为账**\ （v2 逐 transformer 行为 + 配置面 + 本仓 residue 现状 + 遗留缺口），同面判据以那边为准、不重复定义。
 
    排版：正文一句话/一段落一整行，不做 80 列硬断；代码块与表格内自然换行。
 
@@ -24,14 +24,14 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 配置体系是 ``Configs.kt`` 的 ``setting(...)`` 声明（GUI / JSON 双面），每个 transformer 自带 ``Exclusion``。全局开关有 parallel、dictionaryStartIndex 等。排除注解四个：\ ``@DisableControlflow`` / ``@DisableInvokeDynamic`` / ``@DisableScramble`` / junk-call 排除注解，PostProcess 收尾统一摘除。
 
-**Era 现状（重要）**\ ：本仓 ``src/grunt/knowledge/era.hpp`` 的 ``probeEra`` 现有 Kasumi 可靠判据（命名空间 / 8 参 BSM 指纹 / ``@Metadata`` 注解三选一）与 Grunt3 半边可靠判据（Grunt BSM desc 指纹 ∧ 类级 ``@Metadata`` 注解或 ``grunteon`` 命名空间，双半边钉版本——缺口 #15 v3 半边已闭环）；\ **Grunt2 无可靠判据**\ ——\ ``U+200E`` 尾缀两代都在（v2 ``ClassRenameTransformer::suffix`` 与 v3 ``FieldRenamer::suffix`` 同源），调用点模板与数字混淆形状两代间没有观测到稳定差异。v2 行为判据当前一律按 S1/S2 通用语义事实写、不挂 Era 门；等真正版本敏感的残留出现再补探测规则。（随迁移对账更新：原「\ ``probeEra`` 目前只有 Kasumi 有可靠判据」的表述滞后——era.hpp 已落 Grunt3 双指纹半边，Grunt2 半边仍缺。）
+**Era 现状（重要）**\ ：本仓 ``src/grunt/knowledge/era.hpp`` 的 ``probeEra`` 现有 Kasumi 可靠判据（命名空间 / 8 参 BSM 指纹 / ``@Metadata`` 注解三选一）与 Grunt3 半边可靠判据（Grunt BSM desc 指纹 ∧ 类级 ``@Metadata`` 注解或 ``grunteon`` 命名空间，双半边钉版本——缺口 #15 v3 半边已处理完）；\ **Grunt2 无可靠判据**\ ——\ ``U+200E`` 尾缀两代都在（v2 ``ClassRenameTransformer::suffix`` 与 v3 ``FieldRenamer::suffix`` 同源），调用点模板与数字混淆形状两代间没有观测到稳定差异。v2 行为判据当前一律按 S1/S2 通用语义事实写、不挂 Era 门；等真正版本敏感的残留出现再补探测规则。（随迁移对账更新：原「\ ``probeEra`` 目前只有 Kasumi 有可靠判据」的表述滞后——era.hpp 已落 Grunt3 双指纹半边，Grunt2 半边仍缺。）
 
 .. _grunt-v2-table:
 
 0.2 行为清单总表（35 个）
 --------------------------
 
-登记序号 = ``Transformers.kt`` 的 order。等级 = 还原侧判据分级（S1 语义后果 / S2 结构事实 / S3 预留面），清理面行为无还原判据不评级。现状列：\ **已处理** = 有 residue 消费其形态；\ **部分** = 形态的一个子集有面；\ **预留** = 判据按形态写好但语料无站点（S3）；\ **无处理** = 还原缺口（进闭环缺口清单）；\ **清理面** = 混淆器删信息/瘦身，无还原需求；\ **伴随面** = 服务于其他行为的中间动作；\ **检测-only** = 运行时面，静态只做识别与计数。
+登记序号 = ``Transformers.kt`` 的 order。等级 = 还原侧判据分级（S1 语义后果 / S2 结构事实 / S3 预留面），清理面行为无还原判据不评级。现状列：\ **已处理** = 有 residue 消费其形态；\ **部分** = 形态的一个子集有面；\ **预留** = 判据按形态写好但语料无站点（S3）；\ **无处理** = 还原缺口（进遗留缺口清单）；\ **清理面** = 混淆器删信息/瘦身，无还原需求；\ **伴随面** = 服务于其他行为的中间动作；\ **检测-only** = 运行时面，静态只做识别与计数。
 
 .. list-table::
    :header-rows: 1
@@ -96,12 +96,12 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
      - StringEncrypt
      - ``String[]`` 池 + 解密器 + 调用点池读
      - S1
-     - 已处理（StringPoolFold literal 形折叠，缺口 #1 闭环。随迁移对账更新）
+     - 已处理（StringPoolFold 折叠 literal 形，对应缺口 #1。随迁移对账更新）
    * - 12
      - NumberEncrypt
      - 常量藏进等价运算跨度（classic 三式 + 位形包装 + arrayed 池）
      - S1
-     - 部分（NumberFold 已覆盖全部六式，缺口 #8 闭环；arrayed 池形态未覆盖，挂缺口 #17）
+     - 部分（NumberFold 已覆盖全部六式，缺口 #8 已处理完；arrayed 池形态未覆盖，挂缺口 #17）
    * - 13
      - ArithmeticEncrypt
      - 算术指令换恒等替换序列
@@ -176,7 +176,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
      - InvokeDynamic
      - 调用点 indy 化（simple/heavy 双 BSM）
      - S1
-     - 部分——IndyRestore（simple 直接解密回填，缺口 #2 闭环；heavy 待 Era::Grunt2 判据按保守口径关闭）+ IndyFold（S3 兜底）
+     - 部分（simple 形已完整还原：indy 调用里加密的方法名能直接解出来换回原调用，对应缺口 #2；heavy 形暂不处理：还缺认出混淆器版本的条件，硬解有改错程序的风险；另有 IndyFold 靠模拟执行做备用还原）
    * - 28
      - ShuffleMembers
      - 打乱成员/注解/异常表顺序
@@ -229,7 +229,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **判据分级**：S1——\ ``owner.field[index] → 明文`` 映射编译期可建（seed/key/classKey 全是装载期常量、解密器纯函数、store 序列固定），读取点换 ``ldc`` 明文是语义恒等；换代表现在加密算法内部（判据不读算法细节，只读池结构 + 调用点三元组）。
 
-**本仓现状**：已处理——\ ``grunt.StringPoolFold``\ （缺口 #1 闭环）：池读三元组折回 ``ldc`` 明文，池链三件套结构自证 + 自逆 XOR 流静态复算（见 ``doc/string-pool-fold.md``\）。Grunteon 全链产物把 arrayInit 调用藏进 indy 蹦床，该形态依赖上游 indy 还原（缺口 #2）接通。池读三元组形状判据在 morpher obf-forms §3.1 已定案。
+**本仓现状**：已处理——\ ``grunt.StringPoolFold``\ （缺口 #1 已处理完）：池读三元组折回 ``ldc`` 明文，池链三件套结构自证 + 自逆 XOR 流静态复算（见 ``doc/string-pool-fold.md``\）。Grunteon 全链产物把 arrayInit 调用藏进 indy 蹦床，该形态依赖上游 indy 还原（缺口 #2）接通。池读三元组形状判据在 morpher obf-forms §3.1 已定案。
 
 **样例**\ （v2 literal 密文形态，\ ``toCharArray`` 进解密器，desc ``([CJI)Ljava/lang/String;``\）：
 
@@ -308,7 +308,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **判据分级**：S1——跨度纯常量封闭求值（base-32 严格解析、XOR 封闭、位形换算 JDK 语义确定），折回单条常量装载是精确逆。
 
-**本仓现状**：部分。\ ``NumberFold`` 覆盖长走廊、短走廊（``I2L..LXOR..L2I`` / ``L2I..IXOR``\）、基 32 long、位形包装、int/long 位拼两式（缺口 #8 闭环——罐 B 位拼面 354090 全折、旧四式站点数逐位不动）。\ **缺口**：arrayed 池形态挂缺口 #17（与 #1 共链：池在 ``<clinit>`` 由一次性解密方法整体填充、外层 key 经 classic 跨度加密，折面依赖 classic 跨度先折；开关默认 ``Arrayed=false``、罐 B 未启用，语料零暴露）。
+**本仓现状**：部分。\ ``NumberFold`` 覆盖长走廊、短走廊（``I2L..LXOR..L2I`` / ``L2I..IXOR``\）、基 32 long、位形包装、int/long 位拼两式（缺口 #8 已处理完——罐 B 位拼面 354090 全折、旧四式站点数逐位不动）。\ **缺口**：arrayed 池形态挂缺口 #17（池在 ``<clinit>`` 由一次性解密方法整体填充、外层 key 走 classic 跨度加密，还原要先把外层折掉；开关默认关闭，生成测试 jar 时也没开，现有语料里没有这个形态）。
 
 **样例**\ （五式合并呈现；常量按编码关系可逆，\ ``17202 ^ 16602 = 1000``、\ ``4649 & 10485803 = 41``\）：
 
@@ -343,7 +343,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
                ldc 4649                          // 位拼对 1/3：first = rnd&mask|v
                ldc 10485803                      // 2/3：second = rnd&~mask|v
                iand                              // 3/3：判据锚点：IAND 对 → = ldc 41
-                                                 //   （NumberFold 现词汇表不认 IAND——缺口）
+                                                 //   （IAND 位拼形，NumberFold 可折，缺口 #8 已处理完）
                ireturn
            }
        }
@@ -393,7 +393,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **判据分级**：S1——伴生类 clinit 的解密跨度可静态求值，\ ``GETSTATIC → 常量`` 回填语义恒等。
 
-**本仓现状**：部分。伴生类 clinit 里的加密跨度可被 NumberFold 折成常量写、字段可被 ConstValuePromote 回填 ``ConstantValue``\ （const_args 普查口径下伴生类是普通类）；\ **缺口**：调用点 ``GETSTATIC → ldc 明文`` 的回填 residue 未建（回填依赖解密链先行，缺口清单 P2，与缺口 #1 共链）。
+**本仓现状**：部分。伴生类 clinit 里的加密跨度可被 NumberFold 折成常量写、字段可被 ConstValuePromote 回填 ``ConstantValue``\ （const_args 普查口径下伴生类是普通类）；\ **缺口**：调用点 ``GETSTATIC → ldc 明文`` 的回填 residue 未建（回填依赖解密链先行，缺口清单 P2；前置与缺口 #1 相同）。
 
 **样例**\ （伴生类 + 调用点两类合并呈现）：
 
@@ -562,7 +562,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **判据分级**：S1（比较门的操作数全为紧邻常量/局部常量链、可静态裁决的子集）/ S2（junk 调用与陷进环的识别是结构事实）。
 
-**本仓现状**：部分。TrampolineSqueeze 吃蹦床 ``goto``；PredicateFold 吃常量可裁决的分支/switch（含被假跳转/摘除步产出的常量门——操作数区有标签即放弃）；NumberFold 解锁被藏形跨度夹住的实参区；DeadCode 清不可达垃圾；SeedStrip 吃 ``int[]`` 种子建表跨度。跳转变异（第 2 步 MutateJumps）的 ``obfuscateBasic`` 常量对：IAND 位拼形随 NumberFold 位拼（缺口 #8）折掉；IADD/ISUB/IXOR 直线形不在 NumberFold 词汇表，属恒等简化面（缺口 #7）——形内常量对被折后其 TABLESWITCH 键窗即成常量可裁决形，由 PredicateFold 吃。\ **缺口**：junk 调用残留（垃圾调用点本身不是常量可裁决形态）、陷进环与 ChaosSwitch 双 switch 环挂缺口 #16、ArithmeticExpr 表达式（同 1.3 缺口，挂缺口 #7）。
+**本仓现状**：部分。TrampolineSqueeze 吃蹦床 ``goto``；PredicateFold 吃常量可裁决的分支/switch（含被假跳转/摘除步产出的常量门——操作数区有标签即放弃）；NumberFold 解锁被藏形跨度夹住的实参区；DeadCode 清不可达垃圾；SeedStrip 吃 ``int[]`` 种子建表跨度。跳转变异（第 2 步 MutateJumps）的 ``obfuscateBasic`` 常量对：IAND 位拼形与缺口 #8 同构，已随 NumberFold 折掉；IADD/ISUB/IXOR 直线形不是 NumberFold 认的形状，属恒等简化面（缺口 #7）——形内常量对被折后其 TABLESWITCH 键窗即成常量可裁决形，由 PredicateFold 吃。\ **缺口**：junk 调用残留（垃圾调用点本身不是常量可裁决形态）、陷进环与 ChaosSwitch 双 switch 环挂缺口 #16、ArithmeticExpr 表达式（同 1.3 缺口，挂缺口 #7）。
 
 **样例**\ （第 3 步门 + 垃圾出口 + UseLocalVar Type1 变体；switch 保护与摘除形态并入 switch 样例）：
 
@@ -737,7 +737,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **判据分级**：S1（BSM 参数结构与元数据互证是语义后果——混淆器要保链接就必须让解密产物与调用点吻合）；还原判据按 BSM 参数结构直接解密（key 静态在场）。
 
-**本仓现状**：\ ``grunt.IndyRestore`` 承载（缺口 #2 闭环，见 ``doc/indy-restore.md``\）。simple 形按 ``encrypt`` 自逆 XOR 纯算术直解 + 三路键链（同名解密器 / BSM 体跟随 / 名字族推导）回填真实 invoke，判据全部结构自证、不挂 Era（v2/v3 simple 逐字同源）；heavy 形 ``@GruntMetadata`` 互证回填挂 ``Era::Grunt3`` 门——v2 现场因 Grunt2 判据仍缺（缺口 #15 v2 半边挂账）按保守口径关闭，simple 面不受影响。RuntimeMaterial 联动的材料通道曾静态不可解、fail-closed 挂 ``materialLane`` 桶（缺口 #15 联动面——已由 ``grunt.MaterialKeyRestore`` 闭环，见 v3 分账 §6.1；随迁移对账更新）。\ ``grunt.IndyFold``\ （S3，libjsim 模拟 BSM 求真目标）保留为兜底（BoogerV2 语料实测 foldable=0——真目标在解密器 key 链里，须按参数结构直接解密）；Kasumi 的 ``IndyDecode`` 是 8 参 + 解密器体形钉面的另一指纹，与本行为互斥。
+**本仓现状**：\ ``grunt.IndyRestore`` 承载（缺口 #2 已处理完，见 ``doc/indy-restore.md``\）。simple 形按 ``encrypt`` 自逆 XOR 纯算术直解 + 三路键链（同名解密器 / BSM 体跟随 / 名字族推导）回填真实 invoke，判据全部结构自证、不挂 Era（v2/v3 simple 逐字同源）；heavy 形 ``@GruntMetadata`` 互证回填挂 ``Era::Grunt3`` 门——v2 现场因 Grunt2 判据仍缺（缺口 #15 v2 半边挂账）暂不处理，simple 面不受影响。RuntimeMaterial 联动的材料通道曾静态不可解、fail-closed 挂 ``materialLane`` 桶（缺口 #15 联动面——已由 ``grunt.MaterialKeyRestore`` 处理完，见 v3 分账 §6.1；随迁移对账更新）。\ ``grunt.IndyFold``\ （libjsim 模拟 BSM 求真目标）作为备用还原手段（BoogerV2 语料实测 foldable=0——真目标在解密器 key 链里，须按参数结构直接解密）；Kasumi 的 ``IndyDecode`` 是 8 参 + 解密器体形钉面的另一指纹，与本行为互斥。
 
 **样例**\ （simple 形站点 + BSM 骨架 + 解密器；heavy 的元数据注解面见 morpher §3.4）：
 
@@ -987,7 +987,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **做什么**\ 。ClonedClass：从输入类里随机挑 ``Count`` 个整体克隆，名字加 ``-cloned$$<n>`` 后缀，注解默认清空。TrashClass：按 ``Count`` 生成垃圾类（包名 ``Package`` + ``Prefix`` + 5 随机字符），父类随机取 ``ConcurrentHashMap`` / ``ConcurrentLinkedDeque`` / ``ConcurrentSkipListMap`` 之一，成员为一个 ``public static int c = 8964``\ （ConstantValue）与调 super 的 ``<init>``。垃圾类不接引用边，纯撑体积/对抗分析。
 
-**判据分级**：S2——零引用 + 生成面形状（命名、父类选择、成员形状）是结构事实；删除需引用普查兜底（防反射/资源文本引用）。
+**判据分级**：S2——零引用 + 生成面形状（命名、父类选择、成员形状）是结构事实；删除需引用普查确认（防反射/资源文本引用）。
 
 **本仓现状**：无处理。DeadMember 只删成员不删类；类级删除面（垃圾类识别 + 引用普查）是缺口清单 P3。
 
@@ -1169,8 +1169,8 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 ::
 
-   已处理：DeclareFields→ConstValuePromote、FieldScramble→FieldAccessProxy、MethodScramble→ProxyInline、SyntheticBridge→FlagsStrip、StringEncrypt→StringPoolFold（literal 形折叠，缺口 #1 闭环）
-   部分  ：NumberEncrypt→NumberFold（六式全折，缺口 #8 闭环；arrayed 池形态挂缺口 #17）、ConstPoolEncrypt→NumberFold+ConstValuePromote（调用点回填挂缺口 #5）、Controlflow→TrampolineSqueeze/PredicateFold/NumberFold/DeadCode/SeedStrip（垃圾调用残留与陷进环挂缺口 #16；ArithmeticExpr 与跳转变异直线算术形挂缺口 #7）
-   部分  ：InvokeDynamic→IndyRestore（simple 直接解密回填，缺口 #2 闭环；heavy 待 Era::Grunt2 判据）+ IndyFold（S3 兜底，语料 foldable=0）
+   已处理：DeclareFields→ConstValuePromote、FieldScramble→FieldAccessProxy、MethodScramble→ProxyInline、SyntheticBridge→FlagsStrip、StringEncrypt→StringPoolFold（literal 形折叠，缺口 #1 已处理完）
+   部分  ：NumberEncrypt→NumberFold（六式全折，缺口 #8 已处理完；arrayed 池形态挂缺口 #17）、ConstPoolEncrypt→NumberFold+ConstValuePromote（调用点回填挂缺口 #5）、Controlflow→TrampolineSqueeze/PredicateFold/NumberFold/DeadCode/SeedStrip（垃圾调用残留与陷进环挂缺口 #16；ArithmeticExpr 与跳转变异直线算术形挂缺口 #7）
+   部分  ：InvokeDynamic→IndyRestore（simple 形已完整还原，对应缺口 #2；heavy 形暂不处理）+ IndyFold（模拟执行备用还原，现有语料可折站点为 0）
    无处理：MethodExtractor、ConstBuilder、ArithmeticEncrypt、StringEqualsRedirect、Crasher、Watermark、垃圾类三面、改名族、HWID
    清理面：SourceDebugRemove、KotlinOptimize、EnumOptimize、DeadCodeRemove、Shrinking、PostProcess、ShuffleMembers、LocalVariableRename

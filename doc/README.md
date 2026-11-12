@@ -61,7 +61,7 @@
 
 ## obf 行为账
 
-Grunt 家族逐混淆行为的描述文档（形态 + 配置面 + jasm 样例 + residue 现状）分层：行为 × residue 状态总表与闭环缺口清单（P1/P2/P3）已迁 RST（`obf-behaviors.rst`，原 `obf-behaviors/README.md` 已删）；语料罐台账在 `corpus-ledger.rst`（原 `corpus-ledger.md` 已删）。
+Grunt 家族逐混淆行为的描述文档（形态 + 配置面 + jasm 样例 + residue 现状）分层：行为 × residue 状态总表与遗留缺口清单（P1/P2/P3）已迁 RST（`obf-behaviors.rst`，原 `obf-behaviors/README.md` 已删）；语料罐台账在 `corpus-ledger.rst`（原 `corpus-ledger.md` 已删）。
 
 - [obf-behaviors/grunt-v2-behaviors.md](obf-behaviors/grunt-v2-behaviors.md)——v2（Gruntpocalypse 2.x）35 个 transformer 行为账（待迁）。
 - [obf-behaviors/grunt-v3-behaviors.md](obf-behaviors/grunt-v3-behaviors.md)——v3（Grunteon）39 个 transformer + GlslObfuscator 插件 + NativePipeline 阶段行为账（待迁）。

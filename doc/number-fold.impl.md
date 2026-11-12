@@ -34,4 +34,4 @@
 - NaN 位形不特判：`intBitsToFloat` 对 NaN 载荷的规范化 JVM 有自由度，LDC 位形与运行期换算在载荷位上可差——控制流不受影响，不设门。
 - 嵌套跨度（折叠产物再成跨度）靠整链重复跑到站点归零，不在单轮内迭代。
 - fconst/dconst 起头的跨度不存在（生成面只从整型/字符串键起锚）——锚点类型门直接排除。
-- GETSTATIC 喂给位拼不收：v2 语料可达代码的跨度常量被 ConstPoolEncrypt 改写成伴生池字段读取，跨度不再封闭（值在池字段里），缺口 #5 落地前 fail-closed；罐 B 该余量面逐桶记账见 corpus-ledger.md §2 #8。
+- GETSTATIC 喂给位拼不收：v2 语料可达代码的跨度常量被 ConstPoolEncrypt 改写成伴生池字段读取，跨度不再封闭（值在池字段里），缺口 #5 实现前 fail-closed；罐 B 该余量面逐桶记账见 corpus-ledger.md §2 #8。
