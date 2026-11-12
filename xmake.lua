@@ -13,6 +13,7 @@ LUIOX_LIBCA_VERSION = "0.0.16"
 LUIOX_LIBCA_MODULES = "core,crypto,str,fs,env,io,json,net,http,process,opt,thread,log,zip,resources,i18n,test"
 
 set_project("grunt")
+set_version("0.1.0")
 set_xmakever("2.9.3")
 set_allowedplats("windows", "linux", "macosx")
 set_defaultplat("windows")
