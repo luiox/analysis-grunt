@@ -35,16 +35,14 @@
 | [material-key-restore.md](material-key-restore.md) | Grunt v3 RuntimeMaterial：材料通道解密器窗口、materialKey() 逐字 9 条、初值链（基 32 parse 面 + poison 走廊）的形态 |
 | [exc-bridge-restore.md](exc-bridge-restore.md) | Grunt v3 ControlflowJump 异常桥：合成 throw/catch 蹦床改道边、形状钉 + 异常表互证的形态 |
 | [gate-processor-fold-spec.rst](gate-processor-fold-spec.rst) | （原 gate-processor-fold.md 已并入）Grunt v3 ControlflowJump 门点：适用情况 / 算法 / 前后 jasm 对照 / 拒绝桶 / 预算 |
-| [kasumi-verify.md](kasumi-verify.md) | Kasumi 专链端到端复现记录：五项门逐项数字、与树版口径差异点、通用链取证 |
+| [kasumi-verify.md](kasumi-verify.md) | Kasumi 专链端到端复现记录：五项门逐项数字、与参考实现口径差异点、通用链取证 |
 
 ## 行为文档
 
 Grunt 家族逐混淆行为的描述文档（形态 + 配置面 + jasm 样例 + residue 现状）分层：行为 × residue 状态总表与遗留缺口清单（P1/P2/P3）已迁 RST（`obf-behaviors.rst`，原 `obf-behaviors/README.md` 已删）；语料罐台账在 `corpus-ledger.rst`（原 `corpus-ledger.md` 已删）。
 
-- [obf-behaviors/grunt-v2-behaviors.md](obf-behaviors/grunt-v2-behaviors.md)——v2（Gruntpocalypse 2.x）35 个 transformer 行为文档（待迁）。
-- [obf-behaviors/grunt-v3-behaviors.md](obf-behaviors/grunt-v3-behaviors.md)——v3（Grunteon）39 个 transformer + GlslObfuscator 插件 + NativePipeline 阶段行为文档（待迁）。
-
-与 morpher 仓 `mjt-deobf/doc_ai/obf-forms/` 的分工：那边是跨家族形态库（artifact 侧形态判据与还原链序），本目录行为文档是本工具的逐行为现状与缺口清单，同面判据以那边为准。
+- [obf-behaviors/grunt-v2-behaviors.rst](obf-behaviors/grunt-v2-behaviors.rst)——v2（Gruntpocalypse 2.x）35 个 transformer 行为文档。
+- [obf-behaviors/grunt-v3-behaviors.rst](obf-behaviors/grunt-v3-behaviors.rst)——v3（Grunteon）39 个 transformer + GlslObfuscator 插件 + NativePipeline 阶段行为文档。
 
 ## 约定
 

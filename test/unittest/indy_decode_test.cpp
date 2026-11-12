@@ -1,9 +1,9 @@
 /// @file        indy_decode_test.cpp
-/// @brief       残留 `indy_decode` 的三段判据测试（树版 2 case 迁移 + 拒绝面反证）。
+/// @brief       残留 `indy_decode` 的三段判据测试（参考实现 2 case 迁移 + 拒绝面反证）。
 ///
 /// 夹具是「缩小版 Kasumi 形态」（jasm 现场汇编，不落二进制、不依赖语料目录）：
 /// 每类自带 8 参 BSM + `(String;)String` XOR 解密器（双层 `charAt; LDC K1;
-/// LDC K2; IXOR; IXOR; i2c` 形状，key 逐字取树版测试的 0x29432d6c）；密文串
+/// LDC K2; IXOR; IXOR; i2c` 形状，key 逐字取参考实现测试的 0x29432d6c）；密文串
 /// 以 \uXXXX 转义落 jasm 源（XOR 结果的码元任意，转义面无损）。
 ///
 /// 覆盖分工：
@@ -33,7 +33,7 @@ namespace {
 
 namespace model = mjbase::model;
 
-constexpr ca::i32 kKey      = static_cast<ca::i32>(0x29432d6c);   // 树版测试同 key
+constexpr ca::i32 kKey      = static_cast<ca::i32>(0x29432d6c);   // 参考实现测试同 key
 constexpr ca::i32 kKeyPartA = 0x11111111;
 constexpr ca::i32 kKeyPartB = kKey ^ kKeyPartA;   // 双层 ixor 的另一半
 
@@ -300,7 +300,7 @@ TEST(IndyDecodeRewrite, SwapsStaticIndyForInvokestatic)
 
 TEST(IndyDecodeRewrite, SpillsReceiverAndDispatchesInvokeinterface)
 {
-    // 树版 case 2：virtual 目标是 JDK 接口（java/util/Iterator.hasNext）时必须
+    // 参考实现 case 2：virtual 目标是 JDK 接口（java/util/Iterator.hasNext）时必须
     // 走 invokeinterface——旁证由注入面给（穷举普查，成员与否双向作证）。
     model::ResourceContainer container = makeContainer(
         {{"KasumiHost", hostSource("KasumiHost", true, "", virtualArgsOk())}});
