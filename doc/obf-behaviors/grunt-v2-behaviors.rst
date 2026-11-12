@@ -9,8 +9,6 @@ Grunt v2（Gruntpocalypse 2.x）obf 行为核心描述
 
    jasm 样例为按行为描述自写的完整可汇编样例，全部经 mjt-py SDK ``class_validate_jasm``\ （libjhasm 汇编 + 校验门）逐类验证；判据锚点以行内注释标注，样例中的类名/方法名/密文与常量数值只作形状示意，不是判据。已知校验器边界如实注明（§0.3）。
 
-   与 morpher 仓 ``mjt-deobf/doc_ai/obf-forms/grunt-obfuscation-forms.md`` 的分工：那边是\ **跨家族形态库**\ （artifact 侧形态判据与还原链序），本文是\ **本工具行为账**\ （v2 逐 transformer 行为 + 配置面 + 本仓 residue 现状 + 遗留缺口），同面判据以那边为准、不重复定义。
-
    排版：正文一句话/一段落一整行，不做 80 列硬断；代码块与表格内自然换行。
 
    日期：2026-11-06。迁移注记：2026-11-07 由 markdown 分账逐段转 RST；行为状态列与 :ref:`obf-behaviors` / :ref:`corpus-ledger` 逐行对账，滞后行同步处标注「随迁移对账更新」。
@@ -229,7 +227,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **判据分级**：S1——\ ``owner.field[index] → 明文`` 映射编译期可建（seed/key/classKey 全是装载期常量、解密器纯函数、store 序列固定），读取点换 ``ldc`` 明文是语义恒等；换代表现在加密算法内部（判据不读算法细节，只读池结构 + 调用点三元组）。
 
-**本仓现状**：已处理——\ ``grunt.StringPoolFold``\ （缺口 #1 已处理完）：池读三元组折回 ``ldc`` 明文，池链三件套结构自证 + 自逆 XOR 流静态复算（见 ``doc/string-pool-fold.md``\）。Grunteon 全链产物把 arrayInit 调用藏进 indy 蹦床，该形态依赖上游 indy 还原（缺口 #2）接通。池读三元组形状判据在 morpher obf-forms §3.1 已定案。
+**本仓现状**：已处理——\ ``grunt.StringPoolFold``\ （缺口 #1 已处理完）：池读三元组折回 ``ldc`` 明文，池链三件套结构自证 + 自逆 XOR 流静态复算（见 ``doc/string-pool-fold.md``\）。Grunteon 全链产物把 arrayInit 调用藏进 indy 蹦床，该形态依赖上游 indy 还原（缺口 #2）接通。
 
 **样例**\ （v2 literal 密文形态，\ ``toCharArray`` 进解密器，desc ``([CJI)Ljava/lang/String;``\）：
 
@@ -382,7 +380,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **判据分级**：S2——替换序列是封闭 int 算术恒等式，简化链可折叠；形状换代可换（是混淆器的实现选择面）。
 
-**本仓现状**：无处理（缺口清单 P2；morpher obf-forms §3.2 末尾「同族 ArithmeticSubstitute 走通用简化链折叠」口径）。注意：v2 Controlflow 的 ``ArithmeticExprBuilder`` 生成面（``ArithmeticExpr.kt``\）产生同族表达式，还原面同一。
+**本仓现状**：无处理（缺口清单 P2；同族 ArithmeticSubstitute 在参考实现里走通用简化链折叠）。注意：v2 Controlflow 的 ``ArithmeticExprBuilder`` 生成面（``ArithmeticExpr.kt``\）产生同族表达式，还原面同一。
 
 .. _grunt-v2-const-pool-encrypt:
 
@@ -668,7 +666,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **本仓现状**：已处理——\ ``grunt.FieldAccessProxy`` 与 ``grunt.ProxyInline`` 正是这对行为的逆（判据不依赖方法名/标志/家族名）。v3 同款行为（InvokeProxy / FieldAccessProxy）共用这两个 residue。
 
-**样例**\ （getter/setter/方法代理 + 调用点，与 morpher obf-forms §3.5 同构）：
+**样例**\ （getter/setter/方法代理 + 调用点）：
 
 ::
 
@@ -739,7 +737,7 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **本仓现状**：\ ``grunt.IndyRestore`` 承载（缺口 #2 已处理完，见 ``doc/indy-restore.md``\）。simple 形按 ``encrypt`` 自逆 XOR 纯算术直解 + 三路键链（同名解密器 / BSM 体跟随 / 名字族推导）回填真实 invoke，判据全部结构自证、不挂 Era（v2/v3 simple 逐字同源）；heavy 形 ``@GruntMetadata`` 互证回填挂 ``Era::Grunt3`` 门——v2 现场因 Grunt2 判据仍缺（缺口 #15 v2 半边挂账）暂不处理，simple 面不受影响。RuntimeMaterial 联动的材料通道曾静态不可解、fail-closed 挂 ``materialLane`` 桶（缺口 #15 联动面——已由 ``grunt.MaterialKeyRestore`` 处理完，见 v3 分账 §6.1；随迁移对账更新）。\ ``grunt.IndyFold``\ （libjsim 模拟 BSM 求真目标）作为备用还原手段（BoogerV2 语料实测 foldable=0——真目标在解密器 key 链里，须按参数结构直接解密）；Kasumi 的 ``IndyDecode`` 是 8 参 + 解密器体形钉面的另一指纹，与本行为互斥。
 
-**样例**\ （simple 形站点 + BSM 骨架 + 解密器；heavy 的元数据注解面见 morpher §3.4）：
+**样例**\ （simple 形站点 + BSM 骨架 + 解密器）：
 
 ::
 
@@ -971,9 +969,9 @@ v2 是 ASM ``ClassNode`` 体系上的 transformer 管线：\ ``grunt-main`` 装�
 
 **判据分级**：S2——伪标志是结构事实（普通成员带编译器合成标志）。
 
-**本仓现状**：已处理——\ ``grunt.FlagsStrip`` 摘伪 ``synthetic``/``bridge``\ （仅 static 成员、名字不含 ``$``、枚举跳过、顺带抬类版本）。差异点如实记录：v2 撒标志不挑 static，FlagsStrip 的保守门（static ∧ 无 ``$``\）意味着实例成员上的伪标志\ **不在**\ FlagsStrip 摘除面内（保守宁留）；morpher obf-forms §3.8 的「整类匹配门」是另一口径。
+**本仓现状**：已处理——\ ``grunt.FlagsStrip`` 摘伪 ``synthetic``/``bridge``\ （仅 static 成员、名字不含 ``$``、枚举跳过、顺带抬类版本）。差异点如实记录：v2 撒标志不挑 static，FlagsStrip 的保守门（static ∧ 无 ``$``\）意味着实例成员上的伪标志\ **不在**\ FlagsStrip 摘除面内（保守宁留）；参考实现的「整类匹配门」是另一口径。
 
-**样例**：与 morpher obf-forms §3.8 的 FakeSyntheticBridge 样例同构（类级 ``synthetic`` + 方法 ``bridge synthetic`` 对），v3 文档 §4.4 引用同一形状，此处不重复。（随迁移对账更新：原记「v3 文档 §6.3」系节号笔误——v3 分账 FakeSyntheticBridge 在 §4.4。）
+**样例**：FakeSyntheticBridge 同构样例（类级 ``synthetic`` + 方法 ``bridge synthetic`` 对），v3 文档 §4.4 引用同一形状，此处不重复。（随迁移对账更新：原记「v3 文档 §6.3」系节号笔误——v3 分账 FakeSyntheticBridge 在 §4.4。）
 
 .. _grunt-v2-junk-signing:
 

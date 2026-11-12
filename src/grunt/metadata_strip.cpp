@@ -9,7 +9,7 @@
 ///
 /// ## SCAN 三面与判据谓词
 ///
-/// 判据谓词三段共用单源（树版逐字对齐）。S3 Era 门在 scan 开头：
+/// 判据谓词三段共用单源（参考实现逐字对齐）。S3 Era 门在 scan 开头：
 /// era != Kasumi 整面关闭（eraBlocked，fail-closed）——未判时一个字节都不
 /// 看内容判据（非 Kasumi 罐挂同前缀资源时 scan 空手而归，产物资源逐字节
 /// 原样）。注解面走 decodeAttr 直调位（booger_anno_strip 同一通路）普查
@@ -18,17 +18,17 @@
 /// 字段面：字段带 @Metadata 或 ConstantValue 为水印串都计入；ConstantValue
 /// 双形态都收——jbc 原生 ConstantValueAttr 解码产物与 RawAttr 2 字节载荷
 /// （const_value_promote 新建形态）。资源面 visitResources 全量走一遍，
-/// 只看 UnknownResource 载荷（树版同口径），URI 前缀 + `.md` + 内容探针
+/// 只看 UnknownResource 载荷（参考实现同口径），URI 前缀 + `.md` + 内容探针
 /// 三证齐才进删除清单；形状命中而证据不全 → resourceCandidates 盘点不删
 /// （前缀面可能有合法文档，删的是内容坐实的注入物）。
 ///
 /// ## REWRITE
 ///
-/// 资源先删（树版序）：只消费 scan 清单，删除时刻复核同判据（scan 之后字
+/// 资源先删（参考实现序）：只消费 scan 清单，删除时刻复核同判据（scan 之后字
 /// 节可能已变，不盲删）；复核不齐计 resourceCandidates。类清理与
 /// booger_anno_strip 同骨架：类面/方法面只摘条目（摘空属性槽整槽移除）；
 /// 字段面摘条目后按「摘到过条目 ∨ ConstantValue 水印」整字段删除（注解
-/// 字段与水印字段都是混淆器署名位，树版直接删，不做引用普查——病态引用
+/// 字段与水印字段都是混淆器署名位，参考实现直接删，不做引用普查——病态引用
 /// 形态由类加载校验兜底）。方法体不碰。压池收尾：classAnnoDepthSafe 预检
 /// + compactConstantPool 带走死条目；预检拒绝或压缩失败就跳过压缩，清理
 /// 过的字节照常落盘——CP 不压缩只是少带走死条目。条目数在类写回成功后归
@@ -45,7 +45,7 @@
 /// ## 已知边界
 ///
 /// 水印串清理只到字段面：方法体内的水印常量（`PROTECTED BY Kasumi` 字面
-/// 量与 `kasumi_` 前缀会话 key）是 indy 链路运行时数据，树版不触方法体，
+/// 量与 `kasumi_` 前缀会话 key）是 indy 链路运行时数据，参考实现不触方法体，
 /// 本仓对齐；全链收口后由 DeadMember 压池/死码面自然带走解引用的死串。
 /// 换代面（注解描述符 / 水印三判据 / 资源前缀与五探针都钉自当前 Kasumi
 /// 版本）由 Era 门整面拒绝兜底。
@@ -82,7 +82,7 @@ namespace ir = jbc::ir;
 // ==== 判据谓词（scan / rewrite / proof 三段共用，单源）=======================
 // ============================================================================
 
-/// @brief 单条注解是否 @Metadata（S2 形状钉面：描述符全等，树版
+/// @brief 单条注解是否 @Metadata（S2 形状钉面：描述符全等，参考实现
 ///        isKasumiMetadataAnnotation 对齐）。
 bool isMetadataAnno(const jbc::core::ClassFile&                   cf,
                     const jbc::core::AnnotationsAttr::Annotation& anno)
@@ -90,7 +90,7 @@ bool isMetadataAnno(const jbc::core::ClassFile&                   cf,
     return cf.utf8(anno.typeCp) == knowledge::kKasumiMetadataAnnoDesc;
 }
 
-/// @brief 水印串判据（树版 isKasumiWatermarkString 三条逐字对齐）：含
+/// @brief 水印串判据（参考实现 isKasumiWatermarkString 三条逐字对齐）：含
 ///        `PROTECTED BY Kasumi` / 含 `Gruntpocalypse` / 前缀 `kasumi_`。
 bool isWatermarkText(std::string_view text)
 {
@@ -99,7 +99,7 @@ bool isWatermarkText(std::string_view text)
     return text.rfind(knowledge::kKasumiWatermarkKeyPrefix, 0) == 0;
 }
 
-/// @brief 反 LLM 注入资源判据（树版 isKasumiAntiLlmResource 三面对齐）：
+/// @brief 反 LLM 注入资源判据（参考实现 isKasumiAntiLlmResource 三面对齐）：
 ///        URI 前缀 `META-INF/Kasumi/` + `.md` 后缀 + 内容探针任一子串在场。
 bool isAntiLlmResource(std::string_view uri, const std::vector<ca::u8>& bytes)
 {
@@ -134,7 +134,7 @@ ca::usize countMetadataTable(jbc::core::ClassFile& cf, std::vector<jbc::core::At
     ca::usize n = 0;
     for (jbc::core::AttrSlot& slot : slots) {
         // 注解族解码互递归无界（mjbase #158）：预检拒绝 = 解不开，fail-closed
-        // 记账跳过——条目数不猜（树版无此敌意面；本仓守卫优先于树版静默）。
+        // 记账跳过——条目数不猜（参考实现无此敌意面；本仓守卫优先于参考实现静默）。
         if (!mjbase::util::attrSafeToDecode(cf, slot)) {
             ++blocked;
             continue;
@@ -191,7 +191,7 @@ ca::usize stripMetadataTable(jbc::core::ClassFile& cf, std::vector<jbc::core::At
     return removed;
 }
 
-/// @brief 字段的 ConstantValue → String 常量内容（树版 field->value 的
+/// @brief 字段的 ConstantValue → String 常量内容（参考实现 field->value 的
 ///        String 分支）。非 String / 解不开返回 false（fail-closed：不猜）。
 ///
 /// 两个落地形态都收：解码产物 ConstantValueAttr（jbc 原生解码）与 RawAttr
@@ -240,7 +240,7 @@ bool scanClass(ir::ClassSession& s, const std::string& uri, Site& out, ScanResul
         annos += fieldAnnos;
         std::string_view cv;
         if (fieldAnnos > 0) {
-            ++fields;   // 带注解字段：整字段删除（树版对齐）
+            ++fields;   // 带注解字段：整字段删除（参考实现对齐）
             continue;
         }
         if (fieldConstantString(cf, f, cv) && isWatermarkText(cv)) ++fields;
@@ -270,12 +270,12 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
         return result;
     }
 
-    // ---- 资源清单（树版序：资源先于类）。UnknownResource 条目逐个三证
-    //      判定；形状命中而证据不全的如实盘点（树版保留，本仓记账）。
+    // ---- 资源清单（参考实现序：资源先于类）。UnknownResource 条目逐个三证
+    //      判定；形状命中而证据不全的如实盘点（参考实现保留，本仓记账）。
     container.visitResources([&](std::string_view uri, const mjbase::model::IResource& res) {
         const auto* unknown =
             ca::core::tag_cast::dyn_cast<const mjbase::model::UnknownResource>(&res);
-        if (unknown == nullptr) return;   // 树版只看 Unknown 载荷
+        if (unknown == nullptr) return;   // 参考实现只看 Unknown 载荷
         if (isAntiLlmResource(uri, unknown->get())) {
             result.resources.emplace_back(uri);
             return;
@@ -309,7 +309,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 {
     DirtySet dirty;
 
-    // ---- 资源先删（树版序）。只消费 scan 清单；删除时刻复核同判据
+    // ---- 资源先删（参考实现序）。只消费 scan 清单；删除时刻复核同判据
     //      （scan 之后字节可能已变，不盲删——K2 rewriteSite 复核同纪律）。
     for (const std::string& uri : result.resources) {
         const mjbase::model::IResource* raw = container.getResource(uri);
@@ -354,13 +354,13 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         // 类面：只摘条目。
         annos += stripMetadataTable(cf, cf.attrs, blocked);
 
-        // 方法面：只摘条目（方法体不动，树版对齐）。
+        // 方法面：只摘条目（方法体不动，参考实现对齐）。
         for (jbc::core::MemberInfo& m : cf.methods) {
             annos += stripMetadataTable(cf, m.attrs, blocked);
         }
 
         // 字段面：摘条目 + 删字段（带 @Metadata 或 ConstantValue 水印的
-        // 整字段删除，树版 removeKasumiWatermarkFields 对齐；倒序遍历保
+        // 整字段删除，参考实现 removeKasumiWatermarkFields 对齐；倒序遍历保
         // erase 稳定）。
         for (ca::usize fi = cf.fields.size(); fi-- > 0;) {
             jbc::core::MemberInfo& f = cf.fields[fi];

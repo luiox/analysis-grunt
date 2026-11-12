@@ -6,7 +6,7 @@
 ///
 /// Kasumi 把字符串 Blowfish 加密存入 `byte[][]`/`char[][]` 静态字段，
 /// `<clinit>` 用反射 Cipher 解密后缓存到 `String[]` 字段。调用点有两种形态
-/// （树版 kasumi_string_decrypt_pass 的两形态）：
+/// （参考实现 kasumi_string_decrypt_pass 的两形态）：
 ///
 ///     形态 1 读缓存：
 ///       getstatic owner.f : [Ljava/lang/String;
@@ -24,7 +24,7 @@
 ///
 /// 明文在场的前提是外部导出的 TSV 旁证（`KasumiStringDumper` 产出：加载原
 /// jar 触发 `<clinit>`，反射读缓存/调解密器，导出
-/// `owner \t key \t index \t plaintext`）。TSV 属换代表面：它是树版工具的
+/// `owner \t key \t index \t plaintext`）。TSV 属换代表面：它是参考实现工具的
 /// 产出格式，格式本身钉自混淆器行为，但内容随样本走——按 S3 对待，Era
 /// 分支是它唯一合法的落点。
 ///
@@ -34,10 +34,10 @@
 ///   knowledge 表）+ 后继指令跨度逐条钉形（int 常量装载族 / aaload /
 ///   dup / arraylength / invokestatic 描述符全等）。
 /// - **S3 换代面**：TSV 明文表是外部旁证 + 解密结果载体——**Era 门兜底**，
-///   `Era::Kasumi` 未判定整站拒绝（树版无 Era 概念，map 空则整个 pass
-///   静默跳过——即树版同样不允许无旁证改写，本仓把「无旁证」显式记账）。
+///   `Era::Kasumi` 未判定整站拒绝（参考实现无 Era 概念，map 空则整个 pass
+///   静默跳过——即参考实现同样不允许无旁证改写，本仓把「无旁证」显式记账）。
 /// - **S1 语义后果**：TSV 命中即定案——站点（owner, field, idx）与明文表
-///   键精确互证；无命中不猜（树版按静默跳过，本仓如实沿用 + `noPlaintext`
+///   键精确互证；无命中不猜（参考实现按静默跳过，本仓如实沿用 + `noPlaintext`
 ///   计数）。S1 无旁证**不可**定案：明文本身就是要回填的内容，旁证缺席
 ///   等于没有改写对象，这不是保守性选择而是数据流事实。
 ///
@@ -86,8 +86,8 @@ using PlaintextTable =
     std::unordered_map<std::string, std::unordered_map<std::string,
         std::unordered_map<int, std::string>>>;
 
-/// @brief 反转义 TSV plaintext 列的 `\\ \t \n \r`（树版 unescapeTsv 逐字对齐）。
-///        其余 `\x` 原样落 `x`（树版行为：未知转义取后一字符）。
+/// @brief 反转义 TSV plaintext 列的 `\\ \t \n \r`（参考实现 unescapeTsv 逐字对齐）。
+///        其余 `\x` 原样落 `x`（参考实现行为：未知转义取后一字符）。
 std::string unescapeTsv(std::string_view s);
 
 /// @brief 解析 KasumiStringDumper 产出的 TSV 文本
@@ -142,11 +142,11 @@ struct ScanResult
     ca::usize totalShapeHits = 0;  ///< 命中 S2 形状钉面的 getstatic 站点数
     ca::usize eraBlocked     = 0;  ///< Era 未判定（S3 门 fail-closed 全拒）
     ca::usize tsvBlocked     = 0;  ///< 旁证缺席/不可读（fail-closed 降级全拒）
-    ca::usize noPlaintext    = 0;  ///< 表已注入但无该 (owner,key,idx) 条目（树版对齐：静默跳过）
+    ca::usize noPlaintext    = 0;  ///< 表已注入但无该 (owner,key,idx) 条目（参考实现对齐：静默跳过）
     ca::usize classesSkipped = 0;  ///< 会话开不了的类
 };
 
-/// @brief 被改写的类 + 站点级统计（两形态分列，morpher RewriteStats 口径）。
+/// @brief 被改写的类 + 站点级统计（两形态分列，参考实现 RewriteStats 口径）。
 struct DirtySet
 {
     std::vector<std::string> uris;

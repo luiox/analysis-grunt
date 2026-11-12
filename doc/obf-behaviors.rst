@@ -5,12 +5,10 @@ grunt 行为账总表
 
 .. _obf-behaviors-scope:
 
-1 定位与分工
+1 定位
 ------------
 
 本篇是 analysis-grunt 的 **grunt 混淆行为账总表**：把 Grunt 家族两代（v2 Gruntpocalypse / v3 Grunteon）的每个混淆行为逐个写成「做什么（字节码形态 + 可汇编 jasm 样例）/ 配置面 / 判据分级 / 本仓 residue 现状」，并汇总行为 × 处理状态的总表与遗留缺口清单，供后续还原批次排期。逐行为细节（形态 + 配置面 + jasm 样例）在两篇分账（§2），本篇承载总表与缺口清单。
-
-**与 morpher 仓 obf-forms 的分工**：morpher 仓 ``mjt-deobf/doc_ai/obf-forms/grunt-obfuscation-forms.md`` 是\ **跨家族形态库**\ （artifact 侧形态判据与还原链序，13 个已验证形态样例），本篇是\ **本工具行为账**\ （逐 transformer 行为 + 配置面 + residue 现状 + 缺口处理情况）；同面判据以 morpher 为准、不重复定义，行为级现状以本篇为准。
 
 .. _obf-behaviors-index:
 

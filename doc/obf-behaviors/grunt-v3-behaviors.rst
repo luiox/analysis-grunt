@@ -9,8 +9,6 @@ Grunt v3（Grunteon）obf 行为核心描述
 
    jasm 样例为按行为描述自写的完整可汇编样例，全部经 mjt-py SDK ``class_validate_jasm``\ （libjhasm 汇编 + 校验门）逐类验证，口径与 v2 文档 §0.3 相同；判据锚点以行内注释标注，样例中的类名/方法名/密文与常量数值只作形状示意，不是判据。
 
-   与 morpher 仓 ``mjt-deobf/doc_ai/obf-forms/grunt-obfuscation-forms.md`` 的分工：那边是\ **跨家族形态库**\ （artifact 侧形态判据与还原链序），本文是\ **本工具行为账**\ （v3 逐 transformer 行为 + 配置面 + 本仓 residue 现状 + 遗留缺口），同面判据以那边为准、不重复定义。
-
    排版：正文一句话/一段落一整行，不做 80 列硬断；代码块与表格内自然换行。
 
    日期：2026-11-06。迁移注记：2026-11-07 由 markdown 分账逐段转 RST；行为状态列与 :ref:`obf-behaviors` / :ref:`corpus-ledger` 逐行对账，滞后行同步处标注「随迁移对账更新」。
@@ -326,7 +324,7 @@ v3 共 11 个样例文件（v3-01 ~ v3-10，其中 native 面两个类拆 v3-09/
 
 **判据分级**：S1——与 v2 StringEncrypt 同级：池读三元组（``GETSTATIC`` String[] + 常量下标 + ``AALOAD``\）编译期可建映射，读取点换 ``ldc`` 明文是语义恒等；carray 形态下密文在 ``arrayInit`` 的 ``CASTORE`` 序列里，仍全为装载期常量。
 
-**本仓现状**：已处理——\ ``grunt.StringPoolFold`` 的 arrayed 面（缺口 #1 已处理完）：按常量 KIND 判形（``carray`` 是配置不是版本键），\ ``NEWARRAY T_CHAR`` 直存码元解密折回（见 ``doc/string-pool-fold.md``\）。indy 藏面依赖上游 indy 还原（缺口 #2）接通。morpher obf-forms §3.1 的池读三元组判据两代共用。余量通道：\ ``Native candidate=true`` 时解密器（含 ``arrayInit`` / concat wrapper）被摘成 native 无体，该类整站 fail-closed——native 无体静态不可解，与 §6.1 native materialKey / §2.2 native action 键同族天花板桶。
+**本仓现状**：已处理——\ ``grunt.StringPoolFold`` 的 arrayed 面（缺口 #1 已处理完）：按常量 KIND 判形（``carray`` 是配置不是版本键），\ ``NEWARRAY T_CHAR`` 直存码元解密折回（见 ``doc/string-pool-fold.md``\）。indy 藏面依赖上游 indy 还原（缺口 #2）接通。池读三元组判据两代共用。余量通道：\ ``Native candidate=true`` 时解密器（含 ``arrayInit`` / concat wrapper）被摘成 native 无体，该类整站 fail-closed——native 无体静态不可解，与 §6.1 native materialKey / §2.2 native action 键同族天花板桶。
 
 **样例**\ （carray 形态；本样例走 ``validation=off`` 通道，误报记录见 v2 文档 §0.3）：
 
@@ -551,7 +549,7 @@ v2 ``ArithmeticEncrypt`` 的 v3 同构（``encrypt/ArithmeticSubstitute.kt``，�
 
 **判据分级**：S1（dispatcher 键表与 state 传播在块序已知时编译期可重建——单 dispatcher 岛可反摊平）/ S2（多岛、key processor 藏形、fake/junk case 识别是结构事实）。
 
-**本仓现状**：\ ``grunt.CffUnflatten`` 承载（缺口 #4 主面已处理完，见 ``doc/cff-unflatten.md``\ ；实现说明见 ``src/grunt/cff_unflatten.cpp`` 文件头注释）。dispatcher 岛识别 + 单岛反摊平（桥 span 常量闭链静态求值回查键表 → 前驱 goto 直连真实块，出表键剪到 default——直连 default 与原「经岛分发落 default」逐位等价）+ **alias-face 剪枝**\ （default 落岛首真块，入口键 case 同址）+ 入口块归位（异常保护区/junk 前缀退蹦床）+ handler 桥重绑；位置边单独守卫（usersOf 只看字段引用，条件载体紧邻岛头补 GOTO 钉落空臂）。boar 全链罐 9880 岛还原 1481（类 653）；processor 键藏形（``__grt$indy$`` proc 体）经解锁链实现批消化 80 座（ConstantCall 同类豁免 + Math.max 接管，6201→6121）——剩余 6121 为静态天花板（boar ``keyProcessorNativeCandidateRatio=1.0``，proc 恢复目标 100% native 无体，算术不在 jar 里）——缺口 #4 余量 = native action 键（须 native 库）+ SSA exp 变体。morpher obf-forms §3.7 已给 dispatcher 岛形态判据。
+**本仓现状**：\ ``grunt.CffUnflatten`` 承载（缺口 #4 主面已处理完，见 ``doc/cff-unflatten.md``\ ；实现说明见 ``src/grunt/cff_unflatten.cpp`` 文件头注释）。dispatcher 岛识别 + 单岛反摊平（桥 span 常量闭链静态求值回查键表 → 前驱 goto 直连真实块，出表键剪到 default——直连 default 与原「经岛分发落 default」逐位等价）+ **alias-face 剪枝**\ （default 落岛首真块，入口键 case 同址）+ 入口块归位（异常保护区/junk 前缀退蹦床）+ handler 桥重绑；位置边单独守卫（usersOf 只看字段引用，条件载体紧邻岛头补 GOTO 钉落空臂）。boar 全链罐 9880 岛还原 1481（类 653）；processor 键藏形（``__grt$indy$`` proc 体）经解锁链实现批消化 80 座（ConstantCall 同类豁免 + Math.max 接管，6201→6121）——剩余 6121 为静态天花板（boar ``keyProcessorNativeCandidateRatio=1.0``，proc 恢复目标 100% native 无体，算术不在 jar 里）——缺口 #4 余量 = native action 键（须 native 库）+ SSA exp 变体。
 
 **样例**\ （单 dispatcher 岛 + fake case + alias face；boar-main.jar ``AD.a`` 实证同构）：
 
@@ -817,7 +815,7 @@ v2 TrashClass 的 v3 对应物，重做为 provider 体系（``TrashClassProvide
 4.4 FakeSyntheticBridge / Watermark / DecompilerCrasher / ShuffleMembers / ReflectionSupport
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-- **FakeSyntheticBridge**：与 v2 SyntheticBridge 同构（类级 ``synthetic`` + 方法 ``bridge synthetic`` 对；v3 无 v2 的 ``FlattenMethods`` 反向开关）。已处理（\ ``grunt.FlagsStrip``\），形状样例沿用 v2 文档 §4.3 所引 morpher obf-forms §3.8。
+- **FakeSyntheticBridge**：与 v2 SyntheticBridge 同构（类级 ``synthetic`` + 方法 ``bridge synthetic`` 对；v3 无 v2 的 ``FlattenMethods`` 反向开关）。已处理（\ ``grunt.FlagsStrip``\），形状样例沿用 v2 文档 §4.3。
 - **Watermark**：渠道收敛为两个——\ ``FieldMark``\ （``private static`` 水印字段）与 ``MethodMark``\ （``LDC marker; ARETURN`` 两指令方法），默认 names ``Grunt/Gruntpocalypse/Grunteon``\ （v2 的注解/接口/自定义体渠道在 v3 无）。判据 S2，无处理（缺口清单 P3，可与 Kasumi ``MetadataStrip`` 水印面同构扩家族判据）。
 - **DecompilerCrasher**：与 v2 Crasher 同面（Signature 属性 massive 串），S2，无处理（缺口清单 P3）。
 - **ShuffleMembers**：成员/注解/异常表顺序打乱，清理面，登记即可。

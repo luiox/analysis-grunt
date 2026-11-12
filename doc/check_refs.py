@@ -7,8 +7,7 @@
    ``:ref:``/``:doc:`` 目标在 RST 侧自检（label 唯一 + doc 文件在册）。
 2. 代码面出现的 ``doc/...rst`` 路径必须存在。
 3. 文档/代码面不得点名「设计内容形态」的 ``.md``。白名单：流程文档
-   （README/CONVENTION/CHANGELOG 等）；跨仓出处必须带仓名标记（mjt /
-   morpher / grunt2 / grunt3 / luiox 等）。**迁移期特例**：本仓正处
+   （README/CONVENTION/CHANGELOG 等）；跨仓出处必须带仓名标记（mjt / grunt2 / grunt3 / luiox 等）。**迁移期特例**：本仓正处
    md→rst 逐批迁移中，点名「仓库里仍存在」的 md 文件放行——仓内账本
    简写（裸文件名 / pass 名下划线写法）按 doc/ 树内同名唯一命中解析
    （含下划线↔连字符归一）；文件删除/迁移后 mention 自动变红，倒逼
@@ -37,7 +36,7 @@ CODE_SUFFIXES = {".hpp", ".cpp", ".h", ".c", ".lua", ".sh", ".py"}
 PROCESS_DOCS = {"README.md", "CONVENTION.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md"}
 # 跨仓出处的 prose 标记：命中则该行的 .md 提及不参与存在性校验。
 UPSTREAM_MARKERS = (
-    "libjbc", "mjbase", "libca", "luiox", "mjt", "morpher",
+    "libjbc", "mjbase", "libca", "luiox", "mjt",
     "grunt2", "grunt3", "Gruntpocalypse", "Grunteon", "Grunt 仓",
     "Kasumi", "私有仓", "私仓", "待迁",
 )

@@ -7,11 +7,8 @@
 /// 本表钉的是「8 参 bootstrap 描述符、解密器描述符、mode×extra 7 形态、
 /// `@Metadata` 注解、水印串、反 LLM 资源前缀」这批版本常量。
 ///
-/// 常量逐字取自 morpher 树版（origin/main @ 077b0ac64）
-/// `mjt-deobf/src/mjt/deobf/passes/misc/kasumi/{kasumi_indy_resolve_pass,
-/// kasumi_metadata_cleanup_pass,kasumi_string_decrypt_pass}.{hpp,cpp}`、
-/// `tools/kasumi_string_dumper/KasumiStringDumper.java` 与
-/// morpher 仓 `doc_ai/notes/kasumi_reverse_notes.md`，
+/// 常量逐字取自参考实现（kasumi_indy_resolve_pass / kasumi_metadata_cleanup_pass
+/// / kasumi_string_decrypt_pass / KasumiStringDumper.java，源在仓外），
 /// SnakeGame-obf.jar（582,974 B，验收数字见 doc/kasumi-verify.md）实证。
 #pragma once
 
@@ -39,7 +36,7 @@ inline constexpr std::string_view kKasumiDecryptorDesc =
 /// @brief bootstrap 静态参数个数：[mode, encOwner, encName, encDesc, extra]。
 inline constexpr ca::usize kKasumiBsmArgCount = 5;
 
-// ---- 字符串缓存解密面（kasumi_string_decrypt_pass.cpp 逐字取树版）---------
+// ---- 字符串缓存解密面（kasumi_string_decrypt_pass.cpp 逐字取参考实现）---------
 
 /// @brief String[] 缓存字段描述符（形态 1：读缓存站点的 getstatic 钉面）。
 ///
@@ -123,8 +120,8 @@ inline constexpr std::string_view kKasumiMetadataAnnoDesc = "Ldev/kasumi/interna
 /// @brief 水印串：`PROTECTED BY Kasumi` 子串命中。
 inline constexpr std::string_view kKasumiWatermarkText = "PROTECTED BY Kasumi";
 
-/// @brief 水印串：`Gruntpocalypse` 子串命中（树版 isKasumiWatermarkString 的
-///        第三条判据，逐字取自 kasumi_metadata_cleanup_pass.cpp——树版水印
+/// @brief 水印串：`Gruntpocalypse` 子串命中（参考实现 isKasumiWatermarkString 的
+///        第三条判据，逐字取自 kasumi_metadata_cleanup_pass.cpp——参考实现水印
 ///        口径把姊妹家族的署名串一并当水印清）。
 inline constexpr std::string_view kKasumiWatermarkAltText = "Gruntpocalypse";
 
@@ -134,10 +131,10 @@ inline constexpr std::string_view kKasumiWatermarkKeyPrefix = "kasumi_";
 /// @brief 反 LLM 注入资源 URI 前缀（`META-INF/Kasumi/cybersecurity/analysis-*.md`）。
 inline constexpr std::string_view kKasumiResourcePrefix = "META-INF/Kasumi/";
 
-/// @brief 反 LLM 注入资源 URI 后缀（树版 endsWith(uri, ".md") 逐字口径）。
+/// @brief 反 LLM 注入资源 URI 后缀（参考实现 endsWith(uri, ".md") 逐字口径）。
 inline constexpr std::string_view kKasumiResourceSuffix = ".md";
 
-/// @brief 反 LLM 注入资源内容探针（树版 isKasumiAntiLlmResource 的五条逐字
+/// @brief 反 LLM 注入资源内容探针（参考实现 isKasumiAntiLlmResource 的五条逐字
 ///        取自 kasumi_metadata_cleanup_pass.cpp）：URI 形状命中之外，字节里
 ///        任一探针子串在场才算注入内容——S1 互证面，删的是内容坐实的资源。
 inline constexpr std::string_view kKasumiResourceProbes[] = {

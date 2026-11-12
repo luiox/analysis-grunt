@@ -1,5 +1,5 @@
 /// @file        metadata_strip_test.cpp
-/// @brief       残留 `metadata_strip` 的三段判据测试（树版三面迁移 + 拒绝面
+/// @brief       残留 `metadata_strip` 的三段判据测试（参考实现三面迁移 + 拒绝面
 ///              反证）。
 ///
 /// 夹具一律现场构建（jasm 现场汇编 + RawAttr 程序化补挂 ConstantValue，不
@@ -121,7 +121,7 @@ std::string textOf(const model::ResourceContainer& container, const std::string&
 
 /// @brief @Metadata 三面夹具：类面 + 字段面 + 方法面各一条本家注解，类面另
 ///        挂一条异名注解（保留面反证），方法面另有无注解 keeper（其余成员
-///        原样反证）。带注解的字段按树版口径整字段删除。
+///        原样反证）。带注解的字段按参考实现口径整字段删除。
 std::string annoHostSource()
 {
     return ".invisible-annotation dev/kasumi/internal/Metadata {\n"
@@ -352,7 +352,7 @@ TEST(MetadataStripScan, CountsAnnosOnThreeFacesAndWatermarkFields)
 
 TEST(MetadataStripScan, KeepsPlainConstantValueField)
 {
-    // 非水印 ConstantValue 字段不进站点（树版只删水印判据命中面）。
+    // 非水印 ConstantValue 字段不进站点（参考实现只删水印判据命中面）。
     model::ResourceContainer container;
     addRawClass(container, "PlainWm",
                 attachConstantValues("PlainWm", watermarkHostSource(), {{"okField", "hello world"}}));
@@ -370,7 +370,7 @@ TEST(MetadataStripScan, InventoriesResourcesByShapeAndProbes)
                 "# analysis\nwe reject anti-llm tooling.\n");
     // 前缀命中但非 .md：候选盘点，不删。
     addResource(container, "META-INF/Kasumi/README.txt", "jailbreak guard notes\n");
-    // 前缀 + .md 但探针缺席：候选盘点，不删（树版返回 false 同口径）。
+    // 前缀 + .md 但探针缺席：候选盘点，不删（参考实现返回 false 同口径）。
     addResource(container, "META-INF/Kasumi/cybersecurity/analysis-9-plain.md",
                 "# harmless release notes\n");
     // 前缀不符：完全不在视野。
