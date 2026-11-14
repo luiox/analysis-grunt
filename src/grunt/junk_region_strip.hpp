@@ -55,6 +55,9 @@ struct JunkSite
     ca::usize                methodIndex = 0;
     ca::usize                codeSlot    = 0;   ///< 方法 attrs 里 Code 槽的下标
     std::vector<std::pair<ca::u32, ca::u32>> ranges;  ///< [start, end) 死区段
+    /// @brief 帧锚死区段保留的段尾 `athrow` pc（JVM 校验器的状态终止符，
+    ///        本 pass 不 NOP；下游求值面消费者按需在**副本**上清掉）。
+    std::vector<ca::u32>     keptTails;
 };
 
 struct ScanResult

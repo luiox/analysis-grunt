@@ -219,6 +219,49 @@ bool junkRanges(const std::vector<ca::u8>& code, const jbc::core::CodeAttr& body
     return true;
 }
 
+/// @brief StackMapTable 帧锚面：帧声明 pc 的字节标记。
+///
+/// 死区 NOP 化的帧一致性问题：JVM 校验器把 SMT 帧声明当类型状态锚点，锚
+/// 状态沿 NOP 直落传播——死区尾的 `athrow` 是状态终止符（消费栈顶异常并
+/// 终止直落），NOP 掉它会让锚状态泄进可达区的 merge 点（真实样本实证：
+/// VerifyError "Instruction type does not match stack map"）。判据：
+///   - 段内无帧锚 → 全段 NOP 安全（校验器不关心无锚字节）；
+///   - 段内有帧锚 → 段尾必须保留 `athrow`（NOP 化收缩 1 字节）；
+///   - 段内有帧锚且段尾不是 `athrow` → 整方法 fail-closed（锚会泄进可达
+///     区，不猜）。
+/// SMT 属性解码失败 = 无法知道锚在哪 → 整方法 fail-closed（宁留不猜）。
+bool frameAnchors(jbc::core::ClassFile& cf, jbc::core::CodeAttr& body,
+                  std::vector<bool>& hasFrame)
+{
+    using jbc::core::StackMapTableAttr;
+    for (jbc::core::AttrSlot& slot : body.attrs) {
+        if (cf.utf8(slot.nameCp) != "StackMapTable") continue;
+        auto d = cf.decodeAttr(slot);
+        if (d.is_err()) return false;
+        const auto* smt = static_cast<const StackMapTableAttr*>(d.unwrap());
+        ca::u32         prev = static_cast<ca::u32>(-1);   /// 首帧 delta 即 pc（JVMS 4.7.4）。
+        for (const StackMapTableAttr::Frame& f : smt->frames) {
+            ca::u32 delta = 0;
+            if (f.type <= StackMapTableAttr::Frame::kSameMax) {
+                delta = f.type;
+            } else if (f.type >= StackMapTableAttr::Frame::kSame1Base
+                       && f.type <= StackMapTableAttr::Frame::kSame1Max) {
+                delta = f.type - StackMapTableAttr::Frame::kSame1Base;
+            } else if (f.type == StackMapTableAttr::Frame::kSame1Ext
+                       || (f.type >= StackMapTableAttr::Frame::kChopMax
+                           && f.type <= StackMapTableAttr::Frame::kFull)) {
+                delta = f.offset;
+            } else {
+                return false;   /// 128..246 保留标签：不猜。
+            }
+            const ca::u32 pc = prev + delta + 1;   /// smtAbsPc 语义（wrap 起点自洽）。
+            if (static_cast<ca::usize>(pc) < hasFrame.size()) hasFrame[pc] = true;
+            prev = pc;
+        }
+    }
+    return true;
+}
+
 }   // namespace
 
 // ============================================================================
@@ -252,19 +295,61 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
                 ++result.methodsDecodeFail;
                 continue;
             }
-            const auto& body = static_cast<const jbc::core::CodeAttr&>(*d.unwrap());
+            auto& body = static_cast<jbc::core::CodeAttr&>(*d.unwrap());
 
             std::vector<std::pair<ca::u32, ca::u32>> ranges;
             if (!junkRanges(body.code, body, ranges)) {
                 ++result.methodsFailClosed;
                 continue;
             }
-            ca::u32 total = 0;
-            for (const auto& r : ranges) total += r.second;
+
+            // 帧锚保守面：SMT 帧声明的类型状态沿 NOP 直落传播，死区尾的
+            // athrow 是终止符。段内有锚 → 段尾必须保留 athrow（段收缩 1 字
+            // 节）；段尾不是 athrow 或 SMT 解不开 → 方法整条 fail-closed。
+            std::vector<bool> hasFrame(body.code.size(), false);
+            if (!frameAnchors(cf, body, hasFrame)) {
+                ++result.methodsFailClosed;
+                continue;
+            }
+            bool          failClosed = false;
+            ca::u32       total      = 0;
+            std::vector<std::pair<ca::u32, ca::u32>> keep;
+            std::vector<ca::u32>                      keptTails;
+            keep.reserve(ranges.size());
+            for (const auto& r : ranges) {
+                bool anchored = false;
+                for (ca::u32 i = 0; i < r.second; ++i) {
+                    if (hasFrame[r.first + i]) {
+                        anchored = true;
+                        break;
+                    }
+                }
+                if (!anchored) {
+                    total += r.second;
+                    keep.push_back(r);
+                    continue;
+                }
+                const ca::u32 tailPc = r.first + r.second - 1;
+                if (body.code[static_cast<ca::usize>(tailPc)] != 0xbf) {
+                    failClosed = true;
+                    break;
+                }
+                auto shrunk = r;
+                shrunk.second -= 1;   // 段尾 athrow 保留（终止符），段内 NOP 化
+                keptTails.push_back(tailPc);
+                if (shrunk.second != 0) {
+                    total += shrunk.second;
+                    keep.push_back(shrunk);
+                }
+            }
+            if (failClosed) {
+                ++result.methodsFailClosed;
+                continue;
+            }
             if (total == 0) continue;
             result.junkBytes += total;
             result.sites.push_back(JunkSite{std::string(entry.uri), mi, codeSlot,
-                                            std::move(ranges)});
+                                            std::move(keep), std::move(keptTails)});
         }
     });
     return result;

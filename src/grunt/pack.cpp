@@ -368,6 +368,20 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.JunkRegionStrip"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.PoolArrayFold",
+            [] { return makeFailClosed<PoolArrayFoldPass>("grunt.PoolArrayFold"); },
+            "Fold string-pool array reads back to ldc constants via an"
+            " evaluation channel: simulate the pool class <clinit> with the"
+            " cross-method executor, read the final array state from the"
+            " session statics, and rewrite each GETSTATIC; idx; AALOAD triple"
+            " in place to an ldc of the evaluated plaintext (anchor srcPc"
+            " kept, frame chain recomputed). Pool groups with a bail, step"
+            " budget exhaustion, non-clinit writes or escape-suspect stores"
+            " stay untouched (fail-closed).");
+        r.is_err()) {
+        return Err(std::string("grunt.PoolArrayFold"));
+    }
     return Ok();
 }
 

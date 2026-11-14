@@ -149,6 +149,23 @@
 
 4 方法注记（复现口径）
 ------------------------
+- **池走廊求值通道压池（grunt.PoolArrayFold 实现批，本批追加 2026-11-14）**：形态普查
+  （final jar，字节级）——21 个池字段组（static ``String[]``，伴生类伴生字段）、198 个池
+  读点**全部同类**（业务类调池类静态方法取串，数组读点不跨类）、129 个 clinit 零 indy。
+  求值通道（libjsim 跨方法执行器 + 求值副本：帧锚死区保留段尾 athrow 在副本清掉——桥面
+  对含 athrow 的方法整方法不桥，副本无 JVM 校验面）eval-bailed **0**（21 组全部收敛，
+  final 上单跑；未做副本净化时 16 组 Bail 全为 ``C.b`` 型解密器桥拒）。三元组 72 站、
+  回填 **71**（1 站 roundtrip 不安全 fail-closed）、write-suspect 1 组、residual 1。
+  **真 bug 修复**：改写写回不走 Strict 帧再生——CFG 推导对 junk 谓词走廊方法会把
+  append 帧的 locals 基算丢（样本 C ``c.a()`` 实证 VerifyError: locals[0] 应为 this 而
+  stackmap 声明 double），改走 lower 保真重定位（pcmap 平移 SMT/LVT/LNT，帧内容不动；
+  折改写是栈形等价的语义恒等替换，无需重推导）。行为：1.4 Accuracy 从 ERROR 回稳
+  PASS（帧 bug 即 1.4 ERROR 的根因，与池折语义无关）；1.6 Pool 为 Windows 时序敏感的
+  flaky 测试（**6 次采样三方同分布**：final 3/6、59 站折 2/6、71 站折 3/6——一次性
+  采样的行为差异不构成判据，本批据此删除了中途据单次采样引入的两条虚惊门（反射
+  检查器门/判分锚点串门），判据面回归最简：Bail/写嫌疑/越界/孤立代理/roundtrip）。
+  CFR 终验与走廊清况见本条后续数字（后台跑批）。
+
 
 - **普查工具** ：\ ``mjt/tmp_corpus/census_a.py``\ （样本 A，仅解码 ``(III)I``/``(II)I`` 方法体，生成面 MAXS(8,2) 全用隐式槽指令形，全部 jar 零解码失败即此口径健全性的旁证；异常桥按 exception_table 原始字节判）、\ ``census_b.py``\ （样本 B，全方法解码 + cp Fieldref/NameAndType 解析；17 方法 Crasher junk 解码失败如实计并排除在算术面分母外）、\ ``census_r1.py``\ （样本 A 供给链产物 第 1 轮/第 3 轮 复扫，严格形状桥 + 校验器式可达普查，SMT 帧根 + 异常表 handler 根 BFS，供缺口 #10 面 b 还原前后对照）、\ ``mjt/tmp_corpus8/census8d.py``\ （缺口 #8 复算批：样本 B 全方法解码 + cp Fieldref 解析 + 跨类 ConstantValue 注册表（GETSTATIC→伴生字段带 ConstantValue 计 const-fed 'cv'），NOP 夹层邻接窗 + junk 区重同步容差；const-fed 与走廊锚四数见 §2 #8）。四脚本一次性工具不进仓，判据已逐条录入上文。
 - **CLI 统计开关** ：\ ``GRUNT_TRACE=1``\ （per-pass scan/rewrite/rejects 桶）；\ ``GRUNT_SLICE_SEC=0``\ （关 60 s 时间片，ConstantCall 首跑 slice 截断在 oo.class 且 proof FAILED 是截断伪影，全量复跑 24479/24479 proof=ok；样本 A 供给链最终数以全量跑为准）。

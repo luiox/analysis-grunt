@@ -19,6 +19,7 @@
 
 #include "jbc/analysis/frame.hpp"
 #include "jbc/core/class_file.hpp"
+#include "jbc/core/constant_pool.hpp"
 #include "jbc/core/opcode.hpp"
 #include "jbc/ir/code_editor.hpp"
 #include "jbc/ir/units.hpp"
@@ -240,6 +241,91 @@ inline bool removeResource(mjbase::model::ResourceContainer& container, std::str
     if (it == resources.end()) return false;
     resources.erase(it);
     return true;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 明文码元 → 常量池（string_pool_fold 的改写原语单源化，pool_array_fold 同用）
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// @brief UTF-16 码元序列 → classfile modified UTF-8（NUL 走 0xC0 0x80；
+///        代理对按码元各落 3 字节形，javac 写常量池的同构口径）。全码元
+///        可表示，无失败面。
+inline void u16ToMutf8(const std::vector<ca::u16>& units, std::string& out)
+{
+    out.clear();
+    for (const ca::u16 u : units) {
+        if (u == 0) {
+            out.push_back(static_cast<char>(0xC0));
+            out.push_back(static_cast<char>(0x80));
+        } else if (u < 0x80) {
+            out.push_back(static_cast<char>(u));
+        } else if (u < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (u >> 6)));
+            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xE0 | (u >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
+        }
+    }
+}
+
+/// @brief UTF-16 码元序列 → UTF-8 记录形（有效代理对重组 4 字节；孤立代理
+///        返回 false）。记录形进 Site.plaintext（trace/统计/单测），孤立
+///        代理不可表示即整站拒绝（javac ldc 源语言面不含孤立代理，语料
+///        不受影响；fail-closed 不猜）。
+inline bool u16ToUtf8Record(const std::vector<ca::u16>& units, std::string& out)
+{
+    out.clear();
+    for (ca::usize i = 0; i < units.size(); ++i) {
+        const ca::u16 u = units[i];
+        if (u >= 0xD800 && u <= 0xDBFF) {
+            if (i + 1 >= units.size()) return false;
+            const ca::u16 lo = units[i + 1];
+            if (lo < 0xDC00 || lo > 0xDFFF) return false;
+            const ca::u32 cp = 0x10000u
+                             + ((static_cast<ca::u32>(u - 0xD800) << 10)
+                                | static_cast<ca::u32>(lo - 0xDC00));
+            out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            ++i;
+        } else if (u >= 0xDC00 && u <= 0xDFFF) {
+            return false;   // 孤立低位代理
+        } else if (u < 0x80) {
+            out.push_back(static_cast<char>(u));
+        } else if (u < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (u >> 6)));
+            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xE0 | (u >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
+        }
+    }
+    return true;
+}
+
+/// @brief 明文 intern 进常量池：码元 → MUTF-8 → Utf8（命中既有池不膨胀）+
+///        CONSTANT_String 包装。@return String 条目索引；0 = 失败（占位槽
+///        索引天然是哨兵）。
+inline ca::u32 internPlainString(jbc::core::ConstantPool& cp, const std::vector<ca::u16>& plain)
+{
+    std::string mutf8;
+    u16ToMutf8(plain, mutf8);
+    if (mutf8.empty()) return 0;
+    ca::u32 utf8Idx = cp.findUtf8(mutf8);
+    if (utf8Idx == 0) {
+        utf8Idx = cp.addUtf8(mutf8);
+        if (utf8Idx == 0) return 0;
+    }
+    for (ca::u32 i = 1; i < cp.size(); ++i) {
+        const jbc::core::ConstantPool::Entry& e = cp.at(i);
+        if (e.tag == jbc::core::CpTag::String && e.a == utf8Idx) return i;
+    }
+    return cp.addString(utf8Idx);
 }
 
 }   // namespace grunt::rewrite_tools

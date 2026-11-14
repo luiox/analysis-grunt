@@ -101,66 +101,6 @@ constexpr ca::usize kNoSlot    = static_cast<ca::usize>(-1);
 // ==== UTF-16 码元 ↔ classfile modified UTF-8（明文 → 常量池 Utf8 字节面）===
 // ============================================================================
 
-/// @brief UTF-16 码元序列 → classfile modified UTF-8（NUL 走 0xC0 0x80；
-///        代理对按码元各落 3 字节形，javac 写常量池的同构口径）。全码元
-///        可表示，无失败面。
-void u16ToMutf8(const std::vector<ca::u16>& units, std::string& out)
-{
-    out.clear();
-    for (const ca::u16 u : units) {
-        if (u == 0) {
-            out.push_back(static_cast<char>(0xC0));
-            out.push_back(static_cast<char>(0x80));
-        } else if (u < 0x80) {
-            out.push_back(static_cast<char>(u));
-        } else if (u < 0x800) {
-            out.push_back(static_cast<char>(0xC0 | (u >> 6)));
-            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        } else {
-            out.push_back(static_cast<char>(0xE0 | (u >> 12)));
-            out.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        }
-    }
-}
-
-/// @brief UTF-16 码元序列 → UTF-8 记录形（有效代理对重组 4 字节；孤立代理
-///        返回 false）。记录形进 Site.plaintext（trace/统计/单测），孤立
-///        代理不可表示即整站拒绝（javac ldc 源语言面不含孤立代理，语料
-///        不受影响；fail-closed 不猜）。
-bool u16ToUtf8Record(const std::vector<ca::u16>& units, std::string& out)
-{
-    out.clear();
-    for (ca::usize i = 0; i < units.size(); ++i) {
-        const ca::u16 u = units[i];
-        if (u >= 0xD800 && u <= 0xDBFF) {
-            if (i + 1 >= units.size()) return false;
-            const ca::u16 lo = units[i + 1];
-            if (lo < 0xDC00 || lo > 0xDFFF) return false;
-            const ca::u32 cp = 0x10000u
-                             + ((static_cast<ca::u32>(u - 0xD800) << 10)
-                                | static_cast<ca::u32>(lo - 0xDC00));
-            out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-            out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-            ++i;
-        } else if (u >= 0xDC00 && u <= 0xDFFF) {
-            return false;   // 孤立低位代理
-        } else if (u < 0x80) {
-            out.push_back(static_cast<char>(u));
-        } else if (u < 0x800) {
-            out.push_back(static_cast<char>(0xC0 | (u >> 6)));
-            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        } else {
-            out.push_back(static_cast<char>(0xE0 | (u >> 12)));
-            out.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
-        }
-    }
-    return true;
-}
-
 /// @brief 常量池 Utf8（modified UTF-8）→ UTF-16 码元序列。3 字节代理形按
 ///        码元直取不重组，literal 密文串的 `toCharArray` 就是码元语义。
 ///        字节形非法（挂续/过短编码）返回 false，整块拒绝。
@@ -914,7 +854,7 @@ void scanClass(ir::ClassSession& s, const std::string& uri, ScanResult& result,
     std::unordered_map<ca::i32, std::pair<CipherForm, std::string>> plainTable;
     for (const auto& [idx, entry] : chain.entries) {
         std::string record;
-        if (!u16ToUtf8Record(entry.plain, record)) {
+        if (!rewrite_tools::u16ToUtf8Record(entry.plain, record)) {
             if (!countOnly) {
                 Reject rej;
                 rej.uri = uri;
@@ -1028,26 +968,6 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
 
 namespace {
 
-/// @brief 明文 intern 进常量池：码元 → MUTF-8 → Utf8（命中既有池不膨胀）+
-///        CONSTANT_String 包装。@return String 条目索引；0 = 失败（占位槽
-///        索引天然是哨兵）。
-ca::u32 internPlainString(jbc::core::ConstantPool& cp, const PlainUnits& plain)
-{
-    std::string mutf8;
-    u16ToMutf8(plain, mutf8);
-    if (mutf8.empty()) return 0;
-    ca::u32 utf8Idx = cp.findUtf8(mutf8);
-    if (utf8Idx == 0) {
-        utf8Idx = cp.addUtf8(mutf8);
-        if (utf8Idx == 0) return 0;
-    }
-    for (ca::u32 i = 1; i < cp.size(); ++i) {
-        const jbc::core::ConstantPool::Entry& e = cp.at(i);
-        if (e.tag == CpTag::String && e.a == utf8Idx) return i;
-    }
-    return cp.addString(utf8Idx);
-}
-
 /// @brief 单站点改写。@return false = 未动（failed 计数）。
 ///
 /// 重定位（srcPc + GETSTATIC）→ 形状复核（scan 之后字节可能已被同方法前站
@@ -1087,7 +1007,7 @@ bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
     }
 
     // 明文 MUTF-8 编码 + CP intern：失败面在动 DOM 之前收口。
-    const ca::u32 strIdx = internPlainString(s.backing().cp, site.plainUnits);
+    const ca::u32 strIdx = rewrite_tools::internPlainString(s.backing().cp, site.plainUnits);
     if (strIdx == 0) return false;
 
     // 锚点原地换 ldc（srcPc 保留：pcmap/调试行落点不变）。

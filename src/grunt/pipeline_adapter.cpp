@@ -38,6 +38,7 @@
 #include "grunt/predicate_fold.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/junk_region_strip.hpp"
+#include "grunt/pool_array_fold.hpp"
 #include "grunt/proxy_inline.hpp"
 #include "grunt/seed_strip.hpp"
 #include "grunt/string_cache_fold.hpp"
@@ -1421,6 +1422,51 @@ mjbase::spi::PreservedAnalyses JunkRegionStripPass::run(
                      dirty.sitesOutOfRange, proof.ok ? "ok" : "FAILED");
         for (const std::string& f : proof.failed) {
             std::fprintf(stderr, "[grunt.JunkRegionStrip] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses PoolArrayFoldPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;   // 本残留自包含三段，不消费注册分析
+
+    const ca::usize before = countClasses(container);
+
+    const pool_array_fold::ScanResult scanned = pool_array_fold::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.PoolArrayFold] scan: sites=%zu pool-classes=%zu"
+                     " triple-hits=%zu idx-missing=%zu eval-bailed=%zu"
+                     " write-suspect=%zu skipped-classes=%zu\n",
+                     scanned.sites.size(), scanned.poolClasses, scanned.tripleHits,
+                     scanned.idxMissing, scanned.evalBailed, scanned.writeSuspect,
+                     scanned.classesSkipped);
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    if (traceEnabled()) {
+        for (const pool_array_fold::Site& s : scanned.sites) {
+            std::fprintf(stderr,
+                         "[grunt.PoolArrayFold] site %s.%s[%d] method#%zu pc=%u = \"%s\"\n",
+                         s.owner.c_str(), s.fieldName.c_str(), s.index, s.methodIndex,
+                         s.anchorSrcPc, s.plaintext.c_str());
+        }
+    }
+    const pool_array_fold::DirtySet dirty = pool_array_fold::rewrite(container, scanned);
+    const pool_array_fold::ProofResult proof =
+        pool_array_fold::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.PoolArrayFold] rewrite: classes=%zu sites=%zu"
+                     " failed=%zu roundtrip-skip=%zu proof=%s residual=%zu\n",
+                     dirty.classes, dirty.sites, dirty.failed,
+                     dirty.skippedByRoundTrip, proof.ok ? "ok" : "FAILED",
+                     proof.residual);
+        for (const std::string& f : proof.failed) {
+            std::fprintf(stderr, "[grunt.PoolArrayFold] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

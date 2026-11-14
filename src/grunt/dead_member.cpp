@@ -411,83 +411,8 @@ void collectPoolNames(const mjbase::model::ResourceContainer& container,
     jsim::str::installStringAlloc(exec.session());   // 池解密器体 `new String(char[])`
     jsim::num::install(exec.session());
 
-    // 两个 JDK 纯函数 mock：池填充走廊的 parseUnsignedLong 与密文面的
-    // toCharArray。jsim::num / jsim::str 的 v1 面未覆盖；两者都是全序纯
-    // 函数，常量实参下值唯一确定，接管不引入猜测面。失败即失败：坏数字
-    // 与 NumberFormatException 同桶 Bail（v1 无异常派发）。
-    exec.session().callMocks["java/lang/Long.parseUnsignedLong(Ljava/lang/String;I)J"] =
-        [](jsim::Frame& frame) -> jsim::Result<jsim::SimValue, jsim::Bail> {
-        auto radix = frame.popChecked();
-        if (!radix.isOk()) return radix;
-        auto text = frame.popChecked();
-        if (!text.isOk()) return text;
-        if (!text.value().known || text.value().type != jsim::ValType::Ref
-            || text.value().ref.kind != jsim::RefPayload::Kind::Str
-            || !radix.value().known) {
-            return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
-                jsim::SimValue::unknownOf(jsim::ValType::I64));
-        }
-        const ca::i32 radixV = static_cast<ca::i32>(radix.value().asU32());
-        if (radixV < 2 || radixV > 36) {
-            return jsim::Result<jsim::SimValue, jsim::Bail>::err(
-                {jsim::Bail::Reason::NotConcrete, frame.pc(),
-                 "parseUnsignedLong radix 越界（NumberFormatException v1 不做）"});
-        }
-        std::vector<ca::u16> units;
-        if (!scan_tools::mutf8ToUnits(text.value().ref.str, units)) {
-            return jsim::Result<jsim::SimValue, jsim::Bail>::err(
-                {jsim::Bail::Reason::NotConcrete, frame.pc(),
-                 "parseUnsignedLong 输入串 MUTF-8 解码失败"});
-        }
-        ca::u64 acc = 0;
-        for (const ca::u16 u : units) {
-            ca::i32 d = -1;
-            if (u >= '0' && u <= '9') d = static_cast<ca::i32>(u - '0');
-            else if (u >= 'a' && u <= 'z') d = static_cast<ca::i32>(u - 'a') + 10;
-            else if (u >= 'A' && u <= 'Z') d = static_cast<ca::i32>(u - 'A') + 10;
-            if (d < 0 || d >= radixV) {
-                return jsim::Result<jsim::SimValue, jsim::Bail>::err(
-                    {jsim::Bail::Reason::NotConcrete, frame.pc(),
-                     "parseUnsignedLong 坏数字（NumberFormatException v1 不做）"});
-            }
-            const ca::u64 next = acc * static_cast<ca::u64>(radixV)
-                                 + static_cast<ca::u64>(d);
-            if (next < acc) {
-                return jsim::Result<jsim::SimValue, jsim::Bail>::err(
-                    {jsim::Bail::Reason::NotConcrete, frame.pc(),
-                     "parseUnsignedLong 溢出（NumberFormatException v1 不做）"});
-            }
-            acc = next;
-        }
-        return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
-            jsim::SimValue::knownI64(static_cast<ca::i64>(acc)));
-    };
-    exec.session().callMocks["java/lang/String.toCharArray()[C"] =
-        [](jsim::Frame& frame) -> jsim::Result<jsim::SimValue, jsim::Bail> {
-        auto recv = frame.popChecked();
-        if (!recv.isOk()) return recv;
-        if (!recv.value().known || recv.value().type != jsim::ValType::Ref
-            || recv.value().ref.kind != jsim::RefPayload::Kind::Str) {
-            return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
-                jsim::SimValue::unknownOf(jsim::ValType::Ref));
-        }
-        std::vector<ca::u16> units;
-        if (!scan_tools::mutf8ToUnits(recv.value().ref.str, units)) {
-            return jsim::Result<jsim::SimValue, jsim::Bail>::err(
-                {jsim::Bail::Reason::NotConcrete, frame.pc(),
-                 "toCharArray 输入串 MUTF-8 解码失败"});
-        }
-        jsim::HeapObj arr;
-        arr.className = "[C";
-        arr.elems.reserve(units.size());   // 原始类型数组载荷在 elems（位型解释）
-        for (const ca::u16 u : units) {
-            arr.elems.push_back(static_cast<ca::i64>(u));
-        }
-        const ca::u64 id = frame.session().nextAllocId++;
-        frame.session().heap[id] = std::move(arr);
-        return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
-            jsim::SimValue::knownObj(id));
-    };
+    // 池求值 mock（parseUnsignedLong / toCharArray）单源安装（scan_toolbox）。
+    scan_tools::installPoolEvalMocks(exec.session());
 
     static constexpr ca::u32 kAccStatic = 0x0008;
 
