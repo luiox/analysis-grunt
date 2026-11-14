@@ -313,6 +313,47 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.GateProcessorFold"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.ArithFold",
+            [] { return makeFailClosed<ArithFoldPass>("grunt.ArithFold"); },
+            "Restore arithmetic-substitution junk back to single ops and fold"
+            " constant-fed arithmetic windows: eight fixed replacement shapes"
+            " (replaceINEG/IAND/IOR/IXOR families, exact algebraic identities"
+            " emitted verbatim by Grunt v2 ArithmeticEncrypt / MutateJumps and"
+            " v3 ArithmeticSubstitute) collapse onto their single target op,"
+            " and whole const-fed windows (pure constant loads plus closed"
+            " int/long/float/double arithmetic) fold into one constant load"
+            " under exact JVM semantics; division by a constant zero keeps the"
+            " original exception.");
+        r.is_err()) {
+        return Err(std::string("grunt.ArithFold"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.ConstPoolRestore",
+            [] { return makeFailClosed<ConstPoolRestorePass>("grunt.ConstPoolRestore"); },
+            "Back-fill Grunt v2 ConstPoolEncrypt companion-pool constant reads:"
+            " numeric fields expose their value through the ConstantValue"
+            " attribute (chain ConstValuePromote first) with a container-wide"
+            " zero-write census, string fields through a template-pinned"
+            " per-class XOR decryptor applied to the ciphertext stored in the"
+            " companion clinit; every GETSTATIC of a resolved field is swapped"
+            " in place for the constant load. Companion classes themselves"
+            " stay (dead-weight removal is the trash-class face).");
+        r.is_err()) {
+        return Err(std::string("grunt.ConstPoolRestore"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.StringEqualsRestore",
+            [] { return makeFailClosed<StringEqualsRestorePass>("grunt.StringEqualsRestore"); },
+            "Restore Grunt v2 StringEqualsRedirect / v3 StringEqualsOptimize"
+            " sites: the hashCode-compare window (Object.hashCode, Integer"
+            " valueOf, swap, String.hashCode, Integer.valueOf, Integer.equals;"
+            " equalsIgnoreCase variants prefix both sides with"
+            " String.toUpperCase) is pinned member-exact and swapped back to"
+            " the original String.equals / equalsIgnoreCase invoke in place.");
+        r.is_err()) {
+        return Err(std::string("grunt.StringEqualsRestore"));
+    }
     return Ok();
 }
 

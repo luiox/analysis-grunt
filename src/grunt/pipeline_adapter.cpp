@@ -14,6 +14,8 @@
 #include <vector>
 
 #include "grunt/booger_anno_strip.hpp"
+#include "grunt/arith_fold.hpp"
+#include "grunt/const_pool_restore.hpp"
 #include "grunt/const_value_promote.hpp"
 #include "grunt/constant_call.hpp"
 #include "grunt/const_method.hpp"
@@ -38,6 +40,7 @@
 #include "grunt/proxy_inline.hpp"
 #include "grunt/seed_strip.hpp"
 #include "grunt/string_cache_fold.hpp"
+#include "grunt/string_equals_restore.hpp"
 #include "grunt/string_pool_fold.hpp"
 #include "grunt/trampoline_squeeze.hpp"
 
@@ -386,8 +389,8 @@ mjbase::spi::PreservedAnalyses ConstValuePromotePass::run(
     const const_value_promote::ScanResult scanned =
         const_value_promote::scan(container);
     if (traceEnabled()) {
-        std::fprintf(stderr, "[grunt.ConstValuePromote] scan: fields=%zu skipped=%zu\n",
-                     scanned.sites.size(), scanned.classesSkipped);
+        std::fprintf(stderr, "[grunt.ConstValuePromote] scan: fields=%zu skipped=%zu verifier-dead=%zu\n",
+                     scanned.sites.size(), scanned.classesSkipped, scanned.verifierDead);
         if (scanned.censusIncomplete) {
             std::fprintf(stderr, "[grunt.ConstValuePromote] census-incomplete：整轮放弃\n");
         }
@@ -420,8 +423,8 @@ mjbase::spi::PreservedAnalyses SeedStripPass::run(
     const ca::usize before = countClasses(container);
     const seed_strip::ScanResult scanned = seed_strip::scan(container);
     if (traceEnabled()) {
-        std::fprintf(stderr, "[grunt.SeedStrip] scan: fields=%zu skipped=%zu\n",
-                     scanned.sites.size(), scanned.classesSkipped);
+        std::fprintf(stderr, "[grunt.SeedStrip] scan: fields=%zu skipped=%zu verifier-dead=%zu\n",
+                     scanned.sites.size(), scanned.classesSkipped, scanned.verifierDead);
         if (scanned.censusIncomplete) {
             std::fprintf(stderr, "[grunt.SeedStrip] census-incomplete：整轮放弃\n");
         }
@@ -1271,6 +1274,118 @@ mjbase::spi::PreservedAnalyses GateProcessorFoldPass::run(
         }
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.GateProcessorFold] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses ArithFoldPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;   // 本残留自包含三段，不消费注册分析
+
+    const ca::usize before = countClasses(container);
+
+    const arith_fold::ScanResult scanned = arith_fold::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.ArithFold] scan: sites=%zu shape=%zu const=%zu"
+                     " skip-classes=%zu skip-budget=%zu\n",
+                     scanned.sites.size(), scanned.shapeSites, scanned.constSites,
+                     scanned.classesSkipped, scanned.classesSkippedByBudget);
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const arith_fold::DirtySet dirty = arith_fold::rewrite(container, scanned);
+    const arith_fold::ProofResult verdict = arith_fold::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.ArithFold] rewrite: classes=%zu sites=%zu/%zu failed=%zu"
+                     " roundtrip-skip=%zu budget-skip=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.sites, dirty.attempted, dirty.failed,
+                     dirty.skippedByRoundTrip, dirty.skippedByBudget,
+                     verdict.ok ? "ok" : "FAILED");
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.ArithFold] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses ConstPoolRestorePass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;   // 本残留自包含三段，不消费注册分析
+
+    const ca::usize before = countClasses(container);
+
+    const const_pool_restore::ScanResult scanned = const_pool_restore::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.ConstPoolRestore] scan: sites=%zu pool-classes=%zu numeric-classes=%zu"
+                     " fields-numeric=%zu fields-string=%zu skip-classes=%zu"
+                     " verifier-dead=%zu census-incomplete=%d\n",
+                     scanned.sites.size(), scanned.poolClasses, scanned.classesNumeric,
+                     scanned.fieldsNumeric,
+                     scanned.fieldsString, scanned.classesSkipped, scanned.verifierDead,
+                     scanned.censusIncomplete ? 1 : 0);
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const const_pool_restore::DirtySet dirty = const_pool_restore::rewrite(container, scanned);
+    const const_pool_restore::ProofResult verdict =
+        const_pool_restore::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.ConstPoolRestore] rewrite: classes=%zu sites=%zu/%zu failed=%zu"
+                     " roundtrip-skip=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.sites, dirty.attempted, dirty.failed,
+                     dirty.skippedByRoundTrip, verdict.ok ? "ok" : "FAILED");
+        if (dirty.failedRelocate || dirty.failedMember || dirty.failedMakeLoad
+            || dirty.failedFrames) {
+            std::fprintf(stderr,
+                         "[grunt.ConstPoolRestore]   relocate=%zu member=%zu make-load=%zu"
+                         " frames=%zu\n",
+                         dirty.failedRelocate, dirty.failedMember, dirty.failedMakeLoad,
+                         dirty.failedFrames);
+        }
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.ConstPoolRestore] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses StringEqualsRestorePass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;   // 本残留自包含三段，不消费注册分析
+
+    const ca::usize before = countClasses(container);
+
+    const string_equals_restore::ScanResult scanned = string_equals_restore::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.StringEqualsRestore] scan: sites=%zu skip-classes=%zu\n",
+                     scanned.sites.size(), scanned.classesSkipped);
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const string_equals_restore::DirtySet dirty =
+        string_equals_restore::rewrite(container, scanned);
+    const string_equals_restore::ProofResult verdict =
+        string_equals_restore::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.StringEqualsRestore] rewrite: classes=%zu sites=%zu/%zu failed=%zu"
+                     " roundtrip-skip=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.sites, dirty.attempted, dirty.failed,
+                     dirty.skippedByRoundTrip, verdict.ok ? "ok" : "FAILED");
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.StringEqualsRestore] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

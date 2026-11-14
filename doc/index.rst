@@ -26,10 +26,12 @@ Grunt 家族（v2 Gruntpocalypse / v3 Grunteon）混淆产物静态还原的行�
    :maxdepth: 1
    :caption: 逐面形态文档
 
+   arith-fold
    booger-anno-strip
    cff-unflatten
    constant-call
    const-method
+   const-pool-restore
    const-value-promote
    dead-code
    dead-member
@@ -48,5 +50,6 @@ Grunt 家族（v2 Gruntpocalypse / v3 Grunteon）混淆产物静态还原的行�
    proxy-inline
    seed-strip
    string-cache-fold
+   string-equals-restore
    string-pool-fold
    trampoline-squeeze

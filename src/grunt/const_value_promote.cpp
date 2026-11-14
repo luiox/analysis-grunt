@@ -126,9 +126,12 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
 
     // 访问面普查不完整（会话打不开的类 / promote 失败的方法）＝引用证据不足
     // ，唯一写在本类 clinit判据会漏计漏普查面上的写，fail-closed 整轮
-    // 放弃（与 dead_member 引用普查同一课，宁误留不误删）。
+    // 放弃（与 dead_member 引用普查同一课，宁误留不误删）。验证器判死
+    // （BadInstructions）豁免：所在类链接期必被 VerifyError 拒掉，方法体
+    // 永不执行，访问面按死亡不计（罐 B 语料 16 方法实证全为 VerifyError）。
     field_census::Census     census;
     const field_census::Stat stat = field_census::scanFieldAccess(container, census);
+    result.verifierDead = stat.methodsVerifierDead;
     if (!stat.complete()) {
         result.censusIncomplete = true;
         std::fprintf(stderr,
