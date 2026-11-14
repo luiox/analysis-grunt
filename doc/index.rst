@@ -19,6 +19,7 @@ Grunt 家族（v2 Gruntpocalypse / v3 Grunteon）混淆产物静态还原的行�
    obf-behaviors
    obf-behaviors/grunt-v2-behaviors
    obf-behaviors/grunt-v3-behaviors
+   coverage
    corpus-ledger
    gate-processor-fold-spec
 
