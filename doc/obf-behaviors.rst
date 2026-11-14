@@ -260,7 +260,7 @@ grunt 行为记录总表
 
 **P2，加密与控制流扩展面** ：
 
-5. **ConstPoolEncrypt 调用点回填** （已处理完）：\ ``grunt.ConstPoolRestore`` 承载（伴生类形状钉 + 数值面 ``ConstantValue`` 属性与容器级零写 + 字符串面解密器模板钉与逐码元自逆 XOR 直解，``GETSTATIC`` 调用点原地换回常量装载），链上 NumberFold/ConstValuePromote 先行折供给链；伴生类本体不删交垃圾类面（#14），HeavyEncrypt 二次加密面逐类 fail-closed。语料验证登记见 :ref:`corpus-ledger`\ 。
+5. **ConstPoolEncrypt 调用点回填** （已处理完）：\ ``grunt.ConstPoolRestore`` 承载（伴生类形状钉 + 数值面 ``ConstantValue`` 属性与容器级零写 + 字符串面解密器双通道解码：24 条模板钉形走逐码元自逆 XOR 直解、钉形失败不拒类走求值通道（libjsim 真跑解密器，junk 包裹 fork 变体），``GETSTATIC`` 调用点原地换回常量装载），链上 NumberFold/ConstValuePromote 先行折供给链；伴生类本体不删交垃圾类面（#14），HeavyEncrypt 二次加密面逐类 fail-closed。语料验证登记见 :ref:`corpus-ledger`\ 。
 6. **ConstBuilder 折回** ：switch 全表静态求值（操作数全为 ``ConstantValue`` 字段 + 封闭 IXOR），真 case 产出折回单条 ``ldc`` 。
 7. **ArithmeticEncrypt/ArithmeticSubstitute 恒等简化** （已处理完）：\ ``grunt.ArithFold`` 承载（v2 ArithmeticEncrypt + v2 MutateJumps 直线形 + v3 ArithmeticSubstitute 三面，两代生成源逐字相同），替换八式形状钉 + 精确代数恒等（值逐位相等）折回单条指令，常量窗整窗归一（净栈效恰一个值 ∧ 全部非 NOP 指令参与，JVM 精确语义求值、除零不折）折回单条常量装载；缺口 #18 登记的 MutateJumps 直线形即常量对实例，归并本面不另建还原面。语料验证登记见 :ref:`corpus-ledger`\ 。
 8. **NumberEncrypt v2 IAND/LAND 位拼模板扩面** ：\ ``first & second = v`` 对（int/long）加入 NumberFold 形状清单，已实现（六式，样本 B 位拼面 354090 全折、旧四式站点数逐位不动）；v3 无此形态，仅 v2 语料需要。
