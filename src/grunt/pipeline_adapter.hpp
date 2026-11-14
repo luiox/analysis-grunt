@@ -328,4 +328,13 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
+/// @brief `grunt.JunkRegionStrip`：不可达死区垃圾码原位 NOP 化（字节级可达性
+/// 走查，长度保持，无帧重算面；fail-closed 方法整条不动）。
+class JunkRegionStripPass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
 }   // namespace grunt

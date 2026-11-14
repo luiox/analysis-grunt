@@ -354,6 +354,20 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.StringEqualsRestore"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.JunkRegionStrip",
+            [] { return makeFailClosed<JunkRegionStripPass>("grunt.JunkRegionStrip"); },
+            "NOP out unreachable byte regions (invalid opcodes planted in dead"
+            " code by DecompilerCrasher-style junk) via a byte-level"
+            " reachability walk identical to the JVM verifier: worklist from"
+            " entry plus exception handlers, exact opcode length table, all"
+            " branch targets followed. Length-preserving in-place writes keep"
+            " code_length, offsets, StackMapTable frames and LVT/LNT rows"
+            " intact. Methods whose reachable path fails to decode are left"
+            " unchanged (fail-closed).");
+        r.is_err()) {
+        return Err(std::string("grunt.JunkRegionStrip"));
+    }
     return Ok();
 }
 

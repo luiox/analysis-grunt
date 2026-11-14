@@ -37,6 +37,7 @@
 #include "grunt/number_fold.hpp"
 #include "grunt/predicate_fold.hpp"
 #include "grunt/proof_toolbox.hpp"
+#include "grunt/junk_region_strip.hpp"
 #include "grunt/proxy_inline.hpp"
 #include "grunt/seed_strip.hpp"
 #include "grunt/string_cache_fold.hpp"
@@ -1386,6 +1387,40 @@ mjbase::spi::PreservedAnalyses StringEqualsRestorePass::run(
                      dirty.skippedByRoundTrip, verdict.ok ? "ok" : "FAILED");
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.StringEqualsRestore] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses JunkRegionStripPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;   // 本残留自包含三段，不消费注册分析
+
+    const ca::usize before = countClasses(container);
+
+    const junk_region_strip::ScanResult scanned = junk_region_strip::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.JunkRegionStrip] scan: sites=%zu junk-bytes=%zu"
+                     " fail-closed=%zu decode-fail=%zu skipped-classes=%zu\n",
+                     scanned.sites.size(), scanned.junkBytes, scanned.methodsFailClosed,
+                     scanned.methodsDecodeFail, scanned.classesSkipped);
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const junk_region_strip::DirtySet dirty = junk_region_strip::rewrite(container, scanned);
+    const junk_region_strip::ProofResult proof =
+        junk_region_strip::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.JunkRegionStrip] rewrite: classes=%zu methods=%zu"
+                     " nop-bytes=%zu out-of-range=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.methods, dirty.nopBytes,
+                     dirty.sitesOutOfRange, proof.ok ? "ok" : "FAILED");
+        for (const std::string& f : proof.failed) {
+            std::fprintf(stderr, "[grunt.JunkRegionStrip] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

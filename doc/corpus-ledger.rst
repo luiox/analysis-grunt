@@ -126,6 +126,24 @@
 - **核对**：类数 210 不增；\ ``verify_jar``（独立 JVM 全类加载）产物 210/210 零失败，混淆基线同面逐项一致；\ ``-Xverify:all`` 产物失败集与输入全等。
 - **行为测程**（JavaObfuscatorTest runner，三方对照）：还原产物 1.1-1.7 全 PASS、2.2/2.4/2.6/2.7 PASS；2.1 FAIL / 2.3 FAIL / 2.5 ERROR / 2.8 ERROR 与混淆基线**逐项一致**（基线既有破坏面，原版基线 2.1 PASS 的落差是 fork 自身所致，非还原缺口）；Calc 849ms → **48ms**（原版 37ms）。
 - **残留清单（收敛轮 v7f9 实测）**：indy 4 站（3 站 BSM 含 MethodHandle 参数、1 站接收者放宽形接口 owner fail-closed）；ConstantCall rejects=2646 + label-blocked=12（家族 bait 形：实参非纯常量/合并点，静态下限）；PredicateFold 23 站 failed（合并点 bait，fail-closed 设计内）；~55 TrashClass 垃圾类未删（缺口 #14）；改名还原不在面内（mappings 外部工具职责）；DeadMember ref-rejected=149（反射可达保守保留，防护面非缺陷）。
+- **DecompilerCrasher 死区面复核与签名面收尾（本批追加 2026-11-14）**：一次性普查脚本的 ``junkcode``
+  口径作废（``disasm.OPS`` 无 ``:n`` 后缀的单字节操作码被按 2 字节步进，"死区方法 251/182" 是错步
+  走查碰巧踩进表外操作码的方法数，非真死区）。以新 pass ``grunt.JunkRegionStrip`` 的字节级可达性
+  走查（JVM 校验器同款语义）复核样本 C：**死区字节 = 0、fail-closed = 0、decode-fail = 0**，
+  样本 C 无不可达死区残留形态（该 pass 面向家族其他样本与上游链产出的死区延续段，switch 布局按
+  JVMS 6.5 default-在-填充后修正，单测 8 条含 table/lookupswitch 布局锁定）。签名面收尾：
+  ``IllegalSignatureRemover,IllegalClassFileCleaner`` 后 javap/CFR 复活（CFR 全 jar 可跑；Windows
+  大小写不敏感撞名产出 ``_0`` 后缀文件名，非缺类）。morpher opt 常量传播追加链
+  （``ConsReturnPropagator,ConsStaticFieldReplacer,LabelConsLocalVarPropagator,LocalConstantPropagation,
+  ConstantFolder,ConstantSwitchFolder,ConstantStateMachineEliminator,ConsJumpOptimizer,LocalConstantFolder,
+  ExpressionSimplifier,GotoRearranger,FixPatternSimplifier,ImpossibleJumpEliminater,ContinuousLabelMerger,
+  UnusedLabelRemover``，``--jdk`` 指向真实 JDK 主目录——路径无效时层次扫描 0 映射静默降级）：
+  ``if (false)`` 空块 / 局部变量走廊 / ``false ? 160 : 32`` 类型折叠全部清干净，行为与 s1 逐项一致
+  （Calc 56ms，产出 ``v7r10_final.jar`` 411015 B）。**组合缺陷登记**：``DeadLocalStoreRemover`` 在
+  折叠族之后参与组合会产出 SMT 不一致（``b.main`` VerifyError: Inconsistent stackmap frames，
+  二分定位 A+B+DLSR 复现、DLSR 单跑与剔除后全链均过）——morpher 侧 pass 缺陷，本轮以剔除规避。
+  池走廊（``K.a[0] = K.a(cipher, seed, key)`` 运行时解密填池，``parseUnsignedLong`` 种子 25 处）为
+  压池 pass 面，本轮不闭环。
 
 .. _corpus-ledger-method:
 
@@ -134,6 +152,9 @@
 
 - **普查工具** ：\ ``mjt/tmp_corpus/census_a.py``\ （样本 A，仅解码 ``(III)I``/``(II)I`` 方法体，生成面 MAXS(8,2) 全用隐式槽指令形，全部 jar 零解码失败即此口径健全性的旁证；异常桥按 exception_table 原始字节判）、\ ``census_b.py``\ （样本 B，全方法解码 + cp Fieldref/NameAndType 解析；17 方法 Crasher junk 解码失败如实计并排除在算术面分母外）、\ ``census_r1.py``\ （样本 A 供给链产物 第 1 轮/第 3 轮 复扫，严格形状桥 + 校验器式可达普查，SMT 帧根 + 异常表 handler 根 BFS，供缺口 #10 面 b 还原前后对照）、\ ``mjt/tmp_corpus8/census8d.py``\ （缺口 #8 复算批：样本 B 全方法解码 + cp Fieldref 解析 + 跨类 ConstantValue 注册表（GETSTATIC→伴生字段带 ConstantValue 计 const-fed 'cv'），NOP 夹层邻接窗 + junk 区重同步容差；const-fed 与走廊锚四数见 §2 #8）。四脚本一次性工具不进仓，判据已逐条录入上文。
 - **CLI 统计开关** ：\ ``GRUNT_TRACE=1``\ （per-pass scan/rewrite/rejects 桶）；\ ``GRUNT_SLICE_SEC=0``\ （关 60 s 时间片，ConstantCall 首跑 slice 截断在 oo.class 且 proof FAILED 是截断伪影，全量复跑 24479/24479 proof=ok；样本 A 供给链最终数以全量跑为准）。
+- **census junkcode 口径作废**：一次性普查脚本的线性走查对无 ``:n`` 后缀的单字节操作码按 2 字节
+  步进，"死区方法数"（182/251）是该口径伪影；死区判据一律以 ``grunt.JunkRegionStrip`` 的可达性
+  走查（含 ``starts`` 指令头去重，目标落在指令体内 fail-closed）为准。
 - **javap 边界** ：\ ``javap -c -p`` 全量 dump 在两份 jar 的 junk/畸形类上崩或挂死（DecompilerCrasher 面），一切字节码普查禁止依赖 javap 全量跑；单类抽样需挑小类。
 - **mjt-mcp** ：样本 A 曾以临时 project 打开（指纹 ``sha256:45357cad…`` 与 sha256sum 一致交叉验证）后关闭，无编辑。
 - **boar 统计对照数字来源** ：\ :ref:`obf-behaviors`\ §5（缺口清单：IndyRestore#1 30924 / StringPoolFold 19244 / materialLane 5060 / key-processor 6201→6121 / islands 1481→1547 / (III)I 26999 = 18461 native + 8538 转发 / 异常桥 0）。
