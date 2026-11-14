@@ -298,4 +298,34 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
+/// @brief `grunt.ArithFold`：算术替换 junk 还原 + 常量对折叠（v2
+/// ArithmeticEncrypt / v2 MutateJumps 直线形 / v3 ArithmeticSubstitute；
+/// 八式替换形状全代数恒等 + 常量窗口整窗归一，纯代数改写，Era 不消费）。
+class ArithFoldPass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
+/// @brief `grunt.ConstPoolRestore`：v2 ConstPoolEncrypt 伴生池常量调用点回填
+/// （GETSTATIC 伴生字段 → ldc；数值面 = ConstantValue + 零写普查，字符串面 =
+/// 解密器模板钉 + XOR 直解；链上 NumberFold/ConstValuePromote 先行）。
+class ConstPoolRestorePass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
+/// @brief `grunt.StringEqualsRestore`：v2 StringEqualsRedirect / v3
+/// StringEqualsOptimize 的 hashCode 比较窗口换回 String.equals /
+/// equalsIgnoreCase（两代生成源输出逐字同形，一套形状表覆盖）。
+class StringEqualsRestorePass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
 }   // namespace grunt

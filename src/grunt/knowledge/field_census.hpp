@@ -7,11 +7,19 @@
 /// fail-closed 口径（与 dead_member 引用普查同一课）：普查**不完整**时调用方
 /// 必须放弃改写，会话打不开的类、promote 失败的方法都计进 Stat，键面看不见
 /// 它们的访问，任何零引用/唯一写判据都会漏计证据（宁误留不误删）。
+///
+/// 唯一豁免是 BadInstructions：该错误码只在指令流违反 JVM 校验器静态约束
+/// （未定义操作码、分支不落指令起点、异常表 pc 越界）时返回，所在类链接期
+/// 必被 VerifyError 拒掉，方法体永不执行，漏计的是死人手笔。其余失败码
+/// （AttrNotDecoded 之外的结构面）不豁免。
 #pragma once
 
+#include <cstdio>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "libca/core/option.hpp"
 
 #include "jbc/core/opcode.hpp"
 #include "jbc/ir/units.hpp"
@@ -37,6 +45,11 @@ struct Stat
 {
     ca::usize classesSkipped       = 0;   ///< 会话打不开，整类未普查
     ca::usize methodsPromoteFailed = 0;   ///< promote 失败，方法访问面缺失
+    /// promote 以 BadInstructions 拒绝的方法数：指令流里带未定义操作码 /
+    /// 悬垂分支 / 越界异常表。这些是标准 JVM 校验器在链接期必拒的构造
+    /// （VerifyError），所在类加载不了，方法体永不执行，访问面按死亡豁免，
+    /// 不计入 complete()（罐 B 16 个方法全是此类，混淆器陷阱残留）。
+    ca::usize methodsVerifierDead  = 0;
 
     bool complete() const noexcept
     {
@@ -64,7 +77,13 @@ inline Stat scanFieldAccess(const mjbase::model::ResourceContainer& container, C
             const bool isClinit = unit.symbols().str(unit.methods[mi].name) == "<clinit>";
             auto promoted = ir::promoteMethod(s, mi);
             if (promoted.is_err()) {
-                ++stat.methodsPromoteFailed;
+                const auto err =
+                    promoted.err().unwrap_or(ir::PromoteError::BadInstructions);
+                if (err == ir::PromoteError::BadInstructions) {
+                    ++stat.methodsVerifierDead;
+                } else {
+                    ++stat.methodsPromoteFailed;
+                }
                 continue;
             }
             ir::CodeUnit* cu = promoted.unwrap().get();

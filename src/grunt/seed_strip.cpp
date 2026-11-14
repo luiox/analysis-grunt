@@ -239,6 +239,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
     // fail-closed 整轮放弃（与 dead_member 引用普查同一课，宁误留不误删）。
     field_census::Census     census;
     const field_census::Stat stat = field_census::scanFieldAccess(container, census);
+    result.verifierDead = stat.methodsVerifierDead;
     if (!stat.complete()) {
         result.censusIncomplete = true;
         std::fprintf(stderr,

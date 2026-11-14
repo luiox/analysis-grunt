@@ -58,6 +58,7 @@ struct ScanResult
 {
     std::vector<Site> sites;
     ca::usize         classesSkipped = 0;
+    ca::usize         verifierDead   = 0;   ///< 验证器判死方法数（BadInstructions，普查豁免）
 
     bool censusIncomplete = false;   ///< 访问面普查不完整（fail-closed 整轮放弃）
 };
