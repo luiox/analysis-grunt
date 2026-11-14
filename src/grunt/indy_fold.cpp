@@ -40,6 +40,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -110,6 +111,10 @@ BsmValue readBsmArg(const jbc::core::ConstantPool& cp, ca::u32 index)
         value.kind = BsmValue::Kind::Int;
         value.i    = e.ival;
         return value;
+    case CpTag::Long:
+        value.kind = BsmValue::Kind::Long;
+        value.l    = static_cast<ca::i64>(e.lval);
+        return value;
     case CpTag::Class:
         value.kind = BsmValue::Kind::Class;
         value.text = std::string(cp.utf8Of(e.a));
@@ -123,6 +128,25 @@ BsmValue readBsmArg(const jbc::core::ConstantPool& cp, ca::u32 index)
         return value;
     default: return value;
     }
+}
+
+/// @brief 整型装箱：把裸值装成 `@v` 槽 Obj（载荷口径与 jsim::num::detail::boxed
+///         一致，这里不引 detail 面，用公开的 session 堤原语自持）。
+///
+/// BSM 形参是包装面（`Ljava/lang/Integer;` / `Ljava/lang/Long;`）时必须装箱：
+/// jsim::num 的 intValue/longValue 拆箱 mock 只认 Obj 载荷（ref.kind == Obj，
+/// 值挂 `@v` 槽），裸 i32/i64 会被按 Unknown 传播，BSM 体内的装箱键分支
+/// （`if key == 1`）整站 Bail（Grunt2 fork 全链样本实测：913 站点全部
+/// Bail@分支）。
+jsim::SimValue boxedIntegral(jsim::Session& session, const char* className,
+                             jsim::SimValue value)
+{
+    const ca::u64 id = session.nextAllocId++;
+    jsim::HeapObj obj;
+    obj.className    = className;
+    obj.fields["@v"] = std::move(value);
+    session.heap[id] = std::move(obj);
+    return jsim::SimValue::knownObj(id);
 }
 
 /// 把 BSM 的静态参数灌成 SimValue。前三个形参（Lookup/name/MethodType）给 Unknown
@@ -147,8 +171,26 @@ bool materializeBsmArgs(const std::vector<jsim::ValType>& params,
             out.push_back(jsim::SimValue::knownStr(arg.text));
             break;
         case BsmValue::Kind::Int:
-            out.push_back(jsim::SimValue::knownI32(arg.i));
+        case BsmValue::Kind::Long: {
+            // 形参型别决定载荷：包装面装箱（拆箱 mock 只认 Obj），基元面按
+            // 槽宽灌裸值。包装类名跟 CP tag 走（Integer 常量进 Long 形参不是
+            // 可验证字节码，不猜第二包装类）。
+            const jsim::ValType pt = params[kBsmPrologue + i];
+            const bool          isLongTag = arg.kind == BsmValue::Kind::Long;
+            if (pt == jsim::ValType::Ref) {
+                out.push_back(boxedIntegral(
+                    session, isLongTag ? "java/lang/Long" : "java/lang/Integer",
+                    isLongTag ? jsim::SimValue::knownI64(arg.l)
+                              : jsim::SimValue::knownI32(arg.i)));
+            } else if (pt == jsim::ValType::I64) {
+                out.push_back(
+                    jsim::SimValue::knownI64(isLongTag ? arg.l
+                                                       : static_cast<ca::i64>(arg.i)));
+            } else {
+                out.push_back(jsim::SimValue::knownI32(arg.i));
+            }
             break;
+        }
         case BsmValue::Kind::Class:
             out.push_back(jsim::SimValue::knownObj(session.classObjectOf(arg.text)));
             break;
@@ -216,6 +258,24 @@ bool runBsm(Engine& engine, const std::string& hostUri, const Site& site,
     return true;
 }
 
+/// @brief 接收者放宽形判型：调用点 desc 在目标 desc 的参数表前多一个
+///        `Ljava/lang/Object;` 首参。
+///
+/// fork 形态：JunkBuilderParameter 让 builder/解密上下文经 Object 槽流动，
+/// BSM 侧 `findVirtual(...).asType(siteType)` 把接收者加宽成 Object（引用
+/// 放宽，asType 合法）。Virtual 目标原地换 invokevirtual：栈上接收者实型由
+/// 帧链复核把关（实型与目标 owner 不符时帧重算失败整类回滚，fail-closed）。
+/// Static 目标不认此形（asType 改变参数个数是非法适配，保持原判据拒绝）。
+bool receiverWidenedMatch(std::string_view targetDesc, std::string_view siteDesc)
+{
+    static const std::string_view kObjParam = "(Ljava/lang/Object;";
+    if (targetDesc.size() < 2 || targetDesc.front() != '(') return false;
+    if (siteDesc.size() <= kObjParam.size()) return false;
+    if (siteDesc.compare(0, kObjParam.size(), kObjParam) != 0) return false;
+    return siteDesc.compare(kObjParam.size(), std::string_view::npos,
+                            targetDesc.substr(1)) == 0;
+}
+
 /// 一个调用点能不能折。三条判据见头文件。
 bool judge(const Site& site, const jsim::indy::Target& target, std::string& why)
 {
@@ -225,12 +285,51 @@ bool judge(const Site& site, const jsim::indy::Target& target, std::string& why)
         return false;
     }
     if (target.desc != site.indyDesc) {
+        if (target.kind == jsim::indy::Target::Kind::Virtual
+            && receiverWidenedMatch(target.desc, site.indyDesc)) {
+            return true;
+        }
         why = "句柄描述符与调用点不符（asType 做了适配）：" + target.desc + " vs "
               + site.indyDesc;
         return false;
     }
     return true;
 }
+
+/// @brief 目标 owner 的接口判型（ widened-virtual 改写的前提证据）。
+///
+/// 容器内 owner 读 ACC_INTERFACE 原字节判型，fail-closed；容器外 owner（JDK
+/// 具体类 StringBuilder/String/Long 等）无旁证，按类处理——本仓语料面无
+/// JDK 接口目标，若有后续以 jrt-fs 旁证收窄。
+class OwnerKindCache
+{
+public:
+    explicit OwnerKindCache(const mjbase::model::ResourceContainer& container)
+        : container_(&container)
+    {}
+
+    /// @return true = owner 是接口；false = 类或不可判（不可判按类放行）。
+    bool isInterface(const std::string& owner)
+    {
+        const auto it = kinds_.find(owner);
+        if (it != kinds_.end()) return it->second;
+        bool iface = false;
+        std::string uri = owner + ".class";
+        if (const std::vector<ca::u8>* bytes =
+                findClassBytes(*container_, uri);
+            bytes != nullptr) {
+            if (auto session = openSession(*bytes)) {
+                iface = (session->unit().access & 0x0200) != 0;   // ACC_INTERFACE
+            }
+        }
+        kinds_.emplace(owner, iface);
+        return iface;
+    }
+
+private:
+    const mjbase::model::ResourceContainer* container_;
+    std::map<std::string, bool>             kinds_;
+};
 
 }   // namespace
 
@@ -243,6 +342,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
 {
     ScanResult result;
     Engine     engine(container);
+    OwnerKindCache ownerKinds(container);
     ca::usize  named = 0;
 
     forEachClass(container, [&](const ClassEntry& entry) {
@@ -344,6 +444,15 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
                 site.target = target;
                 if (!judge(site, target, why)) {
                     site.why = std::move(why);
+                    result.sites.push_back(std::move(site));
+                    continue;
+                }
+                // 放宽形的目标 owner 必须是类不是接口：原地改写只产
+                // invokevirtual，接口 owner 要 invokeinterface（字节长度不
+                // 同，超出本 pass 不变 pc 布局面），误用会运行期 ICCE。
+                if (target.kind == jsim::indy::Target::Kind::Virtual
+                    && target.desc != site.indyDesc && ownerKinds.isInterface(target.owner)) {
+                    site.why = "接收者放宽形的目标 owner 是接口：invokeinterface 超出不变布局面";
                     result.sites.push_back(std::move(site));
                     continue;
                 }

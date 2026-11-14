@@ -68,6 +68,7 @@ struct BsmValue
     enum class Kind : ca::u8 {
         Str,
         Int,
+        Long,
         Class,
         MethodType,
         MethodHandle,
@@ -77,6 +78,7 @@ struct BsmValue
     Kind        kind = Kind::Unsupported;
     std::string text;   ///< Str 内容 / Class 内部名 / MethodType 描述符
     ca::i32     i = 0;  ///< Int
+    ca::i64     l = 0;  ///< Long
 };
 
 /// 一个 invokedynamic 调用点。

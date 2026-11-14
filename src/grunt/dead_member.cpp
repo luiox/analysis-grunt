@@ -70,7 +70,14 @@
 
 #include "grunt/container.hpp"
 #include "grunt/indy_fold.hpp"
+#include "grunt/jsim_executor.hpp"
 #include "grunt/proof_toolbox.hpp"
+#include "grunt/scan_toolbox.hpp"
+
+#include "jsim/engine.hpp"
+#include "jsim/num.hpp"
+#include "jsim/str.hpp"
+#include "jsim/value.hpp"
 
 namespace grunt::dead_member {
 
@@ -185,14 +192,17 @@ std::set<std::string> annotationStrings(ir::ClassSession& s)
     return out;
 }
 
-/// @brief 单类 CP 的成员引用快照：枚举 Fieldref/Methodref/接口引用。
+/// @brief 单类 CP 的成员引用快照：枚举 Fieldref/Methodref/接口引用 + 字符串常量。
 ///
 /// 压缩成功的类上池是闭包（枚举即活引用）；压缩失败/未压缩的类上池可能含
 /// 死条目，枚举结果是活引用的超集，两类都按 fail-closed 宁误留口径入集。
+/// 字符串常量是反射按名定位（`getDeclaredMethod("name")` 一族）的证据面：
+/// 引用只存在于运行期字符串里，静态引用普查看不见，宁误留。
 struct CpSnap
 {
     std::set<std::string> methodKeys;   // owner::name::desc
     std::set<std::string> fieldKeys;    // owner::name
+    std::set<std::string> strings;      // 字符串常量内容
 };
 
 CpSnap collectCpSnap(const jbc::core::ClassFile& cf)
@@ -202,6 +212,10 @@ CpSnap collectCpSnap(const jbc::core::ClassFile& cf)
         if (!cf.cp.valid(i)) continue;
         const auto& e = cf.cp.at(i);
         using T       = jbc::core::CpTag;
+        if (e.tag == T::String) {
+            if (cf.cp.valid(e.a)) out.strings.insert(cpUtf8(cf, e.a));
+            continue;
+        }
         if (e.tag != T::Fieldref && e.tag != T::Methodref
             && e.tag != T::InterfaceMethodref) {
             continue;
@@ -221,10 +235,11 @@ CpSnap collectCpSnap(const jbc::core::ClassFile& cf)
 
 /// @brief 把快照并入全容器活引用集。
 void mergeSnap(const CpSnap& snap, std::set<std::string>& liveMethods,
-               std::set<std::string>& liveFields)
+               std::set<std::string>& liveFields, std::set<std::string>& liveNames)
 {
     liveMethods.insert(snap.methodKeys.begin(), snap.methodKeys.end());
     liveFields.insert(snap.fieldKeys.begin(), snap.fieldKeys.end());
+    liveNames.insert(snap.strings.begin(), snap.strings.end());
 }
 
 /// @brief 类的形状候选收集（SCAN 本体）。
@@ -279,6 +294,9 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri,
             continue;
         }
         if (name == "main") continue;
+        // 构造器反射可达（getDeclaredConstructor + setAccessible，按类型定位，
+        // 无名字证据可用）：整档不删，宁误留。
+        if (name == "<init>") continue;
         if ((mu.access & (kAccNative | kAccAbstract)) != 0) continue;
         if (!ir::hasCode(s, mi)) continue;
         if (hasBsm) continue;                                // BSM 盲区：整类方法不删
@@ -375,6 +393,178 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
     return result;
 }
 
+/// @brief 池明文名字普查：模拟执行持有 static String[] 字段的类的 <clinit>，
+///        把会话静态区里池数组的元素明文并入 liveNames。
+///
+/// fork 池形的字符串池数组（clinit 前导 + junk 填充方法）元素是运行期解密
+/// 产物：反射按名定位（getDeclaredMethod("add") 一族）的目标名字不在任何
+/// CP 字符串常量里，CP 字符串普查看不见。主链 indy 折叠后 clinit 已无
+/// indy，模拟器可整段跑通（常量假谓词具体求值、junk 调用走编排层接力、
+/// 解密器走 str 扩展）。失败即失败：Bail 的类不入集（少了它的名字，成员
+/// 删除多一分风险，但证据面不造假）；含 indy/athrow 的 clinit 在桥面整方法
+/// 拒绝，同此口径。
+void collectPoolNames(const mjbase::model::ResourceContainer& container,
+                      std::set<std::string>& liveNames)
+{
+    SimExecutor exec(container);
+    jsim::str::install(exec.session());
+    jsim::str::installStringAlloc(exec.session());   // 池解密器体 `new String(char[])`
+    jsim::num::install(exec.session());
+
+    // 两个 JDK 纯函数 mock：池填充走廊的 parseUnsignedLong 与密文面的
+    // toCharArray。jsim::num / jsim::str 的 v1 面未覆盖；两者都是全序纯
+    // 函数，常量实参下值唯一确定，接管不引入猜测面。失败即失败：坏数字
+    // 与 NumberFormatException 同桶 Bail（v1 无异常派发）。
+    exec.session().callMocks["java/lang/Long.parseUnsignedLong(Ljava/lang/String;I)J"] =
+        [](jsim::Frame& frame) -> jsim::Result<jsim::SimValue, jsim::Bail> {
+        auto radix = frame.popChecked();
+        if (!radix.isOk()) return radix;
+        auto text = frame.popChecked();
+        if (!text.isOk()) return text;
+        if (!text.value().known || text.value().type != jsim::ValType::Ref
+            || text.value().ref.kind != jsim::RefPayload::Kind::Str
+            || !radix.value().known) {
+            return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
+                jsim::SimValue::unknownOf(jsim::ValType::I64));
+        }
+        const ca::i32 radixV = static_cast<ca::i32>(radix.value().asU32());
+        if (radixV < 2 || radixV > 36) {
+            return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                {jsim::Bail::Reason::NotConcrete, frame.pc(),
+                 "parseUnsignedLong radix 越界（NumberFormatException v1 不做）"});
+        }
+        std::vector<ca::u16> units;
+        if (!scan_tools::mutf8ToUnits(text.value().ref.str, units)) {
+            return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                {jsim::Bail::Reason::NotConcrete, frame.pc(),
+                 "parseUnsignedLong 输入串 MUTF-8 解码失败"});
+        }
+        ca::u64 acc = 0;
+        for (const ca::u16 u : units) {
+            ca::i32 d = -1;
+            if (u >= '0' && u <= '9') d = static_cast<ca::i32>(u - '0');
+            else if (u >= 'a' && u <= 'z') d = static_cast<ca::i32>(u - 'a') + 10;
+            else if (u >= 'A' && u <= 'Z') d = static_cast<ca::i32>(u - 'A') + 10;
+            if (d < 0 || d >= radixV) {
+                return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                    {jsim::Bail::Reason::NotConcrete, frame.pc(),
+                     "parseUnsignedLong 坏数字（NumberFormatException v1 不做）"});
+            }
+            const ca::u64 next = acc * static_cast<ca::u64>(radixV)
+                                 + static_cast<ca::u64>(d);
+            if (next < acc) {
+                return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                    {jsim::Bail::Reason::NotConcrete, frame.pc(),
+                     "parseUnsignedLong 溢出（NumberFormatException v1 不做）"});
+            }
+            acc = next;
+        }
+        return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
+            jsim::SimValue::knownI64(static_cast<ca::i64>(acc)));
+    };
+    exec.session().callMocks["java/lang/String.toCharArray()[C"] =
+        [](jsim::Frame& frame) -> jsim::Result<jsim::SimValue, jsim::Bail> {
+        auto recv = frame.popChecked();
+        if (!recv.isOk()) return recv;
+        if (!recv.value().known || recv.value().type != jsim::ValType::Ref
+            || recv.value().ref.kind != jsim::RefPayload::Kind::Str) {
+            return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
+                jsim::SimValue::unknownOf(jsim::ValType::Ref));
+        }
+        std::vector<ca::u16> units;
+        if (!scan_tools::mutf8ToUnits(recv.value().ref.str, units)) {
+            return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                {jsim::Bail::Reason::NotConcrete, frame.pc(),
+                 "toCharArray 输入串 MUTF-8 解码失败"});
+        }
+        jsim::HeapObj arr;
+        arr.className = "[C";
+        arr.elems.reserve(units.size());   // 原始类型数组载荷在 elems（位型解释）
+        for (const ca::u16 u : units) {
+            arr.elems.push_back(static_cast<ca::i64>(u));
+        }
+        const ca::u64 id = frame.session().nextAllocId++;
+        frame.session().heap[id] = std::move(arr);
+        return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
+            jsim::SimValue::knownObj(id));
+    };
+
+    static constexpr ca::u32 kAccStatic = 0x0008;
+
+    // 候选类清单：持有 static String[] 字段的类（池数组形态）。
+    struct PoolClass
+    {
+        std::string              owner;
+        std::vector<std::string> arrayKeys;   // owner::name::desc
+        bool extracted = false;
+    };
+    std::vector<PoolClass> pools;
+    forEachClass(container, [&](const ClassEntry& entry) {
+        auto session = openSession(*entry.bytes);
+        if (!session) return;
+        jbc::core::ClassFile& cf = session->backing();
+        PoolClass             pc;
+        pc.owner = std::string(cf.thisName());
+        for (const jbc::core::MemberInfo& f : cf.fields) {
+            if ((f.access & kAccStatic) == 0) continue;
+            const std::string desc(cf.utf8(f.descCp));
+            if (desc != "[Ljava/lang/String;") continue;
+            pc.arrayKeys.push_back(pc.owner + "::" + std::string(cf.utf8(f.nameCp))
+                                   + "::" + desc);
+        }
+        if (!pc.arrayKeys.empty()) pools.push_back(std::move(pc));
+    });
+
+    // 多轮求值：会话静态区跨类累积（PUTSTATIC 接力棒），依赖别的类 clinit
+    // 产物的填充器第一轮读 Unknown 会 Bail，上游类跑完后下一轮收敛。
+    // 轮数封顶防环；单类成功即提取，不成功的类不入集（不猜）。
+    const std::vector<jsim::SimValue> noArgs;
+    for (ca::u32 round = 0; round < 3; ++round) {
+        bool progressed = false;
+        for (PoolClass& pc : pools) {
+            if (pc.extracted) continue;
+            const SimOutcome out = exec.invoke(pc.owner, "<clinit>()V", noArgs);
+            if (out.kind != SimOutcome::Kind::Void
+                && out.kind != SimOutcome::Kind::Returned) {
+                continue;   /// 求值未收敛：等下一轮（上游 clinit 可能还没跑）。
+            }
+            ca::usize got = 0;
+            for (const std::string& key : pc.arrayKeys) {
+                const auto it = exec.session().statics.find(key);
+                if (it == exec.session().statics.end()) continue;
+                const jsim::SimValue& v = it->second;
+                if (!v.known || v.type != jsim::ValType::Ref
+                    || v.ref.kind != jsim::RefPayload::Kind::Obj) {
+                    continue;
+                }
+                const auto hit = exec.session().heap.find(v.ref.objId);
+                if (hit == exec.session().heap.end()) continue;
+                for (const jsim::SimValue& elem : hit->second.refs) {
+                    if (!elem.known || elem.type != jsim::ValType::Ref) continue;
+                    if (elem.ref.kind == jsim::RefPayload::Kind::Str) {
+                        liveNames.insert(elem.ref.str);
+                        ++got;
+                        continue;
+                    }
+                    // `new String(char[])` 产物是 Obj 载荷（data 槽装明文），
+                    // 与 knownStr 的 Str 载荷是同一语义的两种落地形态。
+                    if (elem.ref.kind == jsim::RefPayload::Kind::Obj) {
+                        const auto objIt = exec.session().heap.find(elem.ref.objId);
+                        if (objIt == exec.session().heap.end()) continue;
+                        if (objIt->second.className != "java/lang/String") continue;
+                        liveNames.insert(objIt->second.data);
+                        ++got;
+                    }
+                }
+            }
+            pc.extracted = true;
+            progressed   = true;
+        }
+        if (!progressed) break;
+    }
+}
+
+
 // ============================================================================
 // ==== REWRITE ===============================================================
 // ============================================================================
@@ -450,6 +640,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // 截短出晚到的类不在普查里的漏计。
     std::set<std::string> liveMethods;
     std::set<std::string> liveFields;
+    std::set<std::string> liveNames;   // 字符串常量全集（反射按名定位的证据面）
     {
         ca::usize censusRawSources = 0;
         ca::usize censusBlind      = 0;
@@ -458,7 +649,8 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             auto session = openSession(*entry.bytes);
             if (session) {
                 try {
-                    mergeSnap(collectCpSnap(session->backing()), liveMethods, liveFields);
+                    mergeSnap(collectCpSnap(session->backing()), liveMethods, liveFields,
+                              liveNames);
                     return;
                 } catch (...) {
                     std::fprintf(stderr,
@@ -484,16 +676,20 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                              std::string(entry.uri).c_str());
                 return;
             }
-            mergeSnap(collectCpSnap(*parsed.file), liveMethods, liveFields);
+            mergeSnap(collectCpSnap(*parsed.file), liveMethods, liveFields, liveNames);
         });
         dirty.censusRawSources = censusRawSources;
         dirty.censusBlind      = censusBlind;
+        // 池明文名字普查：模拟执行持有 String[] 池数组的类的 <clinit>，把
+        // 运行期解密产物（反射按名定位的目标）并入 liveNames。CP 字符串
+        // 常量普查看不见这类名字（fork 池形：名字是运行期解密产物）。
+        collectPoolNames(container, liveNames);
         if (dmTrace) {
             std::fprintf(stderr,
                          "[grunt.DeadMember] 普查：methodKeys=%zu fieldKeys=%zu"
-                         " raw-sources=%zu blind=%zu\n",
-                         liveMethods.size(), liveFields.size(), censusRawSources,
-                         censusBlind);
+                         " nameStrings=%zu raw-sources=%zu blind=%zu\n",
+                         liveMethods.size(), liveFields.size(), liveNames.size(),
+                         censusRawSources, censusBlind);
         }
     }
 
@@ -542,6 +738,13 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 
         for (const MethodCand& mc : cand.methods) {
             dirty.attempted += 1;
+            // 反射按名定位（getDeclaredMethod("name") 一族）：引用只存在于
+            // 运行期字符串里，静态引用普查看不见。名字命中容器内任何字符串
+            // 常量的成员宁误留。
+            if (liveNames.count(mc.name) != 0) {
+                ++dirty.rejectedByRef;
+                continue;
+            }
             const std::string key = owner + "::" + mc.name + "::" + mc.desc;
             if (liveMethods.count(key) != 0) {
                 ++dirty.rejectedByRef;
@@ -567,6 +770,11 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 
         for (const FieldCand& fc : cand.fields) {
             dirty.attempted += 1;
+            // 反射按名定位（getDeclaredField("name") 一族）：宁误留。
+            if (liveNames.count(fc.name) != 0) {
+                ++dirty.rejectedByRef;
+                continue;
+            }
             const std::string key = owner + "::" + fc.name;
             if (liveFields.count(key) != 0) {
                 ++dirty.rejectedByRef;

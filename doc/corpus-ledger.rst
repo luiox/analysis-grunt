@@ -112,9 +112,24 @@
 - **基础面 ** ：invokedynamic 站点 **37227**\ （raw jar 内）；ACC_NATIVE 0（v2 无 native 管线）；Watermark ``NAME()`` 返回 'PROTECTED BY GRUNT KLASS MASTER' 形 887 类；全部 jar 无 AntiLLM 资源（v2 无该面）。
 - **生成命令全录** ：\ ``git worktree add /d/WorkSpace/grunt2-build grunt2`` → ``GRADLE_OPTS="-DsocksProxyHost=127.0.0.1 -DsocksProxyPort=10809" ./gradlew :grunt-main:fatJar --no-daemon``\ （cwd /d/WorkSpace/grunt2-build）→ 首跑 ``corretto-21.0.4/bin/java -jar grunt-main-full.jar <cfg>`` 生成默认 config → 改写为 config-v2-full.json → ``corretto-21.0.4/bin/java -Xmx8g -jar grunt-main-full.jar D:/WorkSpace/mjt/tmp_corpus/v2_full_config.json`` 。
 
+.. _corpus-ledger-c:
+
+3 样本 C，TEST-obf（Grunt v2 fork · grunt-main-full-optimized · JavaObfuscatorTest 语料 · 本批产出）
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+- **产物与来源**：\ ``C:/sw/JavaObfuscatorTest-main/sample/Grunt.zip``\ （huzpsb JavaObfuscatorTest 仓语料包，zip sha256 ``c8692705fa09028346b51620e45ed08bf61f6c44f9988061fed132030cb0f3e1``）内三件：\ ``TEST-obf.jar``\ 862554 B，sha256 ``3ffb60eb6ea5de5ea53d3e22c6f4063b84e8822c68731872c869efbf91ea3f53``，\ **210 类**（~155 真实类 + ~55 TrashClass 垃圾类，本批自写解析器普查口径）；\ ``TEST.jar``\ 原版对照 37 类，sha256 ``36e432d6036ba61abee6e9eee0b89167670ce67d7956dd4112863afeadde41c8``；\ ``grunt-main-full-optimized.jar``\ 混淆器本体 4179 类，sha256 ``488050d90882fa96fc0178428c782e62397a6e5b8fa97d71eefc7591c5785677``（config 未随包发布，世代按形态指纹判读）。
+- **世代判读**：Grunt v2 fork（"grunt-main-full-optimized"），vanilla 2.5.0 之上叠加四个变体形态，全部由字节码实证：\ **BSM 静态参数 Integer 装箱加密**（StringEncrypt 的 BSM 第 7 参为 ``Ljava/lang/Integer;`` 包装面，BSM 体 ``intValue`` 拆箱分支选路）；\ **junk 包裹解密器**（伴生池类解密器体 Controlflow junk 前缀 + 恒真谓词，24 条模板钉不上）；\ **接收者放宽 indy**（调用点 desc 首参 ``Ljava/lang/Object;`` 承载 builder/解密上下文，BSM 侧 findVirtual + asType 引用放宽）；\ **池藏反射名**（反射按名定位的目标名是 clinit 运行期解密产物，落 ``static String[]``，不在任何 CP 字符串常量里）。BSM 落伴生池类（罐 B 语料 BSM 在主类，形态差异登记）。
+- **还原实测（本批 2026-11-14，评估工作区 ``C:/sw/grunt-eval/``，\ ``GRUNT_TRACE=1`` ``GRUNT_SLICE_SEC=0`` 全量）**：链形 = 供给轮 → 回填轮 → 主链无 DeadMember 预热 ×2 → 主链 ×N 到收敛（判据 PredicateFold 站点归零口径；无预热时池明文普查的 clinit 模拟 Bail，见 README 链序注记）。
+  - **供给轮**：TrampolineSqueeze 680；\ ``grunt.IndyFold`` 947 站折叠 **943**（bsmFailed=3 = MethodHandle 参数 BSM；装箱面修复后从 674 → 943）；NumberFold 4646；ConstValuePromote 604；\ ``grunt.ConstPoolRestore`` **7197** 站（pool-classes=105，fields-numeric=6570 + fields-string=627；求值通道与 BSM 形方法门覆盖 junk 包裹解密器变体）；ArithFold 8169。
+  - **回填轮**：NumberFold 725 → ConstValuePromote 4020 → ConstPoolRestore 4020 → ArithFold 1395 → StringEqualsRestore 2。
+  - **主链**：ProxyInline 97 + FieldAccessProxy 34；DeadMember 首轮删 **414 方法 / 157 池压缩 / 77 类**（ref-rejected=151 反射按名保守保留）→ 次轮 2 方法 + 1 空壳池类 → 后续全零，第 9/10 轮 trace 全文相等收敛。
+- **核对**：类数 210 不增；\ ``verify_jar``（独立 JVM 全类加载）产物 210/210 零失败，混淆基线同面逐项一致；\ ``-Xverify:all`` 产物失败集与输入全等。
+- **行为测程**（JavaObfuscatorTest runner，三方对照）：还原产物 1.1-1.7 全 PASS、2.2/2.4/2.6/2.7 PASS；2.1 FAIL / 2.3 FAIL / 2.5 ERROR / 2.8 ERROR 与混淆基线**逐项一致**（基线既有破坏面，原版基线 2.1 PASS 的落差是 fork 自身所致，非还原缺口）；Calc 849ms → **48ms**（原版 37ms）。
+- **残留清单（收敛轮 v7f9 实测）**：indy 4 站（3 站 BSM 含 MethodHandle 参数、1 站接收者放宽形接口 owner fail-closed）；ConstantCall rejects=2646 + label-blocked=12（家族 bait 形：实参非纯常量/合并点，静态下限）；PredicateFold 23 站 failed（合并点 bait，fail-closed 设计内）；~55 TrashClass 垃圾类未删（缺口 #14）；改名还原不在面内（mappings 外部工具职责）；DeadMember ref-rejected=149（反射可达保守保留，防护面非缺陷）。
+
 .. _corpus-ledger-method:
 
-3 方法注记（复现口径）
+4 方法注记（复现口径）
 ------------------------
 
 - **普查工具** ：\ ``mjt/tmp_corpus/census_a.py``\ （样本 A，仅解码 ``(III)I``/``(II)I`` 方法体，生成面 MAXS(8,2) 全用隐式槽指令形，全部 jar 零解码失败即此口径健全性的旁证；异常桥按 exception_table 原始字节判）、\ ``census_b.py``\ （样本 B，全方法解码 + cp Fieldref/NameAndType 解析；17 方法 Crasher junk 解码失败如实计并排除在算术面分母外）、\ ``census_r1.py``\ （样本 A 供给链产物 第 1 轮/第 3 轮 复扫，严格形状桥 + 校验器式可达普查，SMT 帧根 + 异常表 handler 根 BFS，供缺口 #10 面 b 还原前后对照）、\ ``mjt/tmp_corpus8/census8d.py``\ （缺口 #8 复算批：样本 B 全方法解码 + cp Fieldref 解析 + 跨类 ConstantValue 注册表（GETSTATIC→伴生字段带 ConstantValue 计 const-fed 'cv'），NOP 夹层邻接窗 + junk 区重同步容差；const-fed 与走廊锚四数见 §2 #8）。四脚本一次性工具不进仓，判据已逐条录入上文。
