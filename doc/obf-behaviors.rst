@@ -57,8 +57,8 @@ grunt 行为记录总表
      - NumberFold（IAND/LAND 位拼两式已扩，见缺口 #8）
    * - ConstPoolEncrypt
      - S1
-     - 部分
-     - NumberFold + ConstValuePromote 折伴生类（缺调用点回填 → 缺口 #5）
+     - 已处理
+     - ConstPoolRestore 调用点回填 + NumberFold/ConstValuePromote 供给链（缺口 #5 已处理完；伴生类本体不删交垃圾类面 #14，HeavyEncrypt 二次加密面逐类 fail-closed）
    * - Controlflow
      - S1/S2
      - 部分
@@ -77,16 +77,16 @@ grunt 行为记录总表
      - 缺口 #6
    * - ArithmeticEncrypt
      - S2
-     - 无处理
-     - 缺口 #7
+     - 已处理
+     - ArithFold（替换八式恒等折叠 + 常量窗整窗归一，v2 MutateJumps 直线形缺口 #18 同面）
    * - MethodExtractor
      - S2
      - 无处理
      - 缺口 #9
    * - StringEqualsRedirect
      - S2
-     - 无处理
-     - 缺口 #11
+     - 已处理
+     - StringEqualsRestore（hashCode 比较桥换回 ``equals`` / ``equalsIgnoreCase``\ ，v2/v3 逐字同形一套形状表）
    * - Crasher
      - S2
      - 无处理
@@ -175,12 +175,12 @@ grunt 行为记录总表
      - CffUnflatten（岛识别 + span 求值反摊平 + alias-face 剪枝 + 入口归位/handler 重绑/位置边钉，缺口 #4 主面已处理完，实现说明见 ``src/grunt/cff_unflatten.cpp`` 文件头注释；processor 键解锁（NumberFold 先行）+ SSA exp 变体 → 缺口 #4 余量）
    * - ArithmeticSubstitute（Hidden）
      - S2
-     - 无处理
-     - 缺口 #7
+     - 已处理
+     - ArithFold（替换八式与 v2 逐字相同，同一形状表）
    * - StringEqualsOptimize
      - S2
-     - 无处理
-     - 缺口 #11
+     - 已处理
+     - StringEqualsRestore（与 v2 逐字同形，一套形状表）
    * - ParameterObfuscate
      - S2
      - 无处理
@@ -260,16 +260,16 @@ grunt 行为记录总表
 
 **P2，加密与控制流扩展面** ：
 
-5. **ConstPoolEncrypt 调用点回填** ：伴生类 clinit 解密链先折（NumberFold 已可）、字段值回收，再把调用点 ``GETSTATIC 伴生类.<字段>`` 回填 ``ldc`` 明文。
+5. **ConstPoolEncrypt 调用点回填** （已处理完）：\ ``grunt.ConstPoolRestore`` 承载（伴生类形状钉 + 数值面 ``ConstantValue`` 属性与容器级零写 + 字符串面解密器模板钉与逐码元自逆 XOR 直解，``GETSTATIC`` 调用点原地换回常量装载），链上 NumberFold/ConstValuePromote 先行折供给链；伴生类本体不删交垃圾类面（#14），HeavyEncrypt 二次加密面逐类 fail-closed。语料验证登记见 :ref:`corpus-ledger`\ 。
 6. **ConstBuilder 折回** ：switch 全表静态求值（操作数全为 ``ConstantValue`` 字段 + 封闭 IXOR），真 case 产出折回单条 ``ldc`` 。
-7. **ArithmeticEncrypt/ArithmeticSubstitute 恒等简化** ：封闭 int 算术恒等式简化链（IXOR/IAND/IOR/INEG 替换族 + 三元组整体替换）。
+7. **ArithmeticEncrypt/ArithmeticSubstitute 恒等简化** （已处理完）：\ ``grunt.ArithFold`` 承载（v2 ArithmeticEncrypt + v2 MutateJumps 直线形 + v3 ArithmeticSubstitute 三面，两代生成源逐字相同），替换八式形状钉 + 精确代数恒等（值逐位相等）折回单条指令，常量窗整窗归一（净栈效恰一个值 ∧ 全部非 NOP 指令参与，JVM 精确语义求值、除零不折）折回单条常量装载；缺口 #18 登记的 MutateJumps 直线形即常量对实例，归并本面不另建还原面。语料验证登记见 :ref:`corpus-ledger`\ 。
 8. **NumberEncrypt v2 IAND/LAND 位拼模板扩面** ：\ ``first & second = v`` 对（int/long）加入 NumberFold 形状清单，已实现（六式，样本 B 位拼面 354090 全折、旧四式站点数逐位不动）；v3 无此形态，仅 v2 语料需要。
 9. **MethodExtractor 还原** ：透传桩与伴生方法体合并、owner 类 accessor-getter/setter 内联、伴生类删除（面大价值中）。
 10. **ControlflowJump processor 检查与异常桥 ** ：异常桥还原（面 b 已处理完）：\ ``grunt.ExcBridgeRestore`` 承载，形状钉（trap 四条逐字 + 保护区恰罩四条 + handler 恰 ``POP; GOTO`` + catchType 恰 RuntimeException）钉合成蹦床、异常表核对检查反误伤，\ ``replaceAllUses`` 原边直连真实目标 + 位置落入 GOTO 钉 + 表项删除/锚吸附 + 六受害者单批擦除 + Strict 帧链重算（判据与语料验证见 ``doc/exc-bridge-restore.rst`` ；boar 对照 jar no-op、样本 A 13566 站还原 13442 residual=0、独立 census 复扫 bridge=0、\ ``-Xverify:all`` 失败集与输入全等、双跑 CRC 全等；链序在 ``CffUnflatten`` 之前，岛还原 1281→1543）。 ** 重启条件兑现** ：样本 A（ ``exceptionBridgeChance=1.0`` ）按源锚形态重启，14 测新增（jasm 夹具：跳转边/位置落入/真实区共存+锚吸附/相邻双 trap/覆盖检查/X 互撞检查拒绝面 + JVM ``-Xverify:all`` 实跑）。processor 检查还原（面 a 已处理完）：\ ``grunt.GateProcessorFold`` 承载，(III)I ActionDesc 形状钉 + 三常量实参 + compareValue 常量走廊（ ``[INT; (INT; IMUL|IAND|IOR|IXOR)*]`` 栈机折叠）+ IF_ICMP 前窗逐字钉形，跨方法求值器（jsim 编排层递归穿透 ``__grt$indy$`` 转发器）+ ``Integer.rotateLeft(II)I`` 接管（PredicateStep 盐旋转步生成面）+ 生成面 ``require`` 恒真自证检查，折叠落 PredicateFold TAKEN 形 ``[ICONST_0, IFEQ→真臂]``\ （判据、算法、前后 jasm 对照与语料验证见 :ref:`gate-processor-fold-spec`）。 **前批3387 indy_body + 2872 impure + 0 pure之谜底 **\ （普查口径伪象）：ConstantCall 的跨方法求值器早把纯算术 proc 调用折成常量（样本 A 实测 5814 个 gate 调用），幸存 gate 是选择偏差人群，真余量 = rotateLeft 体（jsim 缺 JDK 数学面求值 EvalBadState）4282 + TLR 面 889 + material 类转发体（indy 未还原）3576。 ** 还原实测 ** ：样本 A 单跑 7643/7643 折叠（classes=721 failed=0 residual=0）；组合链 ``…ConstantCall,ExcBridgeRestore,GateProcessorFold,CffUnflatten`` 上 4282/4282 折叠（四上游 pass 锚点逐项不动、CffUnflatten islands 1543 不变）、boar 对照 jar no-op（类条目 CRC 逐条全等）、\ ``-Xverify:all`` 失败集与输入全等、双跑 CRC 全等、13 测新增（jasm 夹具清单见 :ref:`gate-processor-fold-spec`）。 ** 余量** ：material 类 gate 转发求值不可解（缺口 #15 联动面，material_key_restore / indy_restore 本体禁碰，链序实验 0 火）；TLR 运行期随机面永久排除（窗口变体 ``tlrWindow`` 桶 + 体引用 ``EvalBadState`` 桶）；上游 ConstantCall 专用求值面 2453（str/num/reflect/indy/Math.max 扩展包语义，本 pass 刻意不装包 fail-closed，调用已被上游折叠）；其 const-vs-const 比较面是 PredicateFold 判据（主线 pass，v3 链未编入）。boar 原停报双证（processor 体 100% 随 NativePipeline 出 jar → 单跑 sites=0 no-op）与boar 站点普查须按 StackMapTable 帧根做校验器式可达遍历注记仍有效。
 
 **P3，清理、检测与基线面** ：
 
-11. **StringEquals 语义还原** ：v2 ``StringEqualsRedirect`` / v3 ``StringEqualsOptimize``\ （hashCode 比较/``==`` 换回 ``equals`` ，含 ``equalsIgnoreCase`` 面）。
+11. **StringEquals 语义还原** （已处理完）：\ ``grunt.StringEqualsRestore`` 承载（v2 ``StringEqualsRedirect`` / v3 ``StringEqualsOptimize``\ ，hashCode 比较/``==`` 换回 ``equals`` 含 ``equalsIgnoreCase`` 面，两代生成源输出逐字相同一套形状表），判据 = 窗口逐条 op + 成员引用形状钉（equals 面 6 条 / equalsIgnoreCase 面 8 条）锚点原地换 ``String.equals`` / ``String.equalsIgnoreCase``；hashCode 比较对碰撞串误判相等是生成侧自认损失面，还原取严格 equals 语义，如实登记。语料验证登记见 :ref:`corpus-ledger`\ 。
 12. **ParameterObfuscate 收窄** ：私有方法 desc 参数收窄 + 头部 checkcast 删除。
 13. **噪声与检测面清理** ：Watermark（两代水印字段/方法）、Crasher/DecompilerCrasher（massive Signature 属性）、AntiLLM 四渠道噪声、HWID 校验调用摘除（删除需 CFG 副作用证明）。
 14. **垃圾类删除面** ：v2 ClonedClass/TrashClass + v3 TrashClassGenerator，零引用 + 生成面形状识别，删除需引用普查确认（反射/资源文本引用）。
