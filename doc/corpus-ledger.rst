@@ -164,7 +164,11 @@
   flaky 测试（**6 次采样三方同分布**：final 3/6、59 站折 2/6、71 站折 3/6——一次性
   采样的行为差异不构成判据，本批据此删除了中途据单次采样引入的两条虚惊门（反射
   检查器门/判分锚点串门），判据面回归最简：Bail/写嫌疑/越界/孤立代理/roundtrip）。
-  CFR 终验与走廊清况见本条后续数字（后台跑批）。
+  CFR 终验：210 类零缺失（大小写撞名伪影扣除口径同前），常量下标读点折后
+  main 直串化（``println("Obfuscator Test Program")`` 形）；残留 = **走廊下标
+  读点**（``a[(int)(parseUnsignedLong(...) ^ ...)]`` 形，下标为运行期走廊
+  计算不在常量下标判据面）与 clinit 填池写面走廊（压池 pass 的后续深度面，
+  本轮 residual 如实计）。
 
 
 - **普查工具** ：\ ``mjt/tmp_corpus/census_a.py``\ （样本 A，仅解码 ``(III)I``/``(II)I`` 方法体，生成面 MAXS(8,2) 全用隐式槽指令形，全部 jar 零解码失败即此口径健全性的旁证；异常桥按 exception_table 原始字节判）、\ ``census_b.py``\ （样本 B，全方法解码 + cp Fieldref/NameAndType 解析；17 方法 Crasher junk 解码失败如实计并排除在算术面分母外）、\ ``census_r1.py``\ （样本 A 供给链产物 第 1 轮/第 3 轮 复扫，严格形状桥 + 校验器式可达普查，SMT 帧根 + 异常表 handler 根 BFS，供缺口 #10 面 b 还原前后对照）、\ ``mjt/tmp_corpus8/census8d.py``\ （缺口 #8 复算批：样本 B 全方法解码 + cp Fieldref 解析 + 跨类 ConstantValue 注册表（GETSTATIC→伴生字段带 ConstantValue 计 const-fed 'cv'），NOP 夹层邻接窗 + junk 区重同步容差；const-fed 与走廊锚四数见 §2 #8）。四脚本一次性工具不进仓，判据已逐条录入上文。
