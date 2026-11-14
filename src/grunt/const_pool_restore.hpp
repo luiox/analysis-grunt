@@ -2,33 +2,37 @@
 /// @brief       残留 `const_pool_restore`：v2 ConstPoolEncrypt 伴生池常量的
 ///              调用点回填（缺口 #5）。
 ///
-/// ## 形态（artifact 侧）
+/// ## 形态（artifact 侧，罐 B 语料 javap 实证）
 ///
-/// ConstPoolEncrypt 把类内全部字面常量（iconst 族 / ldc 数值 / ldc 字符串）
-/// 改写成对伴生类 `Orig$ConstantPool` 静态字段的读取：
+/// ConstPoolEncrypt 把类内字面常量改写成对伴生池类静态字段的读取。罐面
+/// 是两拨伴生类：
 ///
-///     调用点：  GETSTATIC Companion.const_xxxxx : T     （原 ldc 常量位）
-///     伴生类：  PUBLIC FINAL，super = java/lang/Object，全部字段 static
-///               数值/字符串形，clinit 逐字段解密回填：
-///               数值   NumberEncryptorClassic 走廊（NumberFold 折回 ldc）
-///                      + ConstValuePromote 回填 ConstantValue 并摘写点
-///               字符串 LDC 密文 + INVOKESTATIC 自家解密器
-///                      (Ljava/lang/String;)Ljava/lang/String; + PUTSTATIC
+///     调用点：    GETSTATIC Companion.const_xxxxx : T   （原 ldc 常量位）
+///     数值池类：  普通 public 类（非 final），super = java/lang/Object，
+///                 字段全部 static 数值形且各带 ConstantValue 属性，无
+///                 clinit，方法面只有一个水印方法（static ()Ljava/lang/String;，
+///                 体两条 LDC 字符串 + ARETURN）
+///     字符串伴生类：另一拨，数值字段走 clinit 算术写（不带 CV），字符串
+///                 字段 LDC 密文 + INVOKESTATIC 自家解密器
+///                 (Ljava/lang/String;)Ljava/lang/String; + PUTSTATIC（clinit），
+///                 水印方法文字与池类不同（罐 B 实证 I AM WATERMARK）
 ///
 /// 伴生类与解密器体在 heavy 配置下会被二次加密（HeavyEncrypt，默认关），
-/// 本 pass 只消费解密链已折回的形态：数值面靠 ConstantValue 属性（链上
-/// ConstValuePromote 的产物，静态 final + 零写 = JVM 权威值），字符串面
-/// 靠解密器模板钉形 + 逐码元自逆 XOR 直解。
+/// 本 pass 只消费解密链已折回的形态：数值面靠 ConstantValue 属性（原生
+/// 属性与链上 ConstValuePromote 产物同面收，static + 零写 = JVM 权威值），
+/// 字符串面靠解密器模板钉形 + 逐码元自逆 XOR 直解。
 ///
 /// ## 判据（scan 的细找）
 ///
-///   1. 伴生类形状钉：非 interface/abstract/enum/annotation、ACC_FINAL、
-///      super = java/lang/Object、字段全部 static 且描述符 ∈ {I,J,F,D,
-///      Ljava/lang/String;}、方法面 ⊆ {<clinit>} ∪ {static 解密器
-///      (Ljava/lang/String;)Ljava/lang/String; 且体逐字钉模板}；
-///   2. 数值字段：ConstantValue 属性在、池条目 tag 与描述符相容、容器级
-///      写普查零写（static + ConstantValue + 零写 + 非 volatile，GETSTATIC
-///      与 ldc 逐位等值，S1）；
+///   1. 数值面逐字段判据（不设类级门，伴生池字段族与 javac static final
+///      常量族同面收走）：static、非 volatile、描述符 ∈ {B,C,I,S,Z,J,F,D}、
+///      容器级写普查零写、普查有读、ConstantValue 属性在且池条目 tag 与
+///      描述符相容（GETSTATIC 与 ldc 逐位等值，S1）；
+///   2. 字符串面伴生类门：非 interface/abstract/enum/annotation、super =
+///      java/lang/Object、字段全部 static 且描述符受援、方法面 ⊆
+///      {`<clinit>`} ∪ {static 解密器 (Ljava/lang/String;)Ljava/lang/String;
+///      且体逐字钉模板} ∪ {水印方法（static ()Ljava/lang/String;，体两条
+///      LDC 字符串 + ARETURN）}；
 ///   3. 字符串字段：容器级写普查恰一次写且在伴生类 clinit、写点形状 =
 ///      [LDC 密文, INVOKESTATIC 自家解密器, PUTSTATIC 本字段]、解密器体
 ///      24 条指令逐字钉（StringBuilder 逐字符 charAt ^ key 链，key 是体内
@@ -36,7 +40,9 @@
 ///   4. 调用点：GETSTATIC 解析成员命中已登记字段。
 ///
 /// 写普查走 field_census（promote 后指令面），普查不完整整轮放弃（宁误留
-/// 不误删，与 const_value_promote 同一口径）。
+/// 不误删，与 const_value_promote 同一口径）；唯一豁免是验证器判死：promote
+/// 以 BadInstructions 拒绝的方法链接期必被 VerifyError 拒掉，方法体永不
+/// 执行，按死亡不计入完整性，豁免数以 verifierDead 带出。
 ///
 /// ## 改写（rewrite）
 ///
@@ -44,18 +50,26 @@
 /// 站点一致才动），单条指令原地换常量装载（保 srcPc；数值走
 /// makeConstLoad 短形态优先，字符串 intern 进池走 LDC/LDC_W）。无擦除、
 /// 栈形逐位等（long/double 双槽两读同形），帧链走 mutateMethodWithFrames
-/// 正统写回，前置 roundTripSafe。
+/// 正统写回，前置 roundTripSafe。帧重算失败的方法整方法回滚（罐 B 语料
+/// 单 pass 口径 20144/938982 站点，集中在巨型陷阱方法），站点保留
+/// GETSTATIC 原样，本 pass 无擦除、字段不删，语义不变。
 ///
 /// ## 链序
 ///
-/// 数值面依赖 `grunt.NumberFold` + `grunt.ConstValuePromote` 先行（走廊
-/// 折回 + ConstantValue 回填 + 写点摘除）；字符串面只依赖解密器体未被
-/// 二次加密。本 pass 之后 `grunt.ArithFold` 吃回填出的常量对。
+/// 数值面与 ConstValuePromote 分工（本面收 ConstantValue 属性族，
+/// ConstValuePromote 收 clinit 写一次无 CV 族，互不重叠），放
+/// `grunt.NumberFold` + `grunt.ConstValuePromote` 之后跑；字符串面只依赖
+/// 解密器体未被二次加密。本 pass 之后 `grunt.ArithFold` 吃回填出的常量对。
 ///
 /// ## 已知边界
 ///
 /// - HeavyEncrypt 配置（默认关）下伴生 clinit 与解密器体被 NumberEncrypt/
 ///   StringEncrypt 二次加密，判据 3 的模板钉形失效，逐类 fail-closed。
+/// - 数值面消费 ConstantValue 属性：JVMS 只规范 static final 字段的 CV
+///   赋值，HotSpot 对非 final static 也执行（罐 B 语料 LinkRead 反射读
+///   3/3 实证）；其他 JVM 实现若不执行，回填值与运行期值可能不符。
+/// - 写面靠指令普查兜底，反射 / JNI 写不可见（与 const_value_promote
+///   同一信息边界）。
 /// - 伴生类本体不删：字段回填后成为零读死重，交 DeadMember/后续垃圾类
 ///   删除面（缺口 #14）。
 /// - 字符串回填是 ldc 字面量（驻留池），伴生字段原值是 clinit 期新串：

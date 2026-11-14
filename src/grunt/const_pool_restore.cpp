@@ -128,7 +128,7 @@ bool decodeConstantValue(jbc::core::ClassFile& cf, jbc::core::AttrSlot& slot,
 
 /// @brief 引用判据：调用族指令且 op 与 owner/name/desc 精确吻合。
 ///
-/// 解密器模板的五个成员引用横跨 INVOKESPECIAL（StringBuilder.<init>）与
+/// 解密器模板的五个成员引用横跨 INVOKESPECIAL（`StringBuilder.<init>`）与
 /// INVOKEVIRTUAL（charAt/append/length/toString），op 逐位钉，不只钉成员三联。
 bool isCall(ir::ClassSession& s, const ir::Insn& in, Op op, std::string_view owner,
             std::string_view name, std::string_view desc)
