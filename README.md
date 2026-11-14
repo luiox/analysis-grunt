@@ -44,7 +44,7 @@ Grunt（Gruntpocalypse / Grunteon）混淆家族的 deobf 插件仓：mjbase pas
 
 ## 覆盖现状
 
-不是全部，主链可用。行为 × 处理状态总表与缺口清单以 [doc/obf-behaviors.rst](doc/obf-behaviors.rst) 为准，当前快照：
+不是全部，主链可用。能处理 / 不能处理 / 待办 / 边界的完整清单见 [doc/coverage.rst](doc/coverage.rst)，行为 × 处理状态总表与缺口清单以 [doc/obf-behaviors.rst](doc/obf-behaviors.rst) 为准，当前快照：
 
 - **v3（Grunteon）主链已处理完**：字符串池、indy 调用点（simple/heavy + RuntimeMaterial 材料通道联动）、InvokeDispatcher、控制流摊平主面、异常桥、gate processor，这些高频面都有对应 pass 且在 v3 全链语料 jar 上整链验证；中频面 `ArithmeticSubstitute` 与 `StringEqualsOptimize` 已由 `ArithFold` / `StringEqualsRestore` 承载（语料验证登记见 [doc/corpus-ledger.rst](doc/corpus-ledger.rst)），`ParameterObfuscate`（#12）仍未处理。剩余三类：
   - **processor 键 native 天花板**：`keyProcessorNativeCandidateRatio=1.0` 一类配置把 gate 算术随 native 管线移出 jar，恢复目标是无方法体的 native 壳，没有 native 库时静态面上无解，这是信息边界不是工具缺口；
