@@ -11,6 +11,7 @@
 /// - PROOF：类数不变 + 脏类可重解析。
 #include "grunt/indy_fold.hpp"
 
+#include "jbc/core/writer.hpp"
 #include "jbc/ir/units.hpp"
 #include "libca/core/tag_cast.hpp"
 #include "mjbase/jasm/jvm_jasm_service.hpp"
@@ -143,6 +144,163 @@ std::string divergentBsmBody()
            "      areturn\n";
 }
 
+// ---- fork 变体夹具 -----------------------------------------------------------
+
+/// 装箱变体：BSM 第 7 静态参数是 Integer 包装面，BSM 体按 intValue 分支选路。
+/// 夹具判据自证：拆箱 mock 只认 `@v` 槽 Obj 载荷，值面不对（未装箱/未知）分支
+/// 走不到真体，BSM 返回 null → bsmFailed。
+std::string boxedHostSource()
+{
+    return ".super java/lang/Object\n"
+           ".class public super IndyHost {\n"
+           "  .method public static t (II)I {\n"
+           "    code: {\n"
+           "      iload 0\n"
+           "      iload 1\n"
+           "      iadd\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n"
+           "  .method public static a (Ljava/lang/invoke/MethodHandles$Lookup;"
+           "Ljava/lang/String;Ljava/lang/invoke/MethodType;"
+           "Ljava/lang/String;Ljava/lang/String;Ljava/lang/invoke/MethodType;"
+           "Ljava/lang/Integer;)Ljava/lang/invoke/CallSite; {\n"
+           "    parameters: { lk, nm, mt, targetName, targetCls, targetMt, key },\n"
+           "    code: {\n"
+           "      aload key\n"
+           "      invokevirtual java/lang/Integer.intValue ()I\n"
+           "      bipush 7\n"
+           "      if_icmpne Lbad\n"
+           "      new java/lang/invoke/ConstantCallSite\n"
+           "      dup\n"
+           "      aload lk\n"
+           "      aload targetCls\n"
+           "      invokestatic java/lang/Class.forName (Ljava/lang/String;)Ljava/lang/Class;\n"
+           "      aload targetName\n"
+           "      aload targetMt\n"
+           "      invokestatic java/lang/invoke/MethodHandles$Lookup.findStatic "
+           "(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/invoke/MethodType;)"
+           "Ljava/lang/invoke/MethodHandle;\n"
+           "      invokespecial java/lang/invoke/ConstantCallSite.<init> "
+           "(Ljava/lang/invoke/MethodHandle;)V\n"
+           "      areturn\n"
+           "    Lbad:\n"
+           "      aconst_null\n"
+           "      areturn\n"
+           "    }\n"
+           "  }\n"
+           "  .method public static call ()I {\n"
+           "    code: {\n"
+           "      bipush 3\n"
+           "      bipush 4\n"
+           "      invokedynamic t (II)I { invokestatic, IndyHost.a, "
+           "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+           "Ljava/lang/invoke/MethodType;Ljava/lang/String;Ljava/lang/String;"
+           "Ljava/lang/invoke/MethodType;Ljava/lang/Integer;)Ljava/lang/invoke/CallSite; } "
+           "{ \"t\", \"IndyHost\", (II)I, 7 }\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+}
+
+/// 接收者放宽变体：调用点 desc 首参加宽成 `Ljava/lang/Object;`（BSM 侧
+/// findVirtual + asType 引用放宽），句柄 desc 保持实型。targetOwner 给
+/// "Iface" 即接口拒绝变体（配合 withInterfaceFlag 把 Iface 挂上 ACC_INTERFACE）。
+std::string widenedHostSource(const char* targetOwner)
+{
+    const std::string owner(targetOwner);
+    std::string src = ".super java/lang/Object\n"
+                      ".class public super IndyHost {\n";
+    // 调用点实参要 new 一个接收者实例。
+    src += "  .method public <init> ()V {\n"
+           "    code: {\n"
+           "      aload 0\n"
+           "      invokespecial java/lang/Object.<init> ()V\n"
+           "      return\n"
+           "    }\n"
+           "  }\n";
+    src += "  .method public t (L" + owner + ";)I {\n"
+           "    code: {\n"
+           "      iconst_1\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n";
+    // jasm 按 indy 名解析栈形（indy 消费 (Ljava/lang/Object;)I 压回返回值），
+    // 同签名方法必须在场。
+    src += "  .method public static t (Ljava/lang/Object;)I {\n"
+           "    code: {\n"
+           "      iconst_1\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n";
+    src += "  .method public static a (Ljava/lang/invoke/MethodHandles$Lookup;"
+           "Ljava/lang/String;Ljava/lang/invoke/MethodType;"
+           "Ljava/lang/String;Ljava/lang/String;Ljava/lang/invoke/MethodType;"
+           ")Ljava/lang/invoke/CallSite; {\n"
+           "    parameters: { lk, nm, mt, targetName, targetCls, targetMt },\n"
+           "    code: {\n"
+           "      new java/lang/invoke/ConstantCallSite\n"
+           "      dup\n"
+           "      aload lk\n"
+           "      aload targetCls\n"
+           "      invokestatic java/lang/Class.forName (Ljava/lang/String;)Ljava/lang/Class;\n"
+           "      aload targetName\n"
+           "      aload targetMt\n"
+           "      invokestatic java/lang/invoke/MethodHandles$Lookup.findVirtual "
+           "(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/invoke/MethodType;)"
+           "Ljava/lang/invoke/MethodHandle;\n"
+           "      invokespecial java/lang/invoke/ConstantCallSite.<init> "
+           "(Ljava/lang/invoke/MethodHandle;)V\n"
+           "      areturn\n"
+           "    }\n"
+           "  }\n";
+    // 目标是无参实例方法：findVirtual 的 MethodType 实参不含接收者（()I），
+    // 运行期句柄实型接收者经 asType 加宽成 Object 落在调用点首参槽。
+    src += "  .method public static call ()I {\n"
+           "    code: {\n"
+           "      new IndyHost\n"
+           "      dup\n"
+           "      invokespecial IndyHost.<init> ()V\n"
+           "      invokedynamic t (Ljava/lang/Object;)I { invokestatic, IndyHost.a, "
+           "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+           "Ljava/lang/invoke/MethodType;Ljava/lang/String;Ljava/lang/String;"
+           "Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite; } "
+           "{ \"t\", \"" + owner + "\", ()I }\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+    return src;
+}
+
+/// 接口目标类：jasm 无接口语法面，汇编后程序化挂 ACC_INTERFACE|ACC_ABSTRACT。
+std::string ifaceSource()
+{
+    return ".super java/lang/Object\n"
+           ".class public super Iface {\n"
+           "  .method public t (LIface;)I {\n"
+           "    code: {\n"
+           "      iconst_1\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+}
+
+/// 挂接口标志（OwnerKindCache 读 ACC_INTERFACE 0x0200 原字节判型）。
+std::vector<ca::u8> withInterfaceFlag(const std::vector<ca::u8>& bytes)
+{
+    auto loaded = jbc::ir::makeSessionFromBytes(jbc::core::ByteView(bytes));
+    if (loaded.is_err()) throw std::runtime_error("夹具重解析失败");
+    auto                  session = std::move(loaded).unwrap();
+    jbc::core::ClassFile& cf      = session->backing();
+    cf.access |= 0x0200 | 0x0400;   // ACC_INTERFACE | ACC_ABSTRACT
+    auto encoded = jbc::core::writeClass(cf);
+    if (encoded.is_err()) throw std::runtime_error("夹具回写失败");
+    return std::move(encoded).unwrap();
+}
+
 // ============================================================================
 // ==== SCAN ==================================================================
 // ============================================================================
@@ -217,6 +375,74 @@ TEST(IndyFoldScan, OverBudgetStopsBsmRunsConservatively)
     EXPECT_EQ(starved.sites.size(), 1u);
     EXPECT_EQ(starved.classesSkippedByBudget, 1u);
     EXPECT_EQ(starved.foldable, 1u);
+}
+
+/// 装箱修复的直接判据：Integer 包装面静态参数必须装箱进 `@v` 槽，拆箱 mock
+/// 才能取到值（裸值传播 Unknown → if_icmpne 未知 → Bail@分支）。
+TEST(IndyFoldScan, BoxesIntegerBsmArgForUnboxingMock)
+{
+    model::ResourceContainer container =
+        makeContainer({{"IndyHost", boxedHostSource()}});
+
+    const ScanResult result = scan(container);
+    ASSERT_EQ(result.sites.size(), 1u);
+    EXPECT_EQ(result.foldable, 1u)
+        << "Integer 静态参数未装箱时 BSM 体分支求值失败，站点必 Bail";
+    const Site& site = result.sites.front();
+    EXPECT_TRUE(site.foldable);
+    EXPECT_EQ(site.target.kind, jsim::indy::Target::Kind::Static);
+    EXPECT_EQ(site.target.owner, "IndyHost");
+    EXPECT_EQ(site.target.name, "t");
+    EXPECT_EQ(site.target.desc, "(II)I");
+}
+
+/// 接收者放宽形放行：句柄 desc 带实型接收者、调用点 desc 首参 Object，
+/// 原地换 invokevirtual，栈效应不变（引用放宽）。
+TEST(IndyFoldScan, FoldsReceiverWidenedVirtualSite)
+{
+    model::ResourceContainer container =
+        makeContainer({{"IndyHost", widenedHostSource("IndyHost")}});
+
+    const ScanResult result = scan(container);
+    ASSERT_EQ(result.sites.size(), 1u);
+    const Site& site = result.sites.front();
+    ASSERT_TRUE(site.foldable);
+    EXPECT_EQ(site.target.kind, jsim::indy::Target::Kind::Virtual);
+    EXPECT_EQ(site.target.desc, "()I") << "findVirtual 的 MethodType 实参不含接收者";
+    EXPECT_EQ(site.indyDesc, "(Ljava/lang/Object;)I");
+
+    const DirtySet dirty = rewrite(container, result);
+    EXPECT_EQ(dirty.sites, 1u);
+    const std::string after = disassemble(classBytes(container, "IndyHost.class"));
+    EXPECT_EQ(after.find("invokedynamic"), std::string::npos) << after;
+    EXPECT_NE(after.find("invokevirtual IndyHost.t ()I"), std::string::npos) << after;
+}
+
+/// 接口 owner 拒绝（fail-closed）：放宽形只产 invokevirtual，接口 owner 要
+/// invokeinterface（字节长度不同，超出不变 pc 布局面），整站拒绝。
+TEST(IndyFoldScan, RejectsWidenedSiteOnInterfaceOwner)
+{
+    model::ResourceContainer container;
+    container.addResource(
+        "IndyHost.class",
+        std::make_unique<model::ClassResource>(std::string("IndyHost.class"),
+                                               assemble("IndyHost", widenedHostSource("Iface"))));
+    container.addResource(
+        "Iface.class",
+        std::make_unique<model::ClassResource>(
+            std::string("Iface.class"),
+            withInterfaceFlag(assemble("Iface", ifaceSource()))));
+
+    const ScanResult result = scan(container);
+    ASSERT_EQ(result.sites.size(), 1u);
+    const Site& site = result.sites.front();
+    EXPECT_FALSE(site.foldable);
+    EXPECT_NE(site.why.find("接口"), std::string::npos)
+        << "拒绝原因应点名接口 owner：" << site.why;
+
+    const DirtySet dirty = rewrite(container, result);
+    EXPECT_EQ(dirty.sites, 0u);
+    EXPECT_TRUE(dirty.uris.empty());
 }
 
 // ============================================================================

@@ -25,11 +25,13 @@
 #include "jbc/ir/units.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/jsim_executor.hpp"
 #include "grunt/knowledge/field_census.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/rewrite_toolbox.hpp"
 #include "grunt/scan_toolbox.hpp"
 
+#include "jsim/str.hpp"
 #include "jsim/value.hpp"
 
 namespace grunt::const_pool_restore {
@@ -336,9 +338,47 @@ bool pinWatermarkBody(ir::ClassSession& s, ca::usize methodIndex)
     return e.tag == jbc::core::CpTag::String && cp.valid(e.a);
 }
 
+/// @brief BSM 引导方法签名判型（首三参 Lookup/name/MethodType + 返回 CallSite）。
+///
+/// fork 形态：StringEncrypt ReplaceInvokeDynamics 的 BSM 落在伴生池类里
+/// （罐 B 语料 BSM 在主类）。签名形状自证，进方法门放行不钉体。
+bool isBootstrapDesc(std::string_view desc)
+{
+    static const std::string_view head =
+        "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+        "Ljava/lang/invoke/MethodType;";
+    static const std::string_view tail = ")Ljava/lang/invoke/CallSite;";
+    if (desc.size() < head.size() + tail.size()) return false;
+    return desc.compare(0, head.size(), head) == 0
+           && desc.compare(desc.size() - tail.size(), tail.size(), tail) == 0;
+}
+
+/// @brief 求值通道：模拟执行伴生类解密器，密文进明文出。@return false = 未收敛。
+///
+/// 钉形（pinDecryptBody）覆盖不了的变体——解密器体被 Controlflow junk 包裹、
+/// 24 条模板钉不上（fork 全链样本实测 bI.JGzVjDfJzVW1ridB 形）——走这条：
+/// 解密器是容器内静态 `(String)String` 方法，按 indy_fold 的 BSM 同款原则
+/// 真跑（str 扩展接管 StringBuilder/String 面，常量假谓词具体求值，junk
+/// 调用走编排层子方法接力）。失败即失败，不返回半截值；值就是运行期语义，
+/// 不是从形状猜的。
+bool evalDecryptor(SimExecutor& exec, const std::string& owner, const std::string& name,
+                   std::string_view cipher, std::string& plain)
+{
+    std::vector<jsim::SimValue> args;
+    args.push_back(jsim::SimValue::knownStr(std::string(cipher)));
+    const SimOutcome out =
+        exec.invoke(owner, name + "(Ljava/lang/String;)Ljava/lang/String;", args);
+    if (out.kind != SimOutcome::Kind::Returned) return false;
+    if (!out.value.known || out.value.type != jsim::ValType::Ref) return false;
+    if (out.value.ref.kind != jsim::RefPayload::Kind::Str) return false;
+    plain = out.value.ref.str;
+    return true;
+}
+
 /// @brief 字符串面伴生类形状门 + 字段值面收集。@return 是否过门（fields 追加）。
 bool collectPoolClass(ir::ClassSession& s, const std::string& uri,
-                      const field_census::Census& census, ScanResult& result)
+                      const field_census::Census& census, ScanResult& result,
+                      SimExecutor& exec)
 {
     const ir::ClassUnit&  unit = s.unit();
     jbc::core::ClassFile& cf   = s.backing();
@@ -372,14 +412,17 @@ bool collectPoolClass(ir::ClassSession& s, const std::string& uri,
         if ((unit.methods[mi].access & kAccStatic) == 0) return false;
         if (mdesc == "(Ljava/lang/String;)Ljava/lang/String;") {
             ca::i32 key = 0;
-            if (!pinDecryptBody(s, mi, key)) return false;
-            decryptKeys.emplace(mname, key);
+            // 钉形失败不拒类（fork 变体：解密器体被 Controlflow junk 包裹，
+            // 24 条模板钉不上，bI.JGzVjDfJzVW1ridB 形）：钉形只是快路径，
+            // 没键的字段解码走求值通道。键面依旧只认钉形产物，不猜。
+            if (pinDecryptBody(s, mi, key)) decryptKeys.emplace(mname, key);
             continue;
         }
         if (mdesc == "()Ljava/lang/String;") {
             if (!pinWatermarkBody(s, mi)) return false;
             continue;
         }
+        if (isBootstrapDesc(mdesc)) continue;
         return false;
     }
 
@@ -446,15 +489,25 @@ bool collectPoolClass(ir::ClassSession& s, const std::string& uri,
                     || dsem.desc != "(Ljava/lang/String;)Ljava/lang/String;") {
                     break;
                 }
-                const auto keyIt = decryptKeys.find(std::string(dsem.name));
-                if (keyIt == decryptKeys.end()) break;
                 if (prev2->op != Op::LDC && prev2->op != Op::LDC_W) break;
                 const jbc::core::ConstantPool& cp = cf.cp;
                 if (!cp.valid(prev2->cp)) break;
                 const jbc::core::ConstantPool::Entry& e = cp.at(prev2->cp);
                 if (e.tag != jbc::core::CpTag::String || !cp.valid(e.a)) break;
+
+                // 双通道解码：钉形有键走逐码元 XOR（快路径），钉形变体（junk
+                // 包裹）走求值通道真跑解密器。两通道都不收敛即放弃该字段。
                 std::string plain;
-                if (!scan_tools::decryptXor(cp.utf8Of(e.a), keyIt->second, plain)) break;
+                bool        havePlain = false;
+                const auto  keyIt     = decryptKeys.find(std::string(dsem.name));
+                if (keyIt != decryptKeys.end()) {
+                    havePlain = scan_tools::decryptXor(cp.utf8Of(e.a), keyIt->second, plain);
+                }
+                if (!havePlain) {
+                    havePlain = evalDecryptor(exec, self, std::string(dsem.name),
+                                              cp.utf8Of(e.a), plain);
+                }
+                if (!havePlain) break;
 
                 value.kind  = ValueLoad::Kind::Str;
                 value.str   = std::move(plain);
@@ -523,6 +576,11 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
         return result;
     }
 
+    // 字符串面求值通道的执行器：钉形变体（junk 包裹解密器）的解码真跑解密器。
+    // str 扩展按需装（分层红线：执行器自己不装包，谁需要谁装）。
+    SimExecutor exec(container);
+    jsim::str::install(exec.session());
+
     // 面 1：数值面逐字段（无类级门）+ 字符串面伴生类门。
     forEachClass(container, [&](const ClassEntry& entry) {
         const std::string uri(entry.uri);
@@ -531,7 +589,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
             return;
         }
         collectNumericFields(*session, census, result);
-        collectPoolClass(*session, uri, census, result);
+        collectPoolClass(*session, uri, census, result, exec);
     });
 
     if (result.fields.empty()) return result;

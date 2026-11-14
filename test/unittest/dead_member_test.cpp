@@ -607,5 +607,184 @@ TEST(DeadMemberCensus, CensusBlindStopsWholeRound)
     EXPECT_TRUE(mateKeepsSecret(container)) << "引用证据不足不删";
 }
 
+// ============================================================================
+// ==== 反射按名定位的保守面（F3 补口）==========================================
+// ============================================================================
+
+TEST(DeadMemberRuntime, KeepsUnreferencedConstructor)
+{
+    // 构造器反射可达（getDeclaredConstructor + setAccessible 按类型定位，
+    // 无名字证据可用）：整档不删，宁误留。同类的 private 零引用方法照删，
+    // 对照保守面不吞本职工作。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         ".super java/lang/Object\n"
+         ".class public super Host {\n"
+         "  .method private <init> ()V {\n"
+         "    code: {\n"
+         "      aload 0\n"
+         "      invokespecial java/lang/Object.<init> ()V\n"
+         "      return\n"
+         "    }\n"
+         "  }\n"
+         "  .method private static secret (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      iadd\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "  .method public static call ()I {\n"
+         "    code: {\n"
+         "      bipush 3\n"
+         "      bipush 4\n"
+         "      invokestatic java/lang/Math.max (II)I\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ScanResult scanned = scan(container);
+    bool ctorCandidate    = false;
+    bool secretCandidate  = false;
+    for (const ClassCand& c : scanned.classes) {
+        for (const MethodCand& m : c.methods) {
+            ctorCandidate   |= (m.name == "<init>");
+            secretCandidate |= (m.name == "secret");
+        }
+    }
+    EXPECT_FALSE(ctorCandidate) << "构造器不该成为删除候选";
+    EXPECT_TRUE(secretCandidate);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_GE(dirty.methods, 1u);
+    const std::string after = disassemble(classBytes(container, "Host.class"));
+    EXPECT_NE(after.find("<init>"), std::string::npos) << after;
+    EXPECT_EQ(after.find("secret"), std::string::npos) << after;
+}
+
+TEST(DeadMemberRuntime, KeepsMethodNamedByPoolString)
+{
+    // 池明文按名引用：任意类的字符串常量 "secret"（框架运行时 getDeclared-
+    // Method("secret") 一族按名反射定位）入名字面，方法不删。反射按名定位
+    // 只有名字证据，全容器任何字符串常量都可能是名字证据。
+    model::ResourceContainer container = makeContainer({
+        {"Mate", mateSource()},
+        {"Host",
+         ".super java/lang/Object\n"
+         ".class public super Host {\n"
+         "  .method public static call ()I {\n"
+         "    code: {\n"
+         "      ldc \"secret\"\n"
+         "      pop\n"
+         "      bipush 3\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    EXPECT_GE(dirty.rejectedByRef, 1u) << "池明文名字应拦删";
+    EXPECT_TRUE(mateKeepsSecret(container)) << "按名反射可达的方法不删";
+}
+
+/// 池类解密器：24 条模板，key=32（"GRUNT" → "grunt"）。与
+/// const_pool_restore_test 的 decBody 同形（各测试文件夹具自持）。
+std::string dmDecryptorBody()
+{
+    std::string src = "  .method static dec (Ljava/lang/String;)Ljava/lang/String; {\n";
+    src += "    code: {\n";
+    src += "      new java/lang/StringBuilder\n";
+    src += "      dup\n";
+    src += "      invokespecial java/lang/StringBuilder.<init> ()V\n";
+    src += "      astore_1\n";
+    src += "      iconst_0\n";
+    src += "      istore_2\n";
+    src += "      goto C\n";
+    src += "    B:\n";
+    src += "      aload_1\n";
+    src += "      aload_0\n";
+    src += "      iload_2\n";
+    src += "      invokevirtual java/lang/String.charAt (I)C\n";
+    src += "      ldc 32\n";
+    src += "      ixor\n";
+    src += "      i2c\n";
+    src += "      invokevirtual java/lang/StringBuilder.append (C)Ljava/lang/StringBuilder;\n";
+    src += "      pop\n";
+    src += "      iinc 2 1\n";
+    src += "    C:\n";
+    src += "      iload_2\n";
+    src += "      aload_0\n";
+    src += "      invokevirtual java/lang/String.length ()I\n";
+    src += "      if_icmplt B\n";
+    src += "      aload_1\n";
+    src += "      invokevirtual java/lang/StringBuilder.toString ()Ljava/lang/String;\n";
+    src += "      areturn\n";
+    src += "    }\n";
+    src += "  }\n";
+    return src;
+}
+
+TEST(DeadMemberRuntime, KeepsMethodNamedByPoolArrayFromClinitEval)
+{
+    // 池数组形态（fork 池形最简体）：名字是 clinit 运行期解密产物。CP 只有
+    // 密文 "GRUNT"，整体名 "grunt" 不在任何字符串常量里，CP 字符串普查看
+    // 不见；模拟执行 clinit（解密器走 str 扩展）从静态区数组提取明文入名
+    // 字面。同类的无证方法照删，对照提取面不吞本职工作。
+    model::ResourceContainer container = makeContainer({
+        {"Pool",
+         ".super java/lang/Object\n"
+         ".class public super Pool {\n"
+         "  .field public static names [Ljava/lang/String;\n"
+         + dmDecryptorBody() +
+         "  .method static <clinit> ()V {\n"
+         "    code: {\n"
+         "      iconst_1\n"
+         "      anewarray java/lang/String\n"
+         "      dup\n"
+         "      iconst_0\n"
+         "      ldc \"GRUNT\"\n"
+         "      invokestatic Pool.dec (Ljava/lang/String;)Ljava/lang/String;\n"
+         "      aastore\n"
+         "      putstatic Pool.names [Ljava/lang/String;\n"
+         "      return\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+        {"Mate",
+         ".super java/lang/Object\n"
+         ".class public super Mate {\n"
+         "  .method private static grunt (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      iadd\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "  .method private static gamma (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      isub\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    EXPECT_GE(dirty.rejectedByRef, 1u) << "池数组提取的名字应拦删";
+    EXPECT_GE(dirty.methods, 1u);
+    const std::string after = disassemble(classBytes(container, "Mate.class"));
+    EXPECT_NE(after.find("grunt"), std::string::npos) << after;
+    EXPECT_EQ(after.find("gamma"), std::string::npos) << after;
+}
+
 }   // namespace
 }   // namespace grunt::dead_member
