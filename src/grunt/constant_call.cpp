@@ -20,11 +20,12 @@
 ///
 /// ## 类初始化检查与同类豁免
 ///
-/// 被调类的 <clinit> 必须缺失或只剩 NOP/RETURN 且无异常表：invokestatic 是
-/// 类的主动使用，删掉调用会改变类初始化时机。同类调用豁免（JVMS 5.5）：本
-/// 类方法开始执行时类已在初始化中/已完成，同类 INVOKESTATIC 不触发初始化，
-/// 删调用不移时机。豁免只作用于初始化时机这一个检查，纯性、常量实参、求值
-/// 三条判据对同类站点照收不误。
+/// 被调类的 <clinit> 必须中性（scan_tools::classInitNeutral 双面口径：缺失
+/// 或空壳；或纯常量初值面——只写本类字段的确定值，初始化时机不可观察）：
+/// invokestatic 是类的主动使用，删掉调用会改变类初始化时机。同类调用豁免
+/// （JVMS 5.5）：本类方法开始执行时类已在初始化中/已完成，同类 INVOKESTATIC
+/// 不触发初始化，删调用不移时机。豁免只作用于初始化时机这一个检查，纯性、
+/// 常量实参、求值三条判据对同类站点照收不误。
 ///
 /// ## 求值环境接管：java/lang/Math.max(II)I
 ///
@@ -235,13 +236,14 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
             if (group == byOwner.end()) return;
 
             if (!scan_tools::classInitNeutral(*session)) {
-                // 类初始化检查：跨类调用删掉会改变被调类的初始化时机，照旧
-                // 整组拒绝。同类调用（boar proc 转发形态：NativePreProcessor
-                // 的桥与转发同类）豁免，JVMS 5.5：本类方法开始执行时类已经
-                // 在初始化中/已完成，同类 INVOKESTATIC 不触发初始化，删调用
-                // 不移时机；豁免站点的纯性由下面的封闭环境求值独立证明
-                // （boar 取证：全部 3262 个可折转发站点都落在非中性 clinit
-                // 类里，检查不豁免则整条 processor 键解锁链空转）。
+                // 类初始化检查（双面中性口径见 scan_toolbox）：非中性时跨类
+                // 调用删掉会改变被调类的初始化时机，照旧整组拒绝。同类调用
+                // （boar proc 转发形态：NativePreProcessor 的桥与转发同类）
+                // 豁免，JVMS 5.5：本类方法开始执行时类已经在初始化中/已完成，
+                // 同类 INVOKESTATIC 不触发初始化，删调用不移时机；豁免站点的
+                // 纯性由下面的封闭环境求值独立证明（boar 取证：全部 3262 个
+                // 可折转发站点都落在非中性 clinit 类里，检查不豁免则整条
+                // processor 键解锁链空转）。
                 bool anyKept = false;
                 for (const ca::usize si : group->second) {
                     const Site& site = sites[si];

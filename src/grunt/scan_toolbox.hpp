@@ -121,12 +121,23 @@ inline const std::vector<jbc::core::BootstrapMethodsAttr::Entry>* bsmEntries(
     return attr == nullptr ? nullptr : &attr->entries;
 }
 
-/// @brief 判 owner 类 `<clinit>` 是否中性（缺失，或只剩 NOP/RETURN 且无
-///        异常表）。
+/// @brief 判 owner 类 `<clinit>` 是否中性：删掉指向 owner 的一次主动使用
+///        （invokestatic 调用、字段访问内联）不改变可观察行为。
 ///
-/// 这是保守面而不是判据：折叠掉指向 owner 的某次主动使用（invokestatic 调
-/// 用、字段访问内联）会改变类初始化时机，只有确认初始化器什么都不做时才
-/// 允许那次使用消失。`<clinit>` 带任何实体指令或异常表都判非中性。
+/// 两个接受面（都是保守面而不是判据）：
+///
+/// 1. **缺失或空壳**：无 `<clinit>`、无码，或只剩 NOP/RETURN 且无异常表；
+/// 2. **纯常量初值**：clinit 只由常量装载（数值/String）、栈整形、数值
+///    转换与对**本类字段**的 GETSTATIC/PUTSTATIC 构成（watermark 面：
+///    Grunt 在每个类撒 `ldc "PROTECTED BY …"; putstatic 自家字段`）。这一
+///    面的副作用 = 对本类静态字段写确定值——初始化提前/推迟/不发生都不可
+///    观察：字段值不依赖时机；字段若有读者，读者本身就是主动使用，初始化
+///    照常发生且写的是同一个确定值。
+///
+/// 出现分支、方法调用、NEW、athrow、异常表、任何对**本类以外**字段的访问
+/// 即判非中性（fail-closed）。消费方四个（ConstantCall / GateProcessorFold /
+/// ProxyInline / FieldAccessProxy），语义同一：折叠掉指向 owner 的一次主动
+/// 使用。
 inline bool classInitNeutral(jbc::ir::ClassSession& session)
 {
     namespace ir = jbc::ir;
@@ -151,11 +162,88 @@ inline bool classInitNeutral(jbc::ir::ClassSession& session)
     if (cu == nullptr) return false;
     if (!cu->exc.empty()) return false;
 
+    bool empty = true;
     for (const ir::InsnId id : cu->dom.order()) {
         const ir::Insn* in = cu->dom.peek(id);
         if (in == nullptr) continue;
         if (in->op == Op::NOP || in->op == Op::RETURN) continue;
-        return false;
+        empty = false;
+        break;
+    }
+    if (empty) return true;
+
+    // 纯常量初值面：watermark 形（常量装载 + putstatic 本类字段 + return）。
+    const std::string_view self = session.backing().thisName();
+    for (const ir::InsnId id : cu->dom.order()) {
+        const ir::Insn* in = cu->dom.peek(id);
+        if (in == nullptr) continue;
+        switch (in->op) {
+        case Op::NOP:
+        case Op::RETURN:
+        case Op::ACONST_NULL:
+        case Op::ICONST_M1:
+        case Op::ICONST_0:
+        case Op::ICONST_1:
+        case Op::ICONST_2:
+        case Op::ICONST_3:
+        case Op::ICONST_4:
+        case Op::ICONST_5:
+        case Op::BIPUSH:
+        case Op::SIPUSH:
+        case Op::LCONST_0:
+        case Op::LCONST_1:
+        case Op::FCONST_0:
+        case Op::FCONST_1:
+        case Op::FCONST_2:
+        case Op::DCONST_0:
+        case Op::DCONST_1:
+        case Op::I2L:
+        case Op::I2F:
+        case Op::I2D:
+        case Op::L2I:
+        case Op::L2F:
+        case Op::L2D:
+        case Op::F2I:
+        case Op::F2L:
+        case Op::F2D:
+        case Op::D2I:
+        case Op::D2L:
+        case Op::D2F:
+        case Op::I2B:
+        case Op::I2C:
+        case Op::I2S:
+        case Op::POP:
+        case Op::POP2:
+        case Op::DUP:
+        case Op::DUP2:
+        case Op::SWAP:
+            continue;
+        case Op::LDC:
+        case Op::LDC_W:
+        case Op::LDC2_W: {
+            ir::ClassSession::ConstSem sem;
+            if (!session.constOf(*in, sem)) return false;
+            using CK = ir::ClassSession::ConstSem::Kind;
+            if (in->op == Op::LDC2_W) {
+                if (sem.kind != CK::Long && sem.kind != CK::Double) return false;
+            } else if (sem.kind != CK::Int && sem.kind != CK::String) {
+                return false;
+            }
+            continue;
+        }
+        case Op::GETSTATIC:
+        case Op::PUTSTATIC: {
+            ir::ClassSession::MemberSem sem;
+            if (!session.memberOf(*in, sem)
+                || sem.kind != ir::ClassSession::MemberSem::Kind::Field
+                || sem.owner != self) {
+                return false;
+            }
+            continue;
+        }
+        default:
+            return false;
+        }
     }
     return true;
 }

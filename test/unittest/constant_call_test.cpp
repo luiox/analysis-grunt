@@ -369,10 +369,13 @@ TEST(ConstantCallScan, IgnoresTargetsOutsideContainer)
     EXPECT_TRUE(result.rejects.empty());
 }
 
-TEST(ConstantCallScan, RejectsTargetWhoseClassInitHasBody)
+TEST(ConstantCallScan, AcceptsTargetWithPureConstClassInit)
 {
-    // invokestatic 是类的主动使用：删掉调用会改变 <clinit> 的执行时机。
-    // 目标类初始化器非空时必须拒绝，**跨类**调用照旧。
+    // watermark 面（scan_tools::classInitNeutral 纯常量初值口）：clinit 只由
+    // 常量装载 + putstatic 本类字段构成时，初始化时机不可观察（字段值确定、
+    // 有读者时读者本身就是主动使用），跨类调用照折。Grunt 每类撒
+    // `ldc "PROTECTED BY …"; putstatic 自家字段`，这一面不放开则全部跨类
+    // 站点空转（样本取证：junk 谓词助手类只有 watermark clinit）。
     model::ResourceContainer container = makeContainer({
         {"fixture/Util",
          ".super java/lang/Object\n"
@@ -380,6 +383,49 @@ TEST(ConstantCallScan, RejectsTargetWhoseClassInitHasBody)
          "  .field public static counter I\n"
          "  .method static <clinit> ()V {\n"
          "    code: {\n"
+         "      iconst_1\n"
+         "      putstatic fixture/Util.counter I\n"
+         "      return\n"
+         "    }\n"
+         "  }\n"
+         "  .method public static pure (II)I {\n"
+         "    parameters: { a, b },\n"
+         "    code: {\n"
+         "      iload a\n"
+         "      iload b\n"
+         "      iadd\n"
+         "      bipush 7\n"
+         "      imul\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+        {"fixture/Caller",
+         callerSource("      bipush 3\n"
+                      "      bipush 4\n"
+                      "      invokestatic fixture/Util.pure (II)I\n"
+                      "      ireturn\n")},
+    });
+
+    const ScanResult result = scan(container);
+    EXPECT_FALSE(result.sites.empty());
+    EXPECT_EQ(findReject(result, RejectReason::ClassInitPresent), nullptr);
+}
+
+TEST(ConstantCallScan, RejectsTargetWhoseClassInitHasBody)
+{
+    // invokestatic 是类的主动使用：删掉调用会改变 <clinit> 的执行时机。
+    // clinit 带纯常量初值面之外的实体指令（此处：对**外类**字段的读——
+    // 触发外类初始化，时机可观察）时必须拒绝，**跨类**调用照旧。
+    model::ResourceContainer container = makeContainer({
+        {"fixture/Util",
+         ".super java/lang/Object\n"
+         ".class public super fixture/Util {\n"
+         "  .field public static counter I\n"
+         "  .method static <clinit> ()V {\n"
+         "    code: {\n"
+         "      getstatic java/lang/System.out Ljava/io/PrintStream;\n"
+         "      pop\n"
          "      iconst_1\n"
          "      putstatic fixture/Util.counter I\n"
          "      return\n"
