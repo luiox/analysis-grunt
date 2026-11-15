@@ -734,7 +734,74 @@ TEST(DeadMemberRuntime, KeepsMethodNamedByPoolArrayFromClinitEval)
     // 池数组形态（fork 池形最简体）：名字是 clinit 运行期解密产物。CP 只有
     // 密文 "GRUNT"，整体名 "grunt" 不在任何字符串常量里，CP 字符串普查看
     // 不见；模拟执行 clinit（解密器走 str 扩展）从静态区数组提取明文入名
-    // 字面。同类的无证方法照删，对照提取面不吞本职工作。
+    // 字面。数组带候选之外的活读点（public 非 getter 形的 name()，4 条体
+    // 不落 Getter 门），死池判定不吞它。同类的无证方法照删，对照提取面不
+    // 吞本职工作。
+    model::ResourceContainer container = makeContainer({
+        {"Pool",
+         ".super java/lang/Object\n"
+         ".class public super Pool {\n"
+         "  .field public static names [Ljava/lang/String;\n"
+         + dmDecryptorBody() +
+         "  .method static <clinit> ()V {\n"
+         "    code: {\n"
+         "      iconst_1\n"
+         "      anewarray java/lang/String\n"
+         "      dup\n"
+         "      iconst_0\n"
+         "      ldc \"GRUNT\"\n"
+         "      invokestatic Pool.dec (Ljava/lang/String;)Ljava/lang/String;\n"
+         "      aastore\n"
+         "      putstatic Pool.names [Ljava/lang/String;\n"
+         "      return\n"
+         "    }\n"
+         "  }\n"
+         "  .method public static name ()Ljava/lang/String; {\n"
+         "    code: {\n"
+         "      getstatic Pool.names [Ljava/lang/String;\n"
+         "      iconst_0\n"
+         "      aaload\n"
+         "      areturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+        {"Mate",
+         ".super java/lang/Object\n"
+         ".class public super Mate {\n"
+         "  .method private static grunt (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      iadd\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "  .method private static gamma (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      isub\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    EXPECT_GE(dirty.rejectedByRef, 1u) << "池数组提取的名字应拦删";
+    EXPECT_GE(dirty.methods, 1u);
+    const std::string after = disassemble(classBytes(container, "Mate.class"));
+    EXPECT_NE(after.find("grunt"), std::string::npos) << after;
+    EXPECT_EQ(after.find("gamma"), std::string::npos) << after;
+}
+
+TEST(DeadMemberRuntime, DropsMethodNamedByDeadPoolArray)
+{
+    // 死池反证：池数组没有任何候选之外的读点（clinit 只写不读、getter 缺席）
+    // 时，明文够不着反射面，不进名字证据面——按名保护面不拦，grunt 照删。
+    // （Grunt junk 池类形态：池 + getter 全零引用，明文是诱饵；样本取证
+    // B.a 只被候选 B.c/B.e 读。）
     model::ResourceContainer container = makeContainer({
         {"Pool",
          ".super java/lang/Object\n"
@@ -779,11 +846,9 @@ TEST(DeadMemberRuntime, KeepsMethodNamedByPoolArrayFromClinitEval)
 
     const ScanResult scanned = scan(container);
     const DirtySet   dirty   = rewrite(container, scanned);
-    EXPECT_GE(dirty.rejectedByRef, 1u) << "池数组提取的名字应拦删";
-    EXPECT_GE(dirty.methods, 1u);
-    const std::string after = disassemble(classBytes(container, "Mate.class"));
-    EXPECT_NE(after.find("grunt"), std::string::npos) << after;
-    EXPECT_EQ(after.find("gamma"), std::string::npos) << after;
+    // Mate 两方法全删 → 空壳回收整类摘除（比逐方法断言更强的收敛证据）。
+    EXPECT_EQ(dirty.classes, 1u) << "Mate 应整类摘除";
+    EXPECT_EQ(container.hasResource("Mate.class"), false);
 }
 
 }   // namespace

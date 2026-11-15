@@ -463,8 +463,11 @@ mjbase::spi::PreservedAnalyses DeadMemberPass::run(
             m += c.methods.size();
             f += c.fields.size();
         }
-        std::fprintf(stderr, "[grunt.DeadMember] scan: classes=%zu methods=%zu fields=%zu\n",
-                     scanned.classes.size(), m, f);
+        std::fprintf(stderr,
+                     "[grunt.DeadMember] scan: classes=%zu methods=%zu fields=%zu"
+                     " indy-targets=%zu bsm-unresolved=%zu\n",
+                     scanned.classes.size(), m, f, scanned.indyTargets,
+                     scanned.indyBsmFailed);
     }
     if (scanned.classes.empty()) return mjbase::spi::PreservedAnalyses::all();
 
