@@ -345,8 +345,8 @@ const char* kSpliceShapeBreak =
     "  .method public static m ()I {\n"
     "    code: {\n"
     "      ldc 100\n"
-    "      ldc 5\n"
-    "      isub\n"
+    "      ldc2_w 5L\n"
+    "      iand\n"
     "      ireturn\n"
     "    }\n"
     "  }\n"
@@ -391,14 +391,16 @@ const char* kNonConstOperand =
     "}\n";
 
 /// 形状断裂：跨度尾不是 IXOR（IADD 不构成跨度）。
+/// 浮点→整型转换走廊（f2i）：截断-NaN-饱和边超出封闭词汇表（家族不产），
+/// 合法字节码但通用兜底不接，命名形状同样不接 → 整站放弃。
 const char* kShapeBreak =
     ".super java/lang/Object\n"
     ".class public super fixture/NfShapeBreak {\n"
-    "  .method public static m ()I {\n"
+    "  .method public static m (I)I {\n"
     "    code: {\n"
-    "      ldc2_w 100L\n"
-    "      l2i\n"
     "      ldc 5\n"
+    "      ldc 1.5f\n"
+    "      f2i\n"
     "      iadd\n"
     "      ireturn\n"
     "    }\n"
@@ -453,25 +455,25 @@ const char* kWrongCallee =
     "  }\n"
     "}\n";
 
-/// 中段标签：分支路径与贯穿路径在跨度中段（ldc 23）汇合，栈形一致 [J]，
-/// 汇编合法，但 ldc 23 带标签 = 合并点，scan 必须整站放弃。
+/// 中段标签：两条路径在跨度消费点（ixor）汇合，栈形一致 [I,I]，汇编合法，
+/// 但 ixor 带标签 = 合并点——两条路径各自重建 [I,I]，唯一封闭前缀全部含
+/// 标签指令（通用封闭跨度兜底的最短前缀 [第二操作数, ixor] 也被覆盖），
+/// scan 必须整站放弃。
 const char* kMidSpanLabel =
     ".super java/lang/Object\n"
     ".class public super fixture/NfMidLabel {\n"
     "  .method public static m (I)I {\n"
     "    code: {\n"
-    "      ldc 100\n"
-    "      i2l\n"
     "      iload_0\n"
     "      ifeq Lmid\n"
-    "      pop2\n"
     "      ldc 100\n"
-    "      i2l\n"
+    "      ldc 200\n"
+    "      goto Lend\n"
     "    Lmid:\n"
-    "      ldc 23\n"
-    "      i2l\n"
-    "      lxor\n"
-    "      l2i\n"
+    "      ldc 100\n"
+    "      ldc 200\n"
+    "    Lend:\n"
+    "      ixor\n"
     "      ireturn\n"
     "    }\n"
     "  }\n"
@@ -530,12 +532,32 @@ TEST(NumberFoldScan, FindsDoubleBitsWrapper)
     EXPECT_EQ(jsim::doubleToBits(scanned.sites[0].value.f64()), 0x4008000000000000ULL);
 }
 
-TEST(NumberFoldScan, RejectsNonConstOperand)
+/// 非常数操作数前的纯前缀照折：[ldc 23; i2l] 是封闭纯计算（值 23L），后续
+/// lxor 消费 iload_0 的外部值不受折叠加扰——旧口径把这种站点整站硬拒，通用
+/// 兜底放宽（词汇内破缺回落最后归点）后前缀折叠、消费侧原样保留。
+TEST(NumberFoldScan, FoldsPurePrefixBeforeNonConstOperand)
 {
     model::ResourceContainer container;
-    addFixture(container, "fixture/NfNonConst", kNonConstOperand);
+    const std::string uri = addFixture(container, "fixture/NfNonConst", kNonConstOperand);
     const ScanResult scanned = scan(container);
-    EXPECT_EQ(scanned.sites.size(), 0u);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites[0].value.kind, ValueLoad::Kind::I64);
+    EXPECT_EQ(scanned.sites[0].value.i64(), 23);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_EQ(dirty.sites, 1u);
+    EXPECT_EQ(dirty.failed, 0u);
+
+    const model::IResource* raw = container.getResource(uri);
+    const auto* cls = ca::core::tag_cast::dyn_cast<const model::ClassResource>(raw);
+    ASSERT_NE(cls, nullptr);
+    const std::vector<jbc::core::Op> ops = realOps(cls->get());
+    EXPECT_TRUE(contains(ops, jbc::core::Op::LXOR)) << "外部操作数消费侧不得被动";
+    EXPECT_TRUE(contains(ops, jbc::core::Op::L2I)) << "消费侧运算不得被动";
+    EXPECT_TRUE(contains(ops, jbc::core::Op::LDC2_W)) << "纯前缀未折成常量装载";
+    // 收敛面：折叠产物（iload_0 上的 lxor）不再成站点。
+    const ScanResult rescanned = scan(container);
+    EXPECT_EQ(rescanned.sites.size(), 0u);
 }
 
 TEST(NumberFoldScan, RejectsBrokenSpanShape)
@@ -630,6 +652,143 @@ TEST(NumberFoldScan, FindsLongSpliceDoubleWrapper)
     ASSERT_EQ(scanned.sites.size(), 1u);
     EXPECT_EQ(scanned.sites[0].value.kind, ValueLoad::Kind::F64);
     EXPECT_EQ(jsim::doubleToBits(scanned.sites[0].value.f64()), 0x4008000000000000ULL);
+}
+
+// ==== SCAN（通用封闭跨度兜底）===============================================
+
+/// 拼装走廊族（Grunt v3 池填充）：`parseUnsignedLong(key,32) ^ (int跨度 i2l
+/// mask land)`——命名形状全拒（LXOR 的 obf 操作数是走廊非裸常量），通用
+/// 封闭跨度兜底以最长封闭前缀整段折收。
+const char* kGenericAssembly =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfGenericAssembly {\n"
+    "  .method public static m ()J {\n"
+    "    code: {\n"
+    "      ldc \"2\"\n"
+    "      bipush 32\n"
+    "      invokestatic java/lang/Long.parseUnsignedLong (Ljava/lang/String;I)J\n"
+    "      ldc 7\n"
+    "      ldc 3\n"
+    "      ixor\n"
+    "      i2l\n"
+    "      ldc2_w 4294967295L\n"
+    "      land\n"
+    "      lxor\n"
+    "      lreturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+TEST(NumberFoldScan, FindsGenericAssemblySpan)
+{
+    // parseUL("2",32) ^ ((7^3) & 0xFFFFFFFF) = 2 ^ 4 = 6。
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfGenericAssembly", kGenericAssembly);
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites[0].value.kind, ValueLoad::Kind::I64);
+    EXPECT_EQ(scanned.sites[0].value.i64(), 6);
+}
+
+/// junk 直落跳夹层变体（Grunt v3 池填充实测）：走廊内的 `goto 下一条` 空
+/// 转跳语义透明（无条件、目标紧随），词汇内跳过；其目标标签只被自身引用，
+/// 随跨度消亡不构成合并点。parseUL("2",32) ^ (7<<32 | 3) = 0x700000001。
+const char* kGenericGotoAssembly =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfGenericGoto {\n"
+    "  .method public static m ()J {\n"
+    "    code: {\n"
+    "      ldc \"2\"\n"
+    "      bipush 32\n"
+    "      invokestatic java/lang/Long.parseUnsignedLong (Ljava/lang/String;I)J\n"
+    "      goto A\n"
+    "    A:\n"
+    "      ldc 7\n"
+    "      i2l\n"
+    "      ldc2_w 4294967295L\n"
+    "      land\n"
+    "      bipush 32\n"
+    "      lshl\n"
+    "      goto B\n"
+    "    B:\n"
+    "      ldc 3\n"
+    "      i2l\n"
+    "      ldc2_w 4294967295L\n"
+    "      land\n"
+    "      lor\n"
+    "      lxor\n"
+    "      lreturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+TEST(NumberFoldScan, FindsGenericGotoAssemblySpan)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfGenericGoto", kGenericGotoAssembly);
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites[0].value.kind, ValueLoad::Kind::I64);
+    EXPECT_EQ(scanned.sites[0].value.i64(), 0x700000001LL);
+}
+
+/// 通用跨度改写走 NOP 化口径：透明 goto 的目标标签锚在跨度内部成员上，
+/// 擦除口径会让标签悬垂、lower 重定位报 relocation bad target（拼装走廊
+/// 实证）；NOP 化保住全部旧 pc，改写必须干净落账且产物可重新解析。
+TEST(NumberFoldRewrite, FoldsGenericGotoSpanViaNopVictims)
+{
+    model::ResourceContainer container;
+    const std::string uri = addFixture(container, "fixture/NfGenericGoto", kGenericGotoAssembly);
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+    EXPECT_EQ(dirty.sites, 1u);
+    EXPECT_EQ(dirty.failed, 0u) << "NOP 化口径下 lower 重定位不应受阻";
+
+    const model::IResource* raw = container.getResource(uri);
+    const auto* cls = ca::core::tag_cast::dyn_cast<const model::ClassResource>(raw);
+    ASSERT_NE(cls, nullptr);
+
+    // 语义面：跨度消失（NOP 化落点由 realOps 跳过），只剩常量装载 + 返回。
+    const std::vector<jbc::core::Op> ops = realOps(cls->get());
+    EXPECT_FALSE(contains(ops, jbc::core::Op::GOTO)) << "透明 goto 未清";
+    EXPECT_FALSE(contains(ops, jbc::core::Op::INVOKESTATIC)) << "parseUnsignedLong 未清";
+    EXPECT_FALSE(contains(ops, jbc::core::Op::LXOR)) << "跨度未清";
+
+    const ValueLoad v = firstConstLoad(cls->get());
+    EXPECT_EQ(v.kind, ValueLoad::Kind::I64);
+    EXPECT_EQ(v.i64(), 0x700000001LL);
+
+    // 收敛面：复扫零站点（NOP 落点不驻栈，不再起锚）。
+    const ScanResult rescanned = scan(container);
+    EXPECT_EQ(rescanned.sites.size(), 0u);
+}
+
+/// 平面整型算术（命名形状只收 IAND 位拼与 I2L 桥接形，`isub` 族由通用
+/// 兜底收编——旧 kSpliceShapeBreak 夹具在新族下是正例）。
+const char* kGenericPlainArith =
+    ".super java/lang/Object\n"
+    ".class public super fixture/NfGenericPlainArith {\n"
+    "  .method public static m ()I {\n"
+    "    code: {\n"
+    "      ldc 100\n"
+    "      ldc 5\n"
+    "      isub\n"
+    "      ireturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+TEST(NumberFoldScan, FindsPlainIntArithViaGeneric)
+{
+    model::ResourceContainer container;
+    addFixture(container, "fixture/NfGenericPlainArith", kGenericPlainArith);
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites[0].value.kind, ValueLoad::Kind::I32);
+    EXPECT_EQ(scanned.sites[0].value.i32(), 95);
 }
 
 TEST(NumberFoldScan, RejectsSpliceNonConstOperand)
@@ -909,9 +1068,10 @@ TEST(NumberFoldRejectSurface, SpliceLabelRejectionLeavesBytesUntouched)
 TEST(NumberFoldRejectSurface, OldFormRejectionsStillLeaveBytesUntouched)
 {
     model::ResourceContainer container;
-    addFixture(container, "fixture/NfNonConst", kNonConstOperand);
+    // radix≠32 的 parseUL 不是家族生成面：包装调用不吻合，走查落站外边界，
+    // 无归点整站拒绝。NfNonConst 的纯前缀在兜底放宽（词汇内破缺回落最后
+    // 归点）后照折，移出拒绝面（见 FoldsPurePrefixBeforeNonConstOperand）。
     addFixture(container, "fixture/NfRadix16", kRadixNot32);
-    expectRejectionLeavesBytesUntouched(container, "fixture/NfNonConst.class");
     expectRejectionLeavesBytesUntouched(container, "fixture/NfRadix16.class");
 }
 
