@@ -17,6 +17,13 @@
 #include "mjbase/model/resource_container.hpp"
 #include "mjbase/model/resource_model.hpp"
 
+#include "grunt/jsim_executor.hpp"
+#include "grunt/rewrite_toolbox.hpp"
+#include "grunt/scan_toolbox.hpp"
+
+#include "jsim/num.hpp"
+#include "jsim/str.hpp"
+
 #include <gtest/gtest.h>
 
 #include <stdexcept>
@@ -675,6 +682,250 @@ TEST(ConstantCallProof, FailsWhenClassCountChanges)
     EXPECT_FALSE(verdict.ok);
     ASSERT_FALSE(verdict.failed.empty());
     EXPECT_EQ(verdict.failed.front(), std::string("class-count"));
+}
+
+// ============================================================================
+// ==== 解密器族 ==============================================================
+// ============================================================================
+
+// 合成解密器夹具：直线循环解密器（真身是 junk 状态机，形态同源：char[] 逐
+// 元异或 + new String(char[]) 收尾）+ 同类池填充点（ldc 密文 · toCharArray ·
+// ldc2_w key · bipush seed · invokestatic）。密文 "/$6" ^ 65 = "new"（独立
+// 重算，不借实现常量）。
+const char* kDecHost =
+    ".super java/lang/Object\n"
+    ".class public super fixture/DecHost {\n"
+    "  .method private static a ([CJI)Ljava/lang/String; {\n"
+    "    parameters: { arr, key, seed },\n"
+    "    code: {\n"
+    "      iconst_0\n"
+    "      istore 4\n"
+    "    Lloop:\n"
+    "      iload 4\n"
+    "      aload arr\n"
+    "      arraylength\n"
+    "      if_icmpge Ldone\n"
+    "      aload arr\n"
+    "      iload 4\n"
+    "      aload arr\n"
+    "      iload 4\n"
+    "      caload\n"
+    "      iload seed\n"
+    "      ixor\n"
+    "      i2c\n"
+    "      castore\n"
+    "      iinc 4 1\n"
+    "      goto Lloop\n"
+    "    Ldone:\n"
+    "      new java/lang/String\n"
+    "      dup\n"
+    "      aload arr\n"
+    "      invokespecial java/lang/String.<init> ([C)V\n"
+    "      areturn\n"
+    "    }\n"
+    "  }\n"
+    "  .method public static fill ()Ljava/lang/String; {\n"
+    "    code: {\n"
+    "      ldc \"/$6\"\n"
+    "      invokevirtual java/lang/String.toCharArray ()[C\n"
+    "      ldc2_w 999L\n"
+    "      bipush 65\n"
+    "      invokestatic fixture/DecHost.a ([CJI)Ljava/lang/String;\n"
+    "      areturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+/// 跨类填充点：解密器与调用不同类——JVMS 5.5 豁免不适用（删调用可能改变
+/// 被调类初始化时机），形态不命中即回落通用判据拒。
+const char* kDecCrossCaller =
+    ".super java/lang/Object\n"
+    ".class public super fixture/DecCrossCaller {\n"
+    "  .method public static fill ()Ljava/lang/String; {\n"
+    "    code: {\n"
+    "      ldc \"/$6\"\n"
+    "      invokevirtual java/lang/String.toCharArray ()[C\n"
+    "      ldc2_w 999L\n"
+    "      bipush 65\n"
+    "      invokestatic fixture/DecHost.a ([CJI)Ljava/lang/String;\n"
+    "      areturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+std::string decryptExpectPlain()
+{
+    // "/$6" 每个码元 ^ 65（seed）→ "new"。夹具密文设计成结果可见字符。
+    std::string out;
+    for (const char c : std::string("/$6")) out.push_back(static_cast<char>(c ^ 65));
+    return out;
+}
+
+TEST(ConstantCallDecryptor, ScanMatchesFillShapeAndEvaluatesPlain)
+{
+    model::ResourceContainer container = makeContainer({{"fixture/DecHost", kDecHost}});
+    const ScanResult         result    = scan(container);
+
+    ASSERT_EQ(result.sites.size(), 1u);
+    const Site& site = result.sites.front();
+    EXPECT_TRUE(site.isDecryptor);
+    EXPECT_EQ(site.targetName, "a");
+    EXPECT_EQ(site.key, 999);
+    EXPECT_EQ(site.seed, 65);
+    const std::vector<ca::u16> cipherUnits = {0x2F, 0x24, 0x36};
+    EXPECT_EQ(site.cipherUnits, cipherUnits);
+    // 求值明文 = 密文逐元 ^ seed（夹具解密器体逐元 ixor seed）。
+    const std::vector<ca::u16> plainUnits = {'n', 'e', 'w'};
+    ASSERT_EQ(site.plainUnits.size(), plainUnits.size());
+    EXPECT_EQ(site.plainUnits, plainUnits);
+    EXPECT_EQ(site.plaintext, decryptExpectPlain());
+}
+
+TEST(ConstantCallDecryptor, RewriteFoldsCallToPlaintextLdc)
+{
+    model::ResourceContainer container = makeContainer({{"fixture/DecHost", kDecHost}});
+    const ScanResult         scanned   = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.applied, 1u);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+    EXPECT_EQ(dirty.uris.front(), "fixture/DecHost.class");
+
+    const std::string after = disassemble(classBytes(container, "fixture/DecHost.class"));
+    // 填充点只剩明文装载；解密器体仍在（zero-referenced 死成员由 DeadMember
+    // 链上收尾，本残留只负责折叠调用点）。
+    EXPECT_EQ(after.find("invokestatic"), std::string::npos) << after;
+    EXPECT_EQ(after.find("toCharArray"), std::string::npos) << after;
+    EXPECT_EQ(after.find("\"/$6\""), std::string::npos) << after;
+    const ProofResult verdict = proof(container, dirty, 1);
+    EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
+
+    // 语义闭环：折叠后的 fill 用 jsim 跑一遍，返回值 = 期望明文。
+    grunt::SimExecutor exec(container);
+    jsim::str::install(exec.session());
+    jsim::str::installStringAlloc(exec.session());
+    jsim::num::install(exec.session());
+    const SimOutcome out =
+        exec.invoke("fixture/DecHost", "fill()Ljava/lang/String;", {});
+    ASSERT_TRUE(out.ok()) << out.detail;
+    ASSERT_EQ(out.value.type, jsim::ValType::Ref);
+    ASSERT_EQ(out.value.ref.kind, jsim::RefPayload::Kind::Str);
+    std::vector<ca::u16> folded;
+    ASSERT_TRUE(scan_tools::mutf8ToUnits(out.value.ref.str, folded));
+    std::string foldedText;
+    ASSERT_TRUE(rewrite_tools::u16ToUtf8Record(folded, foldedText));
+    EXPECT_EQ(foldedText, decryptExpectPlain());
+}
+
+TEST(ConstantCallDecryptor, RejectsCrossOwnerFillSite)
+{
+    model::ResourceContainer container =
+        makeContainer({{"fixture/DecHost", kDecHost}, {"fixture/DecCrossCaller", kDecCrossCaller}});
+    const ScanResult result = scan(container);
+
+    // 同类的 DecHost.fill 仍是解密器站点；跨类调用者回落通用判据拒。
+    ASSERT_EQ(result.sites.size(), 1u);
+    EXPECT_EQ(result.sites.front().callerOwner, "fixture/DecHost");
+    const RejectedSite* rejected = findReject(result, RejectReason::ArgsNotConstant);
+    ASSERT_NE(rejected, nullptr) << "跨类填充点必须回落通用判据拒";
+    EXPECT_EQ(rejected->callerOwner, "fixture/DecCrossCaller");
+}
+
+/// 空明文回归钉（u.class write-fail Unencodable 实证）：fill 先落 ldc2_w
+/// （Long 条目 + placeholder 槽进池），fill2 的密文为空串——解密结果 "" 是
+/// 合法明文。修复口径：findUtf8("") 命中的占位槽必须视作 miss，空 Utf8
+/// 照常 intern，站点折成 ldc "" 且整类写盘成功。
+const char* kDecHostEmptyPlain =
+    ".super java/lang/Object\n"
+    ".class public super fixture/DecHostEmpty {\n"
+    "  .method private static a ([CJI)Ljava/lang/String; {\n"
+    "    parameters: { arr, key, seed },\n"
+    "    code: {\n"
+    "      iconst_0\n"
+    "      istore 4\n"
+    "    Lloop:\n"
+    "      iload 4\n"
+    "      aload arr\n"
+    "      arraylength\n"
+    "      if_icmpge Ldone\n"
+    "      aload arr\n"
+    "      iload 4\n"
+    "      aload arr\n"
+    "      iload 4\n"
+    "      caload\n"
+    "      iload seed\n"
+    "      ixor\n"
+    "      i2c\n"
+    "      castore\n"
+    "      iinc 4 1\n"
+    "      goto Lloop\n"
+    "    Ldone:\n"
+    "      new java/lang/String\n"
+    "      dup\n"
+    "      aload arr\n"
+    "      invokespecial java/lang/String.<init> ([C)V\n"
+    "      areturn\n"
+    "    }\n"
+    "  }\n"
+    "  .method public static fill ()Ljava/lang/String; {\n"
+    "    code: {\n"
+    "      ldc \"/$6\"\n"
+    "      invokevirtual java/lang/String.toCharArray ()[C\n"
+    "      ldc2_w 999L\n"
+    "      bipush 65\n"
+    "      invokestatic fixture/DecHostEmpty.a ([CJI)Ljava/lang/String;\n"
+    "      areturn\n"
+    "    }\n"
+    "  }\n"
+    "  .method public static fill2 ()Ljava/lang/String; {\n"
+    "    code: {\n"
+    "      ldc \"\"\n"
+    "      invokevirtual java/lang/String.toCharArray ()[C\n"
+    "      ldc2_w 12345L\n"
+    "      bipush 65\n"
+    "      invokestatic fixture/DecHostEmpty.a ([CJI)Ljava/lang/String;\n"
+    "      areturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+TEST(ConstantCallDecryptor, FoldsEmptyPlaintextSitePastPlaceholderTrap)
+{
+    model::ResourceContainer container =
+        makeContainer({{"fixture/DecHostEmpty", kDecHostEmptyPlain}});
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 2u);
+    const Site* emptySite = nullptr;
+    for (const Site& s : scanned.sites) {
+        if (s.plainUnits.empty()) emptySite = &s;
+    }
+    ASSERT_NE(emptySite, nullptr) << "空明文站点必须被求值出空串";
+
+    const DirtySet dirty = rewrite(container, scanned);
+    // 两站都折（空明文 intern 不踩占位槽）；整类写盘成功才进 uris。
+    ASSERT_EQ(dirty.applied, 2u);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+
+    // 池面闭环：重开写盘后的类，String 池里必须存在真空 Utf8（索引有效）。
+    const std::string after = disassemble(classBytes(container, "fixture/DecHostEmpty.class"));
+    EXPECT_EQ(after.find("invokestatic"), std::string::npos) << after;
+    const ProofResult verdict = proof(container, dirty, 1);
+    EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
+
+    // 语义闭环：折叠后的 fill2 返回空串。
+    grunt::SimExecutor exec(container);
+    jsim::str::install(exec.session());
+    jsim::str::installStringAlloc(exec.session());
+    jsim::num::install(exec.session());
+    const SimOutcome out =
+        exec.invoke("fixture/DecHostEmpty", "fill2()Ljava/lang/String;", {});
+    ASSERT_TRUE(out.ok()) << out.detail;
+    ASSERT_EQ(out.value.type, jsim::ValType::Ref);
+    ASSERT_EQ(out.value.ref.kind, jsim::RefPayload::Kind::Str);
+    std::vector<ca::u16> folded;
+    ASSERT_TRUE(scan_tools::mutf8ToUnits(out.value.ref.str, folded));
+    EXPECT_TRUE(folded.empty()) << "折叠后 fill2 必须返回空串";
 }
 
 }   // namespace
