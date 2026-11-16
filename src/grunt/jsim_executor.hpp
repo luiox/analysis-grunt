@@ -32,6 +32,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "grunt/container.hpp"
@@ -192,6 +193,109 @@ private:
         return jbc::ir::kNoMethod;
     }
 
+    /// @brief 桥前可达性剥离：把方法体里静态不可达的指令整条擦成 0x00。
+    ///
+    /// junk 状态机解密器的主解密路径从不经过死陷阱走廊（恒 false 比较后的
+    /// athrow 尾巴、goto 之后的死段等），但 libjsim v1 桥按整方法粒度拒桥
+    /// （invokedynamic / athrow / jsr/ret 出现即拒）——死尾巴的存在让真实
+    /// 解密器一个都桥不了。本入口在桥之前做一遍静态可达性分析：根 = 入口 +
+    /// 异常表 handler 落点；边 = 分支/switch 目标 + 条件类指令的 fallthrough
+    /// （goto / 双 switch / athrow / 各 return 无 fallthrough，JVMS 语义口
+    /// 径——混淆器正是把死走廊藏在 goto 后面）；不可达指令的字节在 backing
+    /// CodeAttr.code 上整条填 0x00。填零保持 pc 对齐与全部嵌套属性锚不动，
+    /// 指令流顺序读取时零段自然显形为 NOP 串。
+    ///
+    /// 纪律：只作用于临时桥视图——decodeAttr 缓存体随本 executor 打开的
+    /// 会话生灭，容器字节不经此路径；promote 失败则整函数 no-op（fail-closed，
+    /// 桥面按原语义拒绝）；BFS 边集不含真实语义之外的猜测边，可达集是静态
+    /// 语义的保守下界（宁可不剥，不可错剥）。
+    static void stripDeadForBridge(jbc::ir::ClassSession& s, ca::usize index)
+    {
+        const jbc::ir::ClassUnit& unit = s.unit();
+        if (index >= unit.methods.size()) return;
+        const ca::usize backingIdx = unit.methods[index].backingIndex;
+        if (backingIdx >= s.backing().methods.size()) return;
+
+        auto promoted = jbc::ir::promoteMethod(s, index);
+        if (promoted.is_err()) return;
+        jbc::ir::CodeUnit* cu = promoted.unwrap().get();
+        if (cu == nullptr) return;
+        const std::vector<jbc::ir::InsnId>& order = cu->dom.order();
+        if (order.empty()) return;
+
+        std::unordered_map<ca::u32, ca::usize> posOf;
+        posOf.reserve(order.size());
+        for (ca::usize i = 0; i < order.size(); ++i) posOf[order[i].slot] = i;
+
+        std::unordered_set<ca::u32> seen;
+        std::vector<jbc::ir::InsnId> queue;
+        const auto mark = [&](const jbc::ir::InsnId& id) {
+            if (id == jbc::ir::kNoInsn) return;
+            if (!seen.insert(id.slot).second) return;
+            queue.push_back(id);
+        };
+        const auto follow = [&](const jbc::ir::LabelId& label) {
+            auto res = cu->dom.resolveLabel(label);
+            if (res.is_err() || res.unwrap().isEnd()) return;
+            mark(res.unwrap().insn);
+        };
+
+        mark(order[0]);
+        for (const auto& e : cu->exc) follow(e.handler);
+
+        while (!queue.empty()) {
+            const jbc::ir::InsnId id = queue.back();
+            queue.pop_back();
+            const jbc::ir::Insn* in = cu->dom.peek(id);
+            if (in == nullptr) continue;
+            const bool hasFallthrough =
+                in->op != jbc::core::Op::GOTO && in->op != jbc::core::Op::GOTO_W
+                && in->op != jbc::core::Op::TABLESWITCH
+                && in->op != jbc::core::Op::LOOKUPSWITCH
+                && in->op != jbc::core::Op::ATHROW
+                && in->op != jbc::core::Op::IRETURN && in->op != jbc::core::Op::LRETURN
+                && in->op != jbc::core::Op::FRETURN && in->op != jbc::core::Op::DRETURN
+                && in->op != jbc::core::Op::ARETURN && in->op != jbc::core::Op::RETURN;
+            if (hasFallthrough) {
+                const auto pos = posOf.find(id.slot);
+                if (pos != posOf.end() && pos->second + 1 < order.size()) {
+                    mark(order[pos->second + 1]);
+                }
+            }
+            follow(in->target);
+            for (const jbc::ir::LabelId& t : in->targets) follow(t);
+        }
+
+        // 不可达指令的字节段：[srcPc, 下一条指令 srcPc)，末条到 code 尾。
+        std::vector<std::pair<ca::u32, ca::u32>> victimRanges;
+        for (ca::usize i = 0; i < order.size(); ++i) {
+            const jbc::ir::Insn* in = cu->dom.peek(order[i]);
+            if (in == nullptr || seen.count(order[i].slot) > 0) continue;
+            const jbc::ir::Insn* next =
+                (i + 1 < order.size()) ? cu->dom.peek(order[i + 1]) : nullptr;
+            victimRanges.emplace_back(in->srcPc, next != nullptr ? next->srcPc : 0);
+        }
+        if (victimRanges.empty()) return;
+
+        jbc::core::ClassFile& cf = s.backing();
+        for (jbc::core::AttrSlot& slot : cf.methods[backingIdx].attrs) {
+            if (cf.utf8(slot.nameCp) != "Code") continue;
+            auto d = cf.decodeAttr(slot);
+            if (d.is_err()) return;
+            auto& body = static_cast<jbc::core::CodeAttr&>(*d.unwrap());
+            for (const auto& r : victimRanges) {
+                const ca::usize start = r.first;
+                // r.second == 0：order 末条 victim，字节段延伸到 code 尾。
+                const ca::usize end = (r.second == 0)
+                                          ? body.code.size()
+                                          : std::min<ca::usize>(r.second, body.code.size());
+                if (start >= end) continue;
+                for (ca::usize b = start; b < end; ++b) body.code[b] = 0x00;
+            }
+            return;
+        }
+    }
+
     /// @brief 取（或建）一个方法的模拟视图。方法体自持字符串，会话可随即释放。
     ///
     /// 桥口径 = libjsim 官方（jsim::jbcbridge::toSimMethod）：含 invokedynamic /
@@ -211,6 +315,7 @@ private:
             return it->second.ok ? &it->second.method : nullptr;
         }
         Slot slot;
+        stripDeadForBridge(s, index);
         auto bridged = jsim::jbcbridge::toSimMethod(s, index);
         slot.ok = bridged.isOk();
         if (!slot.ok) {
@@ -242,6 +347,7 @@ private:
         if (index == jbc::ir::kNoMethod) return nullptr;
 
         Slot slot;
+        stripDeadForBridge(*s, index);
         auto bridged = jsim::jbcbridge::toSimMethod(*s, index);
         slot.ok = bridged.isOk();
         if (!slot.ok) {
