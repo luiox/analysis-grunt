@@ -775,9 +775,11 @@ bool smtSetDelta(jbc::core::StackMapTableAttr::Frame& f, ca::u32 delta)
     return true;
 }
 
+/// pcInList / prunePcAttrs 已收编 rewrite_tools 共享单源（解密器族折叠与
+/// 本 pass 的擦除路径共用）；此转发保住既有调用点。
 bool pcInList(const std::vector<ca::u32>& list, ca::u32 pc)
 {
-    return std::find(list.begin(), list.end(), pc) != list.end();
+    return rewrite_tools::pcInList(list, pc);
 }
 
 /// @brief 剪掉锚在受害者 pc 上的 SMT 分支目标帧（NOP 化口径的配套面）。
@@ -870,56 +872,11 @@ bool pruneSmtFrames(jbc::core::ClassFile& cf, jbc::core::MemberInfo& member,
 
 /// @brief 剪掉锚在受害者 pc 上的 LNT/LVT 行（擦除口径的配套面）。
 ///
-/// 擦除让受害者旧 pc 从 pcmap 蒸发，行锚 miss 即 Err(RelocationBadTarget)
-/// （B#5/c#3 实证：命名形状站点擦除后整方法 lower 失败连坐）。行是调试面，
-/// 删行无损语义；LVT 行的终点落在受害者上同样 miss，一并剪。前置：方法已
-/// promote。@return false = 属性判读不了，调用方整站放弃。
+/// prunePcAttrs 同上：rewrite_tools 共享单源，此处转发。
 bool prunePcAttrs(jbc::core::ClassFile& cf, jbc::core::MemberInfo& member,
                   const std::vector<ca::u32>& victimPcs)
 {
-    auto codeR = cf.decodeCode(member);
-    if (codeR.is_err()) return false;
-    jbc::core::CodeAttr* code = codeR.unwrap();
-    if (code == nullptr) return true;   ///< 无 Code = 无行面
-    for (jbc::core::AttrSlot& slot : code->attrs) {
-        const std::string_view n = cf.utf8(slot.nameCp);
-        const bool isLnt = n == "LineNumberTable";
-        const bool isLvt = n == "LocalVariableTable" || n == "LocalVariableTypeTable";
-        if (!isLnt && !isLvt) continue;
-        auto d = cf.decodeAttr(slot);
-        if (d.is_err()) return false;
-        if (d.unwrap() == nullptr) return false;
-        const auto kind = d.unwrap()->kind();
-        if (kind != jbc::core::AttrKind::LineNumberTable
-            && kind != jbc::core::AttrKind::LocalVariableTable) {
-            return false;
-        }
-        auto* body = slot.mutate();   ///< 置 Modified：写回走重编码
-        if (body == nullptr) return false;
-        if (isLnt) {
-            auto& lnt = static_cast<jbc::core::LineNumberTableAttr&>(*body);
-            std::vector<jbc::core::LineNumberTableAttr::Row> kept;
-            kept.reserve(lnt.rows.size());
-            for (auto& r : lnt.rows) {
-                if (pcInList(victimPcs, r.startPc)) continue;
-                kept.push_back(r);
-            }
-            lnt.rows = std::move(kept);
-        } else {
-            auto& lvt = static_cast<jbc::core::LocalVariableTableAttr&>(*body);
-            std::vector<jbc::core::LocalVariableTableAttr::Row> kept;
-            kept.reserve(lvt.rows.size());
-            for (auto& r : lvt.rows) {
-                if (pcInList(victimPcs, r.startPc)
-                    || pcInList(victimPcs, r.startPc + r.length)) {
-                    continue;
-                }
-                kept.push_back(r);
-            }
-            lvt.rows = std::move(kept);
-        }
-    }
-    return true;
+    return rewrite_tools::prunePcAttrs(cf, member, victimPcs);
 }
 
 /// @brief 单方法 REWRITE。@return 折叠成功的站点数；failed 走出参。

@@ -8,11 +8,13 @@
 /// 面改写动词，metadata_strip 首用；核对面在 proof_toolbox）。
 #pragma once
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <string_view>
+#include <vector>
 
 #include "libca/core/datatype.hpp"
 #include "libca/core/tag_cast.hpp"
@@ -310,22 +312,90 @@ inline bool u16ToUtf8Record(const std::vector<ca::u16>& units, std::string& out)
 
 /// @brief 明文 intern 进常量池：码元 → MUTF-8 → Utf8（命中既有池不膨胀）+
 ///        CONSTANT_String 包装。@return String 条目索引；0 = 失败（占位槽
-///        索引天然是哨兵）。
+///        索引天然是哨兵）。空明文合法：解密结果可以是空串（u.class 实证，
+///        池填充点存 ""）——空 Utf8 常量照常落池，不走 0 哨兵。
+///
+/// findUtf8 占位槽陷阱（u.class write-fail Unencodable 实证根因）：ldc2_w
+/// 落 Long 条目后跟一个 placeholder 槽，其 Entry 默认 tag=Utf8、utf8Len=0；
+/// libjbc findUtf8("") 不跳 placeholder，会把占位槽当既有空 Utf8 命中，
+/// addString 引到占位槽上 → validateReferences bad_constant_pool_ref →
+/// writeClass Unencodable，整类写盘被弃。非空明文不触发（长度不匹配）。
+/// 命中结果验 valid()，占位槽一律视作 miss 补 intern 真条目。
 inline ca::u32 internPlainString(jbc::core::ConstantPool& cp, const std::vector<ca::u16>& plain)
 {
     std::string mutf8;
     u16ToMutf8(plain, mutf8);
-    if (mutf8.empty()) return 0;
     ca::u32 utf8Idx = cp.findUtf8(mutf8);
-    if (utf8Idx == 0) {
+    if (utf8Idx == 0 || !cp.valid(utf8Idx)) {
         utf8Idx = cp.addUtf8(mutf8);
-        if (utf8Idx == 0) return 0;
+        if (utf8Idx == 0 || !cp.valid(utf8Idx)) return 0;
     }
     for (ca::u32 i = 1; i < cp.size(); ++i) {
         const jbc::core::ConstantPool::Entry& e = cp.at(i);
         if (e.tag == jbc::core::CpTag::String && e.a == utf8Idx) return i;
     }
     return cp.addString(utf8Idx);
+}
+
+/// @brief pc 是否在列表中（小列表线性扫，fold 类改写受害面通常个位数）。
+inline bool pcInList(const std::vector<ca::u32>& list, ca::u32 pc)
+{
+    return std::find(list.begin(), list.end(), pc) != list.end();
+}
+
+/// @brief 剪掉锚在受害者 pc 上的 LNT/LVT 行（擦除口径的属性配套面）。
+///
+/// 擦除让受害者旧 pc 从 pcmap 蒸发，行锚 miss 即 Err(RelocationBadTarget)
+/// （number_fold B#5/c#3 实证：命名形状站点擦除后整方法 lower 失败连坐）。
+/// 行是调试面，删行无损语义；LVT 行的终点落在受害者上同样 miss，一并剪。
+/// 前置：方法已 promote 与否皆可（本入口只走 backing 属性）。@return false =
+/// 属性判读不了，调用方整站放弃；true = 剪完（或无行面可剪）。
+inline bool prunePcAttrs(jbc::core::ClassFile& cf, jbc::core::MemberInfo& member,
+                         const std::vector<ca::u32>& victimPcs)
+{
+    auto codeR = cf.decodeCode(member);
+    if (codeR.is_err()) return false;
+    jbc::core::CodeAttr* code = codeR.unwrap();
+    if (code == nullptr) return true;   ///< 无 Code = 无行面
+    for (jbc::core::AttrSlot& slot : code->attrs) {
+        const std::string_view n = cf.utf8(slot.nameCp);
+        const bool isLnt = n == "LineNumberTable";
+        const bool isLvt = n == "LocalVariableTable" || n == "LocalVariableTypeTable";
+        if (!isLnt && !isLvt) continue;
+        auto d = cf.decodeAttr(slot);
+        if (d.is_err()) return false;
+        if (d.unwrap() == nullptr) return false;
+        const auto kind = d.unwrap()->kind();
+        if (kind != jbc::core::AttrKind::LineNumberTable
+            && kind != jbc::core::AttrKind::LocalVariableTable) {
+            return false;
+        }
+        auto* body = slot.mutate();   ///< 置 Modified：写回走重编码
+        if (body == nullptr) return false;
+        if (isLnt) {
+            auto& lnt = static_cast<jbc::core::LineNumberTableAttr&>(*body);
+            std::vector<jbc::core::LineNumberTableAttr::Row> kept;
+            kept.reserve(lnt.rows.size());
+            for (auto& r : lnt.rows) {
+                if (pcInList(victimPcs, r.startPc)) continue;
+                kept.push_back(r);
+            }
+            lnt.rows = std::move(kept);
+        } else {
+            auto& lvt = static_cast<jbc::core::LocalVariableTableAttr&>(*body);
+            std::vector<jbc::core::LocalVariableTableAttr::Row> kept;
+            kept.reserve(lvt.rows.size());
+            for (auto& r : lvt.rows) {
+                if (pcInList(victimPcs, r.startPc)
+                    || pcInList(victimPcs, r.startPc + r.length)) {
+                    continue;
+                }
+                kept.push_back(r);
+            }
+            lvt.rows = std::move(kept);
+        }
+    }
+    return true;
 }
 
 }   // namespace grunt::rewrite_tools
