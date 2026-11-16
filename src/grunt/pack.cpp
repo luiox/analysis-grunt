@@ -422,4 +422,45 @@ mjbase::plugin::IPassPack& grunt_pack()
     return packInstance();
 }
 
+std::string defaultMainLine()
+{
+    // 通用主线（--converge 每轮程序，pack.hpp 契约）：README 15-pass 主线
+    // 扩 v3 供给链面与折叠尾轮。排序只保同轮效率约束（squeeze 先于实参收
+    // 集、ConstantCall 先于折叠/清死、ExcBridge/GateProcessor 先于
+    // CffUnflatten、DeadMember 晚于供给链），跨轮约束由驱动器轮维度吸收。
+    // NumberFold 在 CffUnflatten 之后（验收阵 t3_full 实证：NumberFold 先
+    // 行让 CFF span 形被判 state-polluted 370、岛还原 58→0，见
+    // obf-behaviors §驱动器契约对照表）；实参收集缺的 NumberFold 折叠由
+    // 下一轮 ConstantCall 补齐。
+    return "grunt.TrampolineSqueeze,"
+           "grunt.DispatcherRestore,"
+           "grunt.IndyRestore,"
+           "grunt.StringPoolFold,"
+           "grunt.MaterialKeyRestore,"
+           "grunt.IndyFold,"
+           "grunt.ConstMethod,"
+           "grunt.ProxyInline,"
+           "grunt.FieldAccessProxy,"
+           "grunt.ConstantCall,"
+           "grunt.ExcBridgeRestore,"
+           "grunt.GateProcessorFold,"
+           "grunt.CffUnflatten,"
+           "grunt.NumberFold,"
+           "grunt.ArithFold,"
+           "grunt.ConstValuePromote,"
+           "grunt.ConstPoolRestore,"
+           "grunt.ArithFold,"
+           "grunt.StringEqualsRestore,"
+           "grunt.SeedStrip,"
+           "grunt.PoolArrayFold,"
+           "grunt.PredicateFold,"
+           "grunt.JunkRegionStrip,"
+           "grunt.DeadCode,"
+           "grunt.ArithFold,"
+           "grunt.ConstantCall,"
+           "grunt.DeadMember,"
+           "grunt.FlagsStrip,"
+           "grunt.BoogerAnnoStrip";
+}
+
 }   // namespace grunt

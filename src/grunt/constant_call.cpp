@@ -304,6 +304,32 @@ bool parseULPure(std::string_view text, ca::i32 radix, ca::i64& out)
     return true;
 }
 
+/// 容器外 JDK 全序纯内建白名单（对外站点的唯一入表面）：每个成员必须有
+/// (a) 纯函数核（定值、无副作用、全序——parseULPure 一型）(b) 专用实参收
+/// 集器（collectBuiltinArgsParseUl 一型）(c) jsim callMock 三件套在位，
+/// 扩面按此登记；bootstrap 类初始化时机由 JVM 托管，删调用无可观测变化。
+/// 成员登记同步：evaluateSites 头部的 callMock 注册与本表一成员一注册。
+struct ExternalBuiltin
+{
+    std::string_view owner;
+    std::string_view name;
+    std::string_view desc;
+};
+constexpr ExternalBuiltin kExternalPureBuiltins[] = {
+    {"java/lang/Long", "parseUnsignedLong", "(Ljava/lang/String;I)J"},
+};
+
+/// 白名单查询走 keyOf 本尊（'\n' 复合键；手拼 '.' 键会静默 miss，本轮实测
+/// 踩坑留痕）。
+bool isExternalPureBuiltin(std::string_view owner, std::string_view name, std::string_view desc)
+{
+    const std::string key = scan_tools::keyOf(owner, name, desc);
+    for (const ExternalBuiltin& b : kExternalPureBuiltins) {
+        if (key == scan_tools::keyOf(b.owner, b.name, b.desc)) return true;
+    }
+    return false;
+}
+
 /// 求值段：装好扩展包的 jsim 执行器逐站点跑目标方法；通过者写回 `value`，
 /// 失败者转成拒绝记录。类初始化检查（scan_tools::classInitNeutral）先判。
 void evaluateSites(const mjbase::model::ResourceContainer& container,
@@ -353,7 +379,11 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
     // 内部经 parseUL 反推密钥分量，缺接管整条面在 Bail 拒）。全序纯函数，
     // 语义核在 parseULPure（与容器外内建站点求值共用）。unknown 按未知口径
     // 传播；radix 越族 / 数字位非法按 NumberFormatException 语义 Bail。
-    exec.session().callMocks["java/lang/Long.parseUnsignedLong(Ljava/lang/String;I)J"] =
+    // mock 键从 kExternalPureBuiltins 派生（一成员一注册，结构性同步）。
+    const std::string parseUlMockKey = std::string(kExternalPureBuiltins[0].owner) + "."
+                                       + std::string(kExternalPureBuiltins[0].name)
+                                       + std::string(kExternalPureBuiltins[0].desc);
+    exec.session().callMocks[parseUlMockKey] =
         [&exec](jsim::Frame& frame) -> jsim::Result<jsim::SimValue, jsim::Bail> {
             jsim::Result<jsim::SimValue, jsim::Bail> radixV = frame.popChecked();
             if (!radixV.isOk()) return radixV;
@@ -945,13 +975,9 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
                     const auto it = index.find(scan_tools::keyOf(enc.owner, enc.name, enc.desc));
                     if (it == index.end()) {
                         // 容器外目标：唯一入表面 = JDK 全序纯内建白名单
-                        // （parseUL，u/b 族池读点下标键面的解锁器）。bootstrap
-                        // 类初始化时机由 JVM 托管，删调用无可观测变化；常量
-                        // 实参下值唯一。求值在 evaluateSites 头部直折。
-                        // 键形走 keyOf 本尊（'\n' 复合），别拿 '.' 手拼。
-                        if (scan_tools::keyOf(enc.owner, enc.name, enc.desc)
-                            != scan_tools::keyOf("java/lang/Long", "parseUnsignedLong",
-                                                 "(Ljava/lang/String;I)J")) {
+                        // （kExternalPureBuiltins，登记规则见表注）。求值在
+                        // evaluateSites 头部按成员直折。
+                        if (!isExternalPureBuiltin(enc.owner, enc.name, enc.desc)) {
                             continue;
                         }
                         std::vector<ir::InsnId>     producers;
