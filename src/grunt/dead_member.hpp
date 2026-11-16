@@ -43,7 +43,10 @@
 /// findStatic 本类任意成员）、注解字符串按名引用（`@Redirect`）；另有跨类
 /// indy 目标，scan 内嵌 indy_fold::scan 跑一遍全容器 BSM，解析出的目标方法
 /// 按 owner+name 保护（Grunt 形态：BSM 在 A 类，目标在 B 类）。反射是理论
-/// 逃逸面（按名反射方法拦不住），统计如实记录每一次删除。
+/// 逃逸面（按名反射方法拦不住），统计如实记录每一次删除。解密器族收尾件
+/// （private static `([CJI)Ljava/lang/String;`，ConstantCall 折净后的内部件）
+/// 有独立豁免面：BSM 盲区按形状放行、按名普查对孤儿件（同类零调用点双证）
+/// 豁免，风险论证见 MethodCand::decryptorOrphan 与 scan 实现注释。
 ///
 /// ## 改写（rewrite）
 ///
@@ -80,6 +83,16 @@ struct MethodCand
     std::string name;
     std::string desc;
     MethodGate  gate = MethodGate::Private;
+    /// 解密器族收尾件（private static `([CJI)Ljava/lang/String;`，ConstantCall
+    /// 折完全部填充点后的零引用内部件）：BSM 盲区与反射按名普查的豁免面，
+    /// 风险论证见 dead_member.cpp 两处豁免点注释。
+    bool decryptorTail = false;
+    /// 解密器收尾件且同类零调用点（scan 时逐方法普查 INVOKESTATIC 证实）。
+    /// 活引用普查的豁免前提：b 族实证——同类池里折剩的死 Methodref 条目会
+    /// 触发 ref-hit 误保（压缩跳过类的池原样进普查，宁误留口径的超集）；
+    /// t/u 族反证——同类还有真调用点（key 表达式形态折不动）时普查保护是
+    /// 唯一防线，不豁免。MethodHandle 常量面是理论逃逸面（Grunt 不产此形）。
+    bool decryptorOrphan = false;
 };
 
 /// @brief 一个字段候选。

@@ -93,6 +93,17 @@ constexpr ca::u32 kAccNative     = 0x0100;
 constexpr ca::u32 kAccAbstract   = 0x0400;
 constexpr ca::u32 kAccSynthetic  = 0x1000;
 
+/// @brief 解密器族收尾件形状：private static `([CJI)Ljava/lang/String;`。
+///
+/// ConstantCall 解密器族的目标方法专用描述符（char[]·long·int → String）。
+/// 链上 ConstantCall 已把全部填充点折成明文 ldc，此后它是零引用内部件。
+/// BSM 盲区与反射按名普查对它豁免（风险论证见 scan hasBsm 块注释）。
+bool decryptorTailShape(ca::u32 access, const std::string& desc)
+{
+    return (access & (kAccStatic | kAccPrivate)) == (kAccStatic | kAccPrivate)
+           && desc == "([CJI)Ljava/lang/String;";
+}
+
 std::string cpUtf8(const jbc::core::ClassFile& cf, ca::u32 i)
 {
     return std::string(cf.utf8(i));
@@ -337,7 +348,18 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri,
         if (name == "<init>") continue;
         if ((mu.access & (kAccNative | kAccAbstract)) != 0) continue;
         if (!ir::hasCode(s, mi)) continue;
-        if (hasBsm) continue;                                // BSM 盲区：整类方法不删
+        if (hasBsm) {
+            // BSM 盲区（BSM 运行时经解密字符串 findStatic 本类成员，静态引
+            // 用普查看不见）：整类方法不删。解密器族收尾门除外——特征描述
+            // 符 `([CJI)Ljava/lang/String;` + private + static 是 ConstantCall
+            // 解密器族的专用件（全部填充点已折成明文 ldc，零明文引用）；
+            // 盲区风险被三重证据压住：private 不可跨类直调、indy 池条目直
+            // 指它的情形由 indyTargets 普查拦（下一条）、反射按名命中由
+            // liveNames 普查拦。BSM 运行时反射解密器没有混淆价值——解密
+            // 器本身是混淆器生成的池填充内部件，反射调它不构成保护面。
+            // private+static 落出本块后照常被 gateC 收进候选。
+            if (!decryptorTailShape(mu.access, desc)) continue;
+        }
         if (annoNames.count(name) != 0) continue;            // 注解按名引用：不删
         if (indyTargets.count({cand.owner, name}) != 0) continue;  // 跨类 BSM 目标：不删
 
@@ -369,11 +391,38 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri,
             continue;
         }
 
+        // 解密器收尾件的普查豁免前提：同类零调用点。ConstantCall 已把常量
+        // 形态填充点折净，此处逐方法普查 INVOKESTATIC 复核——非零说明还有
+        // 折不动的真调用（t/u 族：key 是 parseUnsignedLong 表达式形态），
+        // 普查保护是唯一防线，不豁免。
+        const bool decTail  = decryptorTailShape(mu.access, desc);
+        bool      decOrphan = decTail;
+        if (decTail) {
+            for (ca::usize wi = 0; wi < unit.methods.size() && decOrphan; ++wi) {
+                if (!ir::hasCode(s, wi)) continue;
+                auto walked = ir::promoteMethod(s, wi);
+                if (walked.is_err()) continue;
+                ir::CodeUnit* wcu = walked.unwrap().get();
+                if (wcu == nullptr) continue;
+                for (const ir::InsnId id : wcu->dom.order()) {
+                    const ir::Insn* in = wcu->dom.peek(id);
+                    if (in == nullptr || in->op != jbc::core::Op::INVOKESTATIC) continue;
+                    ir::ClassSession::MemberSem sem;
+                    if (!s.memberOf(*in, sem)) continue;
+                    if (sem.owner == cand.owner && sem.name == name && sem.desc == desc) {
+                        decOrphan = false;
+                        break;
+                    }
+                }
+            }
+        }
+
         cand.methods.push_back(MethodCand{mu.backingIndex, name, desc,
                                           gateA ? MethodGate::PureArith
                                                 : gateB ? MethodGate::SyntheticBridge
                                                         : gateC ? MethodGate::Private
-                                                                : MethodGate::Getter});
+                                                                : MethodGate::Getter,
+                                          decTail, decOrphan});
     }
 
     for (ca::usize fi = 0; fi < cf.fields.size(); ++fi) {
@@ -844,8 +893,11 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             dirty.attempted += 1;
             // 反射按名定位（getDeclaredMethod("name") 一族）：引用只存在于
             // 运行期字符串里，静态引用普查看不见。名字命中容器内任何字符串
-            // 常量的成员宁误留。
-            if (liveNames.count(mc.name) != 0) {
+            // 常量的成员宁误留。解密器孤儿件（shape + 同类零调用点双证）
+            // 豁免：单字符名（如 "a"）撞上 junk 载荷字符串的概率极高，而反
+            // 射调一个需要 (char[], long, int) 密钥材料的混淆器内部件不构成
+            // 保护面（全量论证见 scan hasBsm 块）。
+            if (liveNames.count(mc.name) != 0 && !mc.decryptorOrphan) {
                 if (dmTrace) {
                     std::fprintf(stderr, "[grunt.DeadMember]   name-hit: %s.%s %s\n",
                                  owner.c_str(), mc.name.c_str(), mc.desc.c_str());
@@ -854,12 +906,19 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                 continue;
             }
             const std::string key = owner + "::" + mc.name + "::" + mc.desc;
-            if (liveMethods.count(key) != 0) {
+            if (liveMethods.count(key) != 0 && !mc.decryptorOrphan) {
                 if (dmTrace) {
                     std::fprintf(stderr, "[grunt.DeadMember]   ref-hit: %s\n", key.c_str());
                 }
                 ++dirty.rejectedByRef;
                 continue;
+            }
+            if (mc.decryptorOrphan
+                && (liveNames.count(mc.name) != 0 || liveMethods.count(key) != 0)) {
+                if (dmTrace) {
+                    std::fprintf(stderr, "[grunt.DeadMember]   orphan-exempt: %s %s\n",
+                                 owner.c_str(), mc.name.c_str());
+                }
             }
             // 复核定位（backing 序 + 名字 + 描述三者一致才算同一成员）。
             bool found = false;

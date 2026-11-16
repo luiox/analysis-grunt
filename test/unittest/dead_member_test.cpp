@@ -178,6 +178,102 @@ TEST(DeadMemberRuntime, KeepsMethodsInClassWithBootstrapMethods)
     EXPECT_NE(after.find("secret"), std::string::npos) << after;
 }
 
+TEST(DeadMemberRuntime, DropsDecryptorTailInBsmClassButKeepsOthers)
+{
+    // BSM 类 + 解密器族方法（特征描述符 ([CJI)Ljava/lang/String;，private
+    // static，ConstantCall 折完全部填充点后零明文引用）：收尾门豁免 BSM 盲
+    // 区与反射按名普查（夹具故意放一个与解密器同名的字符串常量 "zz"——单
+    // 字符名撞 junk 载荷是样本实况，豁免论证见实现注释），照常删除；同类
+    // 的普通私有方法仍宁留（盲区口径不变）。
+    // BSM 方法 `a`（Lookup 签名）是 indy 汇编的在场要求；解密器用别名 `zz`。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         hostPrelude()
+             + "  .method public static a (Ljava/lang/invoke/MethodHandles$Lookup;"
+             "Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/String;"
+             "Ljava/lang/String;Ljava/lang/invoke/MethodType;)"
+             "Ljava/lang/invoke/CallSite; {\n"
+             "    parameters: { lk, nm, mt, tn, tc, tm },\n"
+             "    code: {\n"
+             "      aconst_null\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             "  .method private static zz ([CJI)Ljava/lang/String; {\n"
+             "    parameters: { arr, key, seed },\n"
+             "    code: {\n"
+             "      new java/lang/String\n"
+             "      dup\n"
+             "      aload arr\n"
+             "      invokespecial java/lang/String.<init> ([C)V\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             "  .method public static call2 ()I {\n"
+             "    code: {\n"
+             "      ldc \"zz\"\n"
+             "      pop\n"
+             "      bipush 3\n"
+             "      bipush 4\n"
+             "      invokedynamic t (II)I { invokestatic, Host.a, "
+             "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+             "Ljava/lang/invoke/MethodType;Ljava/lang/String;Ljava/lang/String;"
+             "Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite; } "
+             "{ \"t\", \"Host\", (II)I }\n"
+             "      ireturn\n"
+             "    }\n"
+             "  }\n"
+             + hostTail()},
+    });
+
+    const ScanResult scanned = scan(container);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    const std::string after = disassemble(classBytes(container, "Host.class"));
+    // 解密器收尾门生效：特征方法删除。
+    EXPECT_EQ(after.find("([CJI)Ljava/lang/String;"), std::string::npos) << after;
+    // 盲区口径不变：普通私有方法宁留。
+    EXPECT_NE(after.find("secret"), std::string::npos) << after;
+}
+
+TEST(DeadMemberRuntime, KeepsDecryptorWithLiveSelfCalls)
+{
+    // t/u 族反证：解密器收尾件同类还有真调用点（ConstantCall 折不动的 key
+    // 表达式形态）时，普查保护是唯一防线——活引用必须保住方法，孤儿豁免
+    // （shape + 零调用双证）不成立，宁留。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         hostPrelude()
+             + "  .method private static zz ([CJI)Ljava/lang/String; {\n"
+             "    parameters: { arr, key, seed },\n"
+             "    code: {\n"
+             "      new java/lang/String\n"
+             "      dup\n"
+             "      aload arr\n"
+             "      invokespecial java/lang/String.<init> ([C)V\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             "  .method public static call2 ()Ljava/lang/String; {\n"
+             "    code: {\n"
+             "      ldc \"ab\"\n"
+             "      invokevirtual java/lang/String.toCharArray ()[C\n"
+             "      ldc2_w 7L\n"
+             "      bipush 9\n"
+             "      invokestatic Host.zz ([CJI)Ljava/lang/String;\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             + hostTail()},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    const std::string after  = disassemble(classBytes(container, "Host.class"));
+    EXPECT_NE(after.find("zz"), std::string::npos) << after;
+    EXPECT_NE(dirty.methods, 0u) << "夹具里 secret 也该成为删除候选，断言才有分辨力";
+}
+
 TEST(DeadMemberRuntime, KeepsMethodNamedByAnnotationValue)
 {
     // @Redirect 形态：注解字符串值 "secret" 按名引用方法，mixin 框架运行时
