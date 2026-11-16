@@ -88,7 +88,7 @@ predicate_fold 裁决掉假分支后，诱饵块从此再无控制流入口；re
 
 **``grunt.PredicateFold`` 之后必须跟 ``grunt.DeadCode``** 。PredicateFold 折叠假分支后留下的死区里可能还有 switch，其分支目标没有帧（Strict 只为可达代码生成帧），链尾导出时 HotSpot 会报Expecting a stackmap frame at branch target。死区由本残留清掉，中间态才合法。
 
-**本残留清完走廊后，下游要再跟一轮折叠** 。死区擦除会让跳过走廊的 goto 退化为冗余（目标 = 新落点），下一轮 DeadCode 穿线掉它——但常量窗口的折叠（NF/ArithFold）若都排在穿线之前，被标签挡死的窗口就再无机会收拢（q8 b.main hint 块池读实证：DC 走廊清场在位置 19，两轮 ArithFold 在 9/12，窗口复扫 const=0）。链尾每轮 DeadCode 之后补 ConstantCall/NumberFold/ArithFold（需要池读面时再补 PoolArrayFold），折叠口径才收敛。
+**本残留清完走廊后，下游要再跟一轮折叠** 。死区擦除会让跳过走廊的 goto 退化为冗余（目标 = 新落点），下一轮 DeadCode 穿线掉它——但常量窗口的折叠（NF/ArithFold）若都排在穿线之前，被标签挡死的窗口就再无机会收拢（q8 b.main hint 块池读实证：DC 走廊清场在位置 19，两轮 ArithFold 在 9/12，窗口复扫 const=0）。链尾每轮 DeadCode 之后补 ConstantCall/NumberFold/ArithFold（需要池读面时再补 PoolArrayFold），折叠口径才收敛。 ``--converge`` 驱动下这两条约束由轮维度机械吸收（下一轮重扫），同轮排序只保效率——对照表见 :ref:`obf-behaviors-contract`。
 
 
 证明

@@ -20,7 +20,7 @@ Grunt v3（ ``ControlflowJump`` ，grunt3@e41e852）往真分支边上插process
 - ``PredicateFold`` 折操作数全常量的\ **比较** ，但看不见藏在前窗常量走廊后面的 proc 调用（操作数不是紧邻常量装载）。
 - 本残留 = gate 专用：形状钉（(III)I ActionDesc + 前窗走廊）+ 自带求值器（最小 mock 面：只接管 rotateLeft，刻意不装扩展包，TLR / material / indy 面必须在这里 fail-closed 显形）+ 比较折叠一次完成。
 
-**链序** ：排在 ``grunt.ConstantCall`` 之后、\ ``grunt.CffUnflatten`` 之前（样本 A 验证链：\ ``IndyRestore,StringPoolFold,ConstantCall,ExcBridgeRestore,GateProcessorFold,CffUnflatten`` ）。上游 IndyRestore 把 ``__grt$indy$`` 转发体内的 indy 还原成直线转发（转发可求值面扩大）；上游 ConstantCall 先折纯算术 proc 调用，本残留吃的是 ConstantCall 求值不动的余量（rotateLeft 体），样本 A 复测上游四 pass 数字与锚点逐项全等；下游 CffUnflatten 岛还原不受影响（gate 在 CFF 岛结构之外，islands 1543 不变）。
+**链序** ：排在 ``grunt.ConstantCall`` 之后、\ ``grunt.CffUnflatten`` 之前（样本 A 验证链：\ ``IndyRestore,StringPoolFold,ConstantCall,ExcBridgeRestore,GateProcessorFold,CffUnflatten`` ）。上游 IndyRestore 把 ``__grt$indy$`` 转发体内的 indy 还原成直线转发（转发可求值面扩大）；上游 ConstantCall 先折纯算术 proc 调用，本残留吃的是 ConstantCall 求值不动的余量（rotateLeft 体），样本 A 复测上游四 pass 数字与锚点逐项全等；下游 CffUnflatten 岛还原不受影响（gate 在 CFF 岛结构之外，islands 1543 不变）。该排位在驱动器默认主线中同轮保持（ ``--converge`` ，见 :ref:`obf-behaviors-contract`）。
 
 **无硬链依赖 ** ：ReferenceObfuscate（chance=1.0）按 ``@GENERATED_METHOD`` 跳过生成方法，gate proc 调用\ ** 从不被 indy 包装 ** ，本残留单跑（无任何上游）在 样本 A 原 jar 上即可折叠 7643 站点（含 ConstantCall 位置的 3361 个 + 上游不回归的 rotateLeft 体 4282 个）。推荐位置挂在 ConstantCall 之后是为了\ ** 不动既有锚点**\ （单跑会让 ConstantCall 的 24479 锚点位移，gate 调用被本残留先折）。
 

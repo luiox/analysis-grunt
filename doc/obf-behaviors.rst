@@ -70,7 +70,7 @@ grunt 行为记录总表
    * - StringEncrypt
      - S1
      - 已处理
-     - StringPoolFold（literal 形折叠；供给链被 indy 藏面时依赖上游还原，实现说明见 ``src/grunt/string_pool_fold.cpp`` 文件头注释）
+     - StringPoolFold（literal 形折叠；供给链被 indy 藏面时依赖上游还原，实现说明见 ``src/grunt/string_pool_fold.cpp`` 文件头注释）+ PoolArrayFold（池类 ``<clinit>`` 跨方法求值通道压池，``GETSTATIC; idx; AALOAD`` 读点折明文——q8 样本 C 池读 residual=0，见 :ref:`corpus-ledger`）
    * - ConstBuilder
      - S1
      - 无处理
@@ -89,12 +89,12 @@ grunt 行为记录总表
      - StringEqualsRestore（hashCode 比较桥换回 ``equals`` / ``equalsIgnoreCase``\ ，v2/v3 逐字同形一套形状表）
    * - Crasher
      - S2
-     - 无处理
-     - 缺口 #13
+     - 部分
+     - JunkRegionStrip 只吃不可达无效码段（字节级可达性走查，长度保持 NOP 化）；可达段 junk 与 massive Signature 属性本体挂缺口 #13
    * - Watermark
      - S2
-     - 无处理
-     - 缺口 #13
+     - 部分
+     - BoogerAnnoStrip 摘 @Booger 运行时注解（容器级引用普查门控，解密器体折叠后解封）；水印字段/方法本体挂缺口 #13
    * - ClonedClass / TrashClass
      - S2
      - 无处理
@@ -164,7 +164,7 @@ grunt 行为记录总表
    * - StringArrayedEncrypt
      - S1
      - 已处理
-     - StringPoolFold（arrayed 形折叠；供给链被 indy 藏面时依赖上游还原，实现说明见 ``src/grunt/string_pool_fold.cpp`` 文件头注释）
+     - StringPoolFold（arrayed 形折叠；供给链被 indy 藏面时依赖上游还原，实现说明见 ``src/grunt/string_pool_fold.cpp`` 文件头注释）+ PoolArrayFold（池类求值通道压池，同 :ref:`v2 表 <obf-behaviors-v2>` StringEncrypt 行）
    * - InvokeDispatcher
      - S2
      - 已处理
@@ -203,8 +203,8 @@ grunt 行为记录总表
      - 缺口 #13
    * - DecompilerCrasher
      - S2
-     - 无处理
-     - 缺口 #13
+     - 部分
+     - JunkRegionStrip：不可达无效码段原位 NOP 化（字节级可达性走查 + 布局保持，SMT/LVT/LNT 零扰动，样本 C 实测死区字节 0 / fail-closed 0 / decode-fail 0）；Crasher 大属性本体挂缺口 #13
    * - NativePipeline
      - 检测-only
      - 无处理
@@ -288,3 +288,105 @@ grunt 行为记录总表
 
 #10 重启条件已满足，样本 A ``boar-main-v3-full-nonative``\ （v3 全链关 native，3074 类，(III)I 直线纯算术体 11453、异常桥站点 13566、native 方法 0，#5-#8 之外的两前提双证转正）；样本 B ``boar-main-v2-full``\ （v2 全链 36c0eef，10486 类）解锁 P2 #5-#8 语料，伴生类面 2516 类/938409 GETSTATIC、AE 恒等面 const-fed IXOR 410536（输出形被 ConstPoolEncrypt 打散）、IAND/LAND 位拼 212222/141868（+GETSTATIC 喂给 25372/32718）、ConstBuilder 0（301 序饿死）。
 两份 jar 路径 + sha256 + 全量站点量表 + 生成命令见 :ref:`corpus-ledger`。
+
+.. _obf-behaviors-driver:
+
+7 通用折叠面清单与驱动器契约
+------------------------------
+
+.. _obf-behaviors-generic:
+
+7.1 通用折叠面（非单一 transformer 对应，两代共用）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+上两表按 Grunt 行为逐条归属；另有一组 pass 的面是**通用字节码事实**（不挂
+家族行为标签，任何产出该形状的混淆器/编译器都适用），驱动器主线成员在此
+登记归属：
+
+- ``grunt.TrampolineSqueeze`` / ``grunt.DeadCode``（穿线面）：goto/goto_w
+  目标 = 紧邻落点的冗余无条件跳转，判据走 ``rewrite_tools::isFallthroughGoto``
+  单源（backing 布局真值）。混淆器用（goto + 落点标签）对劈开实参区/
+  常量表达式；标签残渣处置（无引用者销毁）是擦写不变量。
+- ``grunt.ConstantCall``：常量实参纯静态调用折叠。容器外目标唯一入表面 =
+  JDK 全序纯内建白名单（ ``kExternalPureBuiltins`` ，成员登记三件套规则见
+  ``src/grunt/constant_call.cpp`` 表注；现成员 ``Long.parseUnsignedLong``，
+  池读下标键面解锁器）。
+- ``grunt.ConstMethod`` / ``grunt.DeadMember`` / ``grunt.DeadCode``（死区
+  面）/ ``grunt.JunkRegionStrip`` / ``grunt.FlagsStrip``：清理与折叠的
+  通用面，行为归属按两表各行的 residue 列。
+- ``grunt.PoolArrayFold`` / ``grunt.IndyFold``：求值通道（池 clinit 跨方
+  法求值压池 / BSM 模拟执行），形态由目标结构自证。
+
+Kasumi 专面（ ``IndyDecode`` / ``StringCacheFold`` / ``MetadataStrip`` ）
+不在本篇，见 :ref:`obf-behaviors` §2 文档索引指向的 ``doc/kasumi-verify.rst``。
+
+.. _obf-behaviors-contract:
+
+7.2 驱动器契约（不动点轮驱动， ``grunt_cli --converge``）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**判据**：容器字节面指纹（ ``src/grunt/converge.hpp`` ）——class/unknown
+资源按内容 FNV1a-64 入账、manifest 只记存在性、条目按 uri 排序消遍历序。
+整条 ``-p`` 程序重复执行到轮前轮后指纹相等。字节真值口径：任何 pass 漏报
+的写回都逃不过比对，不依赖 PreservedAnalyses 聚合（runContainerPipeline
+不外露聚合 PA）。
+
+**结构**： ``-p`` 是**每轮**程序（同轮排序保效率，下表约束在默认主线
+``grunt.defaultMainLine()`` 已排好）；驱动器加**轮维度**，跨轮约束机械吸
+收。每轮管线 + 层次图整体重建（工厂按 build 重建 pass 实例，类字节跨轮
+变化不得复用陈旧骨架）。轮上限默认 12（实测样本 A 收敛 ~9 轮），达上限
+未收敛如实报告仍导出。 ``--converge`` 强制 ``GRUNT_SLICE_SEC=0``——片钟
+截断会让整轮空转（墙钟尽后 admit 全拒）→ 指纹不变 → 假收敛。
+
+**链序约束 → 轮维度吸收对照**：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 22 44
+
+   * - 约束
+     - 来源
+     - 吸收方式
+   * - Squeeze / NumberFold 先于实参收集面
+     - README 硬约束
+     - 同轮排序（默认主线已排）
+   * - ConstantCall 先于折叠 / 清死
+     - README 硬约束
+     - 同轮排序
+   * - PredicateFold 之后必须跟 DeadCode
+     - :ref:`dead-code` 链序约束
+     - 同轮排序；死块擦除新退化的冗余 goto 由下一轮穿线（样本 C
+       b.main 实证：第 1 轮擦走廊，第 2 轮穿线）
+   * - DC 清完走廊后下游再跟折叠轮
+     - :ref:`dead-code` 链序约束
+     - 下一轮 ConstantCall/NumberFold/ArithFold（需要池读面时
+       PoolArrayFold）重扫，标签锁拿掉后的常量窗口才收拢（样本 C 实证）
+   * - ExcBridgeRestore 先于 CffUnflatten
+     - exc-bridge-restore.rst
+     - 同轮排序
+   * - MaterialKeyRestore 之后 IndyRestore 第二轮
+     - material-key-restore.rst
+     - 下一轮 IndyRestore 重扫消化 materialLane 桶
+   * - ArithFold 链上重复收敛
+     - arith-fold.rst
+     - 下一轮重扫至无窗口
+   * - ProxyInline → ConstantCall 两跳
+     - proxy-inline.rst
+     - 下一轮 ConstantCall 重扫
+   * - ConstValuePromote/ConstPoolRestore 供给 ArithFold
+     - const-pool-restore.rst
+     - 同轮排序 + 下一轮重扫兜底
+   * - **NumberFold 必须排在 CffUnflatten 之后**
+     - 验收阵 t3_full 实证（台账验收阵批）
+     - 同轮排序；轮维度吸收不了顺序错误（每轮同错）：NumberFold 先行
+       让 CFF span 形被判 ``state-polluted`` 370/404、岛还原 58→0；默认
+       主线已移到 CffUnflatten 之后
+   * - DeadMember 排在 junk 清理预热之后
+     - README
+     - 前几轮供给链先折，DeadMember 轮次自然递减（台账实证 414→2→0）
+
+**收敛实证** —— :ref:`corpus-ledger` 驱动器批：样本 C（v7r10_q8）默认主线
+4 轮收敛（158→70→1→0），调优 26-pass 程序 3 轮收敛（158→17→0），双跑逐条
+目 CRC 全等，行为 9 PASS 与基线同分布，CFR 210 类零错，残差 = v29 水平。
+README 原「单轮跑到收敛要重复整条链（判据 PredicateFold 归零）」的手工口
+径升级为本机制：指纹判据覆盖全 pass，不只 PredicateFold。

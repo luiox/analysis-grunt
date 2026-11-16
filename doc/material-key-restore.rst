@@ -65,7 +65,7 @@ boar 语料验证：每类恰好一个材料解密器， ``materialKey()`` 恰�
 
 本残留只把材料解密器窗口里的 ``INVOKESTATIC <self> materialKey()I`` 原地换 ``LDC <materialKey>`` （srcPc 保留，帧链正统写回），窗口随即变成indy_restore 已有的 reobf 折叠键形（ ``LDC K; LDC MK; IXOR; IXOR; I2C`` ，key = K ^ MK）， **indy_restore 第二轮按既有 Plain 通道折回全部materialLane 站点** 。indy_restore 本体一个字节不动。
 
-链序（外部知识）： ``grunt.IndyRestore,grunt.StringPoolFold,grunt.MaterialKeyRestore,grunt.IndyRestore`` ，材料初值跨度依赖StringPoolFold 折回的池明文 ldc；池读未折回的类 fail-closed（ ``initBlocked`` 独立计数，报链序缺位）。 ``materialKey()`` 本体、材料字段与守卫支路不删（折回后 materialKey 零引用，交下游 DeadMember/DeadCode回收）。
+链序（外部知识）： ``grunt.IndyRestore,grunt.StringPoolFold,grunt.MaterialKeyRestore,grunt.IndyRestore`` ，材料初值跨度依赖StringPoolFold 折回的池明文 ldc；池读未折回的类 fail-closed（ ``initBlocked`` 独立计数，报链序缺位）。 ``materialKey()`` 本体、材料字段与守卫支路不删（折回后 materialKey 零引用，交下游 DeadMember/DeadCode回收）。第二轮 ``IndyRestore`` 由驱动器下一轮自动承担（ ``--converge`` ，见 :ref:`obf-behaviors-contract`）。
 
 
 关键事实（判据的地基）

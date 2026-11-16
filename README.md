@@ -79,7 +79,7 @@ grunt.BoogerAnnoStrip
 
 形状纪律（`PredicateFold` 写回契约的前提，判据见 src/grunt/predicate_fold.cpp 文件头注释）：改写不得引入无条件跳转、不得新增合并点，HotSpot 线性走查要求无条件跳转之后的段首带帧，本 pass 不再生 SMT。TAKEN 的 `IFEQ` 目标是原分支目标（本来就有帧），NOT-TAKEN 留下的死块带原帧，中间态合法；`DeadCode` 紧随清理是推荐序而非性质约束。
 
-单轮跑到收敛要重复整条链：`DeadCode` 擦除缩短布局后，原本跨过死区的 `goto` 会变成跳到顺序后继的新蹦床（grunt2 第二轮实测 4193 处），`ConstValuePromote` 回填 `ConstantValue` 后 `clinit` 变空，也会解锁新的 `DeadMember` 删除面。判据是 `PredicateFold` 站点归零。
+单轮跑到收敛要重复整条链：`DeadCode` 擦除缩短布局后，原本跨过死区的 `goto` 会变成跳到顺序后继的新蹦床（grunt2 第二轮实测 4193 处），`ConstValuePromote` 回填 `ConstantValue` 后 `clinit` 变空，也会解锁新的 `DeadMember` 删除面。**这已由驱动器机制承载**：`grunt_cli --converge[=N]`（默认 N=12）把整条 `-p` 程序重复执行到容器字节面指纹不再变化（字节真值判据，覆盖全 pass，不只 PredicateFold 站点归零）；跨轮链序约束（DC 后补折叠轮、`IndyRestore` 第二轮、`ArithFold` ×N）由轮维度机械吸收，同轮排序保效率——契约与链序吸收对照表见 [doc/obf-behaviors.rst](doc/obf-behaviors.rst) §驱动器契约。`--converge` 且未给 `-p` 时用内置默认主线（`grunt.defaultMainLine()`，README 主线扩 v3 供给链面与折叠尾轮）；`--converge` 强制 `GRUNT_SLICE_SEC=0`（片钟截断会造成假收敛）。样本 C 实证：默认主线 4 轮收敛（158→70→1→0），双跑逐条目 CRC 全等。
 
 **Kasumi 专面不入主线，走专链**：`grunt.IndyDecode`、`grunt.StringCacheFold` 与 `grunt.MetadataStrip` 由 `probeEra` 判家（`Era::Kasumi` 才激活），与 BoogerV2 主线互不重叠，Kasumi BSM 的 8 参签名 + find* 分派不在 `IndyFold` 的纯目标子集内，同一 jar 上两者不争站点。专链三 pass、链序固定（先还原再清理，`MetadataStrip` 收尾）：
 
@@ -144,7 +144,18 @@ Kasumi 专链用法（专链无 preset 机制，仓内链注册形态就是 `-p`
 
 `-p` 逗号分隔 pass 名（`grunt.` 前缀）；`-c pack.json` 把配置文本整体交给 pack 解析；`--list` 列出全部可用 pass；`--jdk <JDK 根目录>` 是 `grunt.IndyDecode` 的接口旁证注入面（扫 jmods/lib 收集接口全集，Era=Kasumi 才激活；不传则容器外落点的 virtual 站点 fail-closed）；`--tsv <明文表>` 是 `grunt.StringCacheFold` 的 TSV 旁证注入面（KasumiStringDumper 四列映射，Era=Kasumi 才激活；缺失/不可读旁证降级 fail-closed）。
 
-单轮不收敛，要整链重复跑（输出喂回输入）直到 `PredicateFold` 站点归零：
+**推荐用法：不动点驱动**（整链重复跑的机制化口径，链序约束吸收见 [doc/obf-behaviors.rst](doc/obf-behaviors.rst) §驱动器契约）：
+
+```sh
+# 默认主线（README 主线扩 v3 供给链面）跑到容器字节面收敛
+./build/windows/x64/release/grunt_cli.exe -i in.jar -o out.jar --converge
+
+# 自定义每轮程序 + 轮上限
+./build/windows/x64/release/grunt_cli.exe -i in.jar -o out.jar \
+  -p grunt.X,grunt.Y,... --converge=8
+```
+
+每轮 stderr 一行 `[grunt.converge] round k: changed=N`；达轮上限未收敛如实报告仍导出。手工循环（输出喂回输入）仍可用但已不必要：
 
 ```sh
 cur=in.jar; for i in 1 2 3 4; do

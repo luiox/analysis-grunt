@@ -170,6 +170,67 @@
   计算不在常量下标判据面）与 clinit 填池写面走廊（压池 pass 的后续深度面，
   本轮 residual 如实计）。
 
+- **不动点驱动器批（2026-11-16，样本 C 收口 + 残余面清账）**：样本 C v7r10_q8
+  的 last-mile 残余（b/u 族池读下标键走廊 + L 族 junk 谓词 + hint 块池读）
+  根因 = **冗余 goto + 落点标签劈开实参区** ，由 DeadCode 穿线面收口：
+  判据工具箱单源 ``isFallthroughGoto``（backing 布局真值：落点 srcPc ==
+  自身 pc + 指令宽； ``dom.order`` 相邻判据在真 jar 上静默漏站点——order
+  不保证 pc 升序，b.main 族蹦床全漏，TrampolineSqueeze 同根因同步修）；
+  victim 可达且可被活分支正跳，入边标签先行处置（有引用者 bindLabel 搬最
+  终落点，无引用者 destroyLabel——victim 目标标签锚在落点存活指令上，擦
+  后不销毁则成死标签残渣，落在常量窗口中段把 ArithFold「窗口内除锚点外
+  无标签」判据挡死，v27 链 const=0 复扫钉因）；Strict 帧重算不支持的方法
+  （junk 合并点栈形不一致）退化声明帧口径穿线，多数方法穿线后 Strict 恢
+  复可用（退化路径仅 1 法）。驱动器（ ``--converge`` ，容器字节面指纹判据，
+  契约见 :ref:`obf-behaviors-contract` ）实证：调优 26-pass 程序 3 轮收敛
+  （158→17→0）、**默认主线 30-pass 4 轮收敛（158→70→1→0）** ，两口径双跑
+  逐条目 CRC 全等（224 条目）、CFR 全 jar 210 类零错误零缺类、行为 9 PASS
+  与基线同分布（1.4/2.4 PASS、1.6 时序 flaky 同前批口径）、残差 = 池读
+  ``a[(int)`` **0** 处（v26 残 1 的 hint 块走廊由「DC 后补折叠轮」吸收）。
+  单测 395（新增驱动器 9 测：指纹/差异计数/伪 runner 三态/真管线两轮收敛
+  ——goto-越死块夹具锁「第 1 轮擦死块 → 第 2 轮穿线 → 第 3 轮确认」）。
+
+- **验收阵批（2026-11-16/17，Grunt 本体双代 × 开关配置矩阵）**：从 Grunt 本
+  仓（grunt3 ``bda0b1a`` Grunteon build 260705 / grunt2 ``36c0eef``
+  Gruntpocalypse）本地构建出样本（输入 = JavaObfuscatorTest ``TEST.jar``，
+  ``controllableRandom`` 种子确定性；v3 变体 9 个 + v2 变体 9 个，逐 face
+  开关隔离：plain/number/string/flow/dispatch/ref/material/crash/trash +
+  full），默认主线 ``--converge`` 去混淆后逐面字节级普查（python class 解析
+  口径——javap 会被 junk Signature 整类打死，台账既有口径）+ 行为对照 +
+  CFR 门 + 双跑 CRC。**阵抓出并修掉一个真 bug** ：DeadMember 的
+  ``bsmUnresolved`` 豁免只盖 synthetic/bridge（gateB），而 Grunteon
+  ReferenceObfuscate 的 indy 目标名是运行时解密的（ ``findStatic`` 目标
+  public static），被隐藏的目标不限于 bridge——RuntimeMaterial processor /
+  gate 转发体都是 public static 纯算术形（gateA），CP 普查看不见引用；
+  t3_full 实证豁免不足时 DeadMember 单跑删 219 法、Test 1.1 起全 ERROR，
+  扩到 static 门整档宁留（gateC private 不受影响： ``findStatic`` 跨类不可
+  达，同类 BSM 由 hasBsm 整类豁免覆盖）后 DeadMember 单跑与整链行为回稳。
+  **阵抓出并修掉一条链序错** ：NumberFold 先于 CffUnflatten 让 CFF span
+  形被判 ``state-polluted`` 370/404、岛还原 58→0（单变量钉因；boar 台账
+  CFF 链从不带 NumberFold 前置同证），默认主线已把 NumberFold 移到
+  CffUnflatten 之后——该错链序轮维度无法吸收（每轮同错），必须同轮排对；
+  修后 t3_full 默认主线 4 轮收敛（148→40→3→0）、行为与 obf 逐行全等、
+  CFF 岛 405→347（还原 58）、池读 883→0、异常桥 69→1、goto-ft 189→0。
+  v3 矩阵终值：全 9 变体收敛、双跑 CRC 全等、CFR 零错误（crasher 变体除
+  外，见下）、行为同分布（t3_flow/t3_full 的 1.6 单点 ±1 差为 5 次采样
+  ``5/5 vs 0/5`` 的时序边界分布差，登记为观察项——1.6 本就 Windows 时序
+  敏感，t3_material obf 反而比 dec 差 1 佐证噪声解释）。**新缺口登记**
+  ：Grunteon build 260705 的 indy BSM 键形不在三路键链覆盖内
+  （IndyRestore ``key=984`` / IndyFold ``bsmFailed=987``，t3_full indy
+  2311→987，BSM 静态参数 4 参 = 3 加密串 + Integer，串形为新字符域——
+  与 boar 语料键路由不同源，待样本积累出键派生差异再补，同缺口 #15 的
+  v2 半边口径）。**既有缺口实证** ：Crasher/Watermark 面（v3 变体
+  t3_crash/t3_full）CFR 仍 0 输出（junk Signature 是 CFR 的硬死点，缺口
+  #13 的 DecompilerCrasher 本体面）；t2_full（bench 全开含
+  ConstBuilder/HeavyEncrypt 等）生成产物本身行为破行（obf 侧全 ERROR，
+  与还原无关的上游面，逐 face 变体均正常）。
+  v2 矩阵（grunt2 36c0eef，9 变体）：全收敛、双跑 CRC 全等、行为逐项同
+  分布（ ``10,4,Finished`` 逐行全等）、CFR 零错误（t2_crash 除外，同缺口
+  #13）；t2_string 池读 47→0、t2_indy indy 18→3（余 3 = ReflectionSupport
+  MethodHandle 字面量的非 Grunt indy，正确不碰）、goto-ft 1→0 全变体；
+  t2_constpool 3 轮收敛（69→10→0，回填跨轮完成）。Arrayed 池面（parseUL
+  种子）不在本阵（bench 默认 ``Arrayed=false`` ），由 q8 批承载。
+
 
 - **普查工具** ：\ ``mjt/tmp_corpus/census_a.py``\ （样本 A，仅解码 ``(III)I``/``(II)I`` 方法体，生成面 MAXS(8,2) 全用隐式槽指令形，全部 jar 零解码失败即此口径健全性的旁证；异常桥按 exception_table 原始字节判）、\ ``census_b.py``\ （样本 B，全方法解码 + cp Fieldref/NameAndType 解析；17 方法 Crasher junk 解码失败如实计并排除在算术面分母外）、\ ``census_r1.py``\ （样本 A 供给链产物 第 1 轮/第 3 轮 复扫，严格形状桥 + 校验器式可达普查，SMT 帧根 + 异常表 handler 根 BFS，供缺口 #10 面 b 还原前后对照）、\ ``mjt/tmp_corpus8/census8d.py``\ （缺口 #8 复算批：样本 B 全方法解码 + cp Fieldref 解析 + 跨类 ConstantValue 注册表（GETSTATIC→伴生字段带 ConstantValue 计 const-fed 'cv'），NOP 夹层邻接窗 + junk 区重同步容差；const-fed 与走廊锚四数见 §2 #8）。四脚本一次性工具不进仓，判据已逐条录入上文。
 - **CLI 统计开关** ：\ ``GRUNT_TRACE=1``\ （per-pass scan/rewrite/rejects 桶）；\ ``GRUNT_SLICE_SEC=0``\ （关 60 s 时间片，ConstantCall 首跑 slice 截断在 oo.class 且 proof FAILED 是截断伪影，全量复跑 24479/24479 proof=ok；样本 A 供给链最终数以全量跑为准）。
