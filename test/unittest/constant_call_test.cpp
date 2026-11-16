@@ -928,5 +928,75 @@ TEST(ConstantCallDecryptor, FoldsEmptyPlaintextSitePastPlaceholderTrap)
     EXPECT_TRUE(folded.empty()) << "折叠后 fill2 必须返回空串";
 }
 
+/// 容器外内建站点夹具（u/b 族池读点实证）：parseUL 键面是池读下标的构造
+/// 件，不折它 NF 铺不开后续算术、PAF 终态表查不到下标。白名单唯一成员
+/// Long.parseUnsignedLong——全序纯函数，常量实参下值唯一。
+const char* kParseUlHost =
+    ".super java/lang/Object\n"
+    ".class public super fixture/ParseUlHost {\n"
+    "  .method public static grab ()J {\n"
+    "    code: {\n"
+    "      ldc \"50do1e7vn2una\"\n"
+    "      bipush 32\n"
+    "      invokestatic java/lang/Long.parseUnsignedLong (Ljava/lang/String;I)J\n"
+    "      lreturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+ca::i64 parseUlExpect()
+{
+    // 独立重算（u64 累进，同 JDK 无符号语义），不借实现常量。
+    ca::u64 acc = 0;
+    for (const char c : std::string("50do1e7vn2una")) {
+        const ca::u32 d = (c >= '0' && c <= '9') ? static_cast<ca::u32>(c - '0')
+                                                 : static_cast<ca::u32>(c - 'a') + 10;
+        acc = acc * 32 + static_cast<ca::u64>(d);
+    }
+    return static_cast<ca::i64>(acc);
+}
+
+TEST(ConstantCallExternalBuiltin, ScansAndEvaluatesParseUlSite)
+{
+    model::ResourceContainer container = makeContainer({{"fixture/ParseUlHost", kParseUlHost}});
+    const ScanResult         result    = scan(container);
+
+    ASSERT_EQ(result.sites.size(), 1u);
+    const Site& site = result.sites.front();
+    EXPECT_TRUE(site.isExternalBuiltin);
+    EXPECT_EQ(site.targetOwner, "java/lang/Long");
+    EXPECT_EQ(site.targetName, "parseUnsignedLong");
+    ASSERT_EQ(site.args.size(), 2u);
+    ASSERT_TRUE(site.value.known);
+    ASSERT_EQ(site.value.type, jsim::ValType::I64);
+    EXPECT_EQ(site.value.intBits, parseUlExpect());
+}
+
+TEST(ConstantCallExternalBuiltin, RewriteFoldsParseUlToLdc2W)
+{
+    model::ResourceContainer container = makeContainer({{"fixture/ParseUlHost", kParseUlHost}});
+    const ScanResult         scanned   = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.applied, 1u);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+
+    const std::string after = disassemble(classBytes(container, "fixture/ParseUlHost.class"));
+    EXPECT_EQ(after.find("invokestatic"), std::string::npos) << after;
+    EXPECT_NE(after.find("ldc2_w"), std::string::npos) << after;
+    const ProofResult verdict = proof(container, dirty, 1);
+    EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
+
+    // 语义闭环：折叠后的 grab 用 jsim 复跑，返回值 = 独立重算期望。
+    grunt::SimExecutor exec(container);
+    jsim::str::install(exec.session());
+    jsim::num::install(exec.session());
+    const SimOutcome out = exec.invoke("fixture/ParseUlHost", "grab()J", {});
+    ASSERT_TRUE(out.ok()) << out.detail;
+    ASSERT_EQ(out.value.type, jsim::ValType::I64);
+    EXPECT_EQ(out.value.intBits, parseUlExpect());
+}
+
 }   // namespace
 }   // namespace grunt::constant_call

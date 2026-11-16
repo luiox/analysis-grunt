@@ -321,7 +321,8 @@ inline bool decodeValueLoad(ir::ClassSession& session, const ir::Insn& in, Value
 /// @brief 求值值的同一性（同类别按位相同；null 引用互相等同）。
 ///
 /// SimValue 的位型纪律：I32/I64/F32 都走 intBits（F32 存 floatToBits 位形），
-/// F64 走 realValue 真值，Ref 只认 null。
+/// F64 走 realValue 真值，Ref 认 null 与 Str（Str 按内容比，外部内建站点的
+/// (String, int) 键形复验用；通用栈值面带不到 Str 实参，行为不变）。
 inline bool sameValue(const jsim::SimValue& a, const jsim::SimValue& b)
 {
     if (a.known != b.known || a.type != b.type) return false;
@@ -332,8 +333,10 @@ inline bool sameValue(const jsim::SimValue& a, const jsim::SimValue& b)
     case jsim::ValType::F32: return a.intBits == b.intBits;
     case jsim::ValType::F64: return a.realValue == b.realValue;
     case jsim::ValType::Ref:
-        return a.ref.kind == jsim::RefPayload::Kind::Null
-               && b.ref.kind == jsim::RefPayload::Kind::Null;
+        if (a.ref.kind != b.ref.kind) return false;
+        if (a.ref.kind == jsim::RefPayload::Kind::Null) return true;
+        if (a.ref.kind == jsim::RefPayload::Kind::Str) return a.ref.str == b.ref.str;
+        return false;   // 堆对象身份不可比（objId 是会话内单调序号）
     }
     return false;
 }

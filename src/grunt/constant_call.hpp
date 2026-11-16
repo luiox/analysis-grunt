@@ -86,6 +86,10 @@ struct Site
     jsim::SimValue              value;  ///< 求值结果
 
     bool                 isDecryptor = false;  ///< 解密器族站点（独立判据，见 cpp 文档）
+    bool isExternalBuiltin = false;  ///< 容器外 JDK 全序纯内建站点（白名单面，
+                                     ///< 池读点下标里 parseUL 键面的解锁器；
+                                     ///< bootstrap 类的初始化时机由 JVM 托管，
+                                     ///< 删调用无可观测变化）
     std::vector<ca::u16> cipherUnits;          ///< 密文 UTF-16 码元（解密器族）
     ca::i64              key         = 0;      ///< 密钥（解密器族第 2 实参）
     ca::i32              seed        = 0;      ///< 种子（解密器族第 3 实参）

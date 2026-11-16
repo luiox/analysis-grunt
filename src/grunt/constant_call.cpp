@@ -277,6 +277,33 @@ void buildIndex(const mjbase::model::ResourceContainer& container,
     scan_tools::buildMethodIndex(container, index, scan_tools::IndexDup::KeepFirst, guard);
 }
 
+/// parseUnsignedLong 纯函数核（(字符串, 进制) 定值，全序无副作用）：radix
+/// 越族（<2 / >36）拒；数字位超进制拒；累进按 u64 回绕口径折返（Grunt 键
+/// 面构造恒在 u64 域内，回绕分支只是防御面）。jsim callMock 与容器外内建
+/// 站点求值共用同一语义源，两边不许各写一份。
+/// @return false = radix/数字位非法（JDK 侧 NumberFormatException 语义）
+bool parseULPure(std::string_view text, ca::i32 radix, ca::i64& out)
+{
+    if (radix < 2 || radix > 36) return false;
+    ca::u64 acc = 0;
+    for (const char c : text) {
+        ca::u32 digit = 0;
+        if (c >= '0' && c <= '9') {
+            digit = static_cast<ca::u32>(c - '0');
+        } else if (c >= 'a' && c <= 'z') {
+            digit = static_cast<ca::u32>(c - 'a') + 10;
+        } else if (c >= 'A' && c <= 'Z') {
+            digit = static_cast<ca::u32>(c - 'A') + 10;
+        } else {
+            return false;
+        }
+        if (digit >= static_cast<ca::u32>(radix)) return false;
+        acc = acc * static_cast<ca::u64>(radix) + static_cast<ca::u64>(digit);
+    }
+    out = static_cast<ca::i64>(acc);
+    return true;
+}
+
 /// 求值段：装好扩展包的 jsim 执行器逐站点跑目标方法；通过者写回 `value`，
 /// 失败者转成拒绝记录。类初始化检查（scan_tools::classInitNeutral）先判。
 void evaluateSites(const mjbase::model::ResourceContainer& container,
@@ -323,10 +350,9 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
         };
 
     // Long.parseUnsignedLong (Ljava/lang/String;I)J 接管（t 族实证：解密器体
-    // 内部经 parseUL 反推密钥分量，缺接管整条面在 Bail 拒）。全序纯函数：
-    // (字符串, 进制) 定值。radix 越族（<2 / >36）按 NumberFormatException 语义
-    // Bail；数字位超 u64 域按 JNI 无符号回绕口径折返（Grunt 键面构造恒在
-    // u64 域内，回绕分支只是防御面）。unknown 按未知口径传播。
+    // 内部经 parseUL 反推密钥分量，缺接管整条面在 Bail 拒）。全序纯函数，
+    // 语义核在 parseULPure（与容器外内建站点求值共用）。unknown 按未知口径
+    // 传播；radix 越族 / 数字位非法按 NumberFormatException 语义 Bail。
     exec.session().callMocks["java/lang/Long.parseUnsignedLong(Ljava/lang/String;I)J"] =
         [&exec](jsim::Frame& frame) -> jsim::Result<jsim::SimValue, jsim::Bail> {
             jsim::Result<jsim::SimValue, jsim::Bail> radixV = frame.popChecked();
@@ -336,11 +362,6 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
             if (!radixV.value().known || !strV.value().known) {
                 return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
                     jsim::SimValue::unknownOf(jsim::ValType::I64));
-            }
-            const ca::i32 radix = static_cast<ca::i32>(radixV.value().intBits);
-            if (radix < 2 || radix > 36) {
-                return jsim::Result<jsim::SimValue, jsim::Bail>::err(
-                    {jsim::Bail::Reason::UnsupportedCall, frame.pc(), "parseUL radix 越族"});
             }
             std::string text;
             if (strV.value().ref.kind == jsim::RefPayload::Kind::Str) {
@@ -357,28 +378,38 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
                 return jsim::Result<jsim::SimValue, jsim::Bail>::err(
                     {jsim::Bail::Reason::BadOperand, frame.pc(), "parseUL 接收者为 null"});
             }
-            ca::u64 acc = 0;
-            for (const char c : text) {
-                ca::u32 digit = 0;
-                if (c >= '0' && c <= '9') {
-                    digit = static_cast<ca::u32>(c - '0');
-                } else if (c >= 'a' && c <= 'z') {
-                    digit = static_cast<ca::u32>(c - 'a') + 10;
-                } else if (c >= 'A' && c <= 'Z') {
-                    digit = static_cast<ca::u32>(c - 'A') + 10;
-                } else {
-                    return jsim::Result<jsim::SimValue, jsim::Bail>::err(
-                        {jsim::Bail::Reason::BadOperand, frame.pc(), "parseUL 非法数字位"});
-                }
-                if (digit >= static_cast<ca::u32>(radix)) {
-                    return jsim::Result<jsim::SimValue, jsim::Bail>::err(
-                        {jsim::Bail::Reason::BadOperand, frame.pc(), "parseUL 数字位越进制"});
-                }
-                acc = acc * static_cast<ca::u64>(radix) + static_cast<ca::u64>(digit);
+            ca::i64 v = 0;
+            if (!parseULPure(text, static_cast<ca::i32>(radixV.value().intBits), v)) {
+                return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                    {jsim::Bail::Reason::BadOperand, frame.pc(), "parseUL 数字位/进制非法"});
             }
-            return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
-                jsim::SimValue::knownI64(static_cast<ca::i64>(acc)));
+            return jsim::Result<jsim::SimValue, jsim::Bail>::ok(jsim::SimValue::knownI64(v));
         };
+
+    // 容器外内建站点：目标无容器方法体，不经 jsim 方法执行，直接走白名单
+    // 内建的纯函数核。parseUL 是池读点下标键面的解锁器（b/u 族实证：读点
+    // 下标 = (int)(parseUL(str, radix) ^ const)，此站不折则 NF 铺不开算术、
+    // PAF 终态表查不到下标，池读点永远残留）。
+    for (ca::usize si = 0; si < sites.size(); ++si) {
+        Site& site = sites[si];
+        if (!site.isExternalBuiltin) continue;
+        const bool argShapeOk = site.args.size() == 2 && site.args[0].known
+                                && site.args[0].type == jsim::ValType::Ref
+                                && site.args[0].ref.kind == jsim::RefPayload::Kind::Str
+                                && site.args[1].known
+                                && site.args[1].type == jsim::ValType::I32;
+        ca::i64 v = 0;
+        if (!argShapeOk
+            || !parseULPure(site.args[0].ref.str,
+                            static_cast<ca::i32>(site.args[1].intBits), v)) {
+            rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod,
+                                           site.callSrcPc, RejectReason::EvalBadState});
+            ok[si] = 2;
+            continue;
+        }
+        site.value = jsim::SimValue::knownI64(v);
+        ok[si]     = 1;
+    }
 
     forEachClass(container, [&](const ClassEntry& entry) {
         scanGuard("evaluate", entry.uri, [&] {
@@ -726,6 +757,53 @@ RwResult rewriteDecryptorSite(ir::ClassSession& session, ir::CodeUnit& cu, const
     return RwResult::Ok;
 }
 
+/// 外部内建站点（parseUL）的实参收集：(String, int) 键形定死，压栈序
+/// str·radix。String 实参 CP 直读——decodePush 栈值面对引用形保守拒（通用
+/// 折叠的产物只有数值），内建站点把字符串当纯函数入参、产物仍是数值，
+/// 不在该保守面内。producers 按压栈序（str 深、radix 浅），改写面直接用。
+bool collectBuiltinArgsParseUl(ir::ClassSession& s, const ir::CodeDom& dom,
+                               const std::vector<ir::InsnId>& order, ca::usize callPos,
+                               std::vector<ir::InsnId>& producers,
+                               std::vector<jsim::SimValue>& args)
+{
+    // 非NOP前驱定位（squeeze 遗留落点不驻栈，跳过）。
+    const auto prevReal = [&](ca::usize from, ca::usize& out) {
+        ca::usize k = from;
+        while (k > 0) {
+            --k;
+            const ir::Insn* p = dom.peek(order[k]);
+            if (p != nullptr && p->op != Op::NOP) {
+                out = k;
+                return p;
+            }
+        }
+        return static_cast<const ir::Insn*>(nullptr);
+    };
+
+    // radix：紧邻 call 的 int 常量装载。
+    ca::usize radixPos = 0;
+    const ir::Insn* radix = prevReal(callPos, radixPos);
+    if (radix == nullptr) return false;
+    ca::i32 radixV = 0;
+    if (!const_args::decodeConstInt(s, *radix, radixV)) return false;
+
+    // str：再往前一条 LDC String。
+    ca::usize strPos = 0;
+    const ir::Insn* str = prevReal(radixPos, strPos);
+    if (str == nullptr) return false;
+    if (str->op != Op::LDC && str->op != Op::LDC_W) return false;
+    ir::ClassSession::ConstSem sem;
+    if (!s.constOf(*str, sem) || sem.kind != ir::ClassSession::ConstSem::Kind::String) {
+        return false;
+    }
+
+    args.push_back(jsim::SimValue::knownStr(std::string(sem.str)));
+    args.push_back(jsim::SimValue::knownI32(radixV));
+    producers.push_back(order[strPos]);    // str：栈最深 → 折后原地锚
+    producers.push_back(order[radixPos]);  // radix：受害面
+    return true;
+}
+
 /// 在已 promote 的调用者方法里改写一个站点；失败不改动 DOM。
 RwResult rewriteSite(ir::ClassSession& session, ir::CodeUnit& cu, const Site& site)
 {
@@ -754,8 +832,14 @@ RwResult rewriteSite(ir::ClassSession& session, ir::CodeUnit& cu, const Site& si
 
     std::vector<ir::InsnId>     producers;
     std::vector<jsim::SimValue> args;
-    if (!const_args::collectArgs(session, dom, order, callPos, const_args::argSlots(enc.desc),
-                                 producers, args)) {
+    if (site.isExternalBuiltin) {
+        // 内建站点：键形 (String, int)，String 实参 CP 直读（通用栈值面
+        // 保守拒引用形，这里不走）。
+        if (!collectBuiltinArgsParseUl(session, dom, order, callPos, producers, args)) {
+            return RwResult::ArgsMismatch;
+        }
+    } else if (!const_args::collectArgs(session, dom, order, callPos,
+                                        const_args::argSlots(enc.desc), producers, args)) {
         return RwResult::ArgsMismatch;
     }
     if (args.size() != site.args.size()) return RwResult::ArgsMismatch;
@@ -853,14 +937,46 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
                     if (!s.memberOf(*in, enc)) continue;
                     if (enc.kind != ir::ClassSession::MemberSem::Kind::Method) continue;
 
-                    const auto it = index.find(scan_tools::keyOf(enc.owner, enc.name, enc.desc));
-                    if (it == index.end()) continue;   // 容器外目标：不构成候选
-                    const scan_tools::MethodLoc& loc = it->second;
-
                     const auto reject = [&](RejectReason r) {
                         result.rejects.push_back(RejectedSite{
                             std::string(self), std::string(name), in->srcPc, r});
                     };
+
+                    const auto it = index.find(scan_tools::keyOf(enc.owner, enc.name, enc.desc));
+                    if (it == index.end()) {
+                        // 容器外目标：唯一入表面 = JDK 全序纯内建白名单
+                        // （parseUL，u/b 族池读点下标键面的解锁器）。bootstrap
+                        // 类初始化时机由 JVM 托管，删调用无可观测变化；常量
+                        // 实参下值唯一。求值在 evaluateSites 头部直折。
+                        // 键形走 keyOf 本尊（'\n' 复合），别拿 '.' 手拼。
+                        if (scan_tools::keyOf(enc.owner, enc.name, enc.desc)
+                            != scan_tools::keyOf("java/lang/Long", "parseUnsignedLong",
+                                                 "(Ljava/lang/String;I)J")) {
+                            continue;
+                        }
+                        std::vector<ir::InsnId>     producers;
+                        std::vector<jsim::SimValue> args;
+                        if (!collectBuiltinArgsParseUl(s, cu->dom, order, pos,
+                                                       producers, args)) {
+                            reject(RejectReason::ArgsNotConstant);
+                            continue;
+                        }
+                        Site site;
+                        site.callerUri         = std::string(entry.uri);
+                        site.callerOwner       = std::string(self);
+                        site.callerMethod      = std::string(name);
+                        site.callerDesc        = std::string(desc);
+                        site.callerMethodIndex = mi;
+                        site.callSrcPc         = in->srcPc;
+                        site.targetOwner       = std::string(enc.owner);
+                        site.targetName        = std::string(enc.name);
+                        site.targetDesc        = std::string(enc.desc);
+                        site.args              = std::move(args);
+                        site.isExternalBuiltin = true;
+                        result.sites.push_back(std::move(site));
+                        continue;
+                    }
+                    const scan_tools::MethodLoc& loc = it->second;
 
                     if ((loc.access & kAccStatic) == 0) {
                         reject(RejectReason::TargetNotStatic);
