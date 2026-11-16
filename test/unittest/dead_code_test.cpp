@@ -504,5 +504,160 @@ TEST(DeadCodeProof, KeepsClassCountAndReparsesDirtyClasses)
     EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
 }
 
+// ============================================================================
+// ==== 冗余无条件跳转面 ======================================================
+// ============================================================================
+
+/// 冗余 goto 夹具（u/b 族池读 + L 族谓词实证的最小形）：goto 目标 = 紧邻
+/// 落点，语义与顺序执行全等。混淆器用这对（goto + 落点标签）把实参区/
+/// 常量表达式从中间劈开，下游折叠全部被落点真标签挡死；擦除即穿线。
+const char* kRedundantGotoSource =
+    ".super java/lang/Object\n"
+    ".class public super fixture/RdGoto {\n"
+    "  .method public static grab ()I {\n"
+    "    code: {\n"
+    "      bipush 7\n"
+    "      goto Lnext\n"
+    "    Lnext:\n"
+    "      bipush 5\n"
+    "      iadd\n"
+    "      ireturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+TEST(DeadCodeScan, FindsRedundantGotoWithoutDeadCode)
+{
+    // 方法无死指令，站点面纯由冗余 goto 构成（scan 侧无此面则 rewrite
+    // 永远轮不到该方法）。
+    model::ResourceContainer container = makeContainer({
+        {"fixture/RdGoto", kRedundantGotoSource},
+    });
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites.front().victimCount, 1u);
+}
+
+TEST(DeadCodeRewrite, ThreadsRedundantGotoToFallthrough)
+{
+    model::ResourceContainer container = makeContainer({
+        {"fixture/RdGoto", kRedundantGotoSource},
+    });
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_EQ(dirty.methods, 1u);
+    EXPECT_EQ(dirty.insns, 1u);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+
+    // goto 物理消失，计算序列原样保留（折成 ldc 12 是下游 NF/ArithFold
+    // 的事，本面只负责把标签锁拿掉）。夹具文本 bipush 经 libjhasm
+    // constantLoad 规范化落 ldc（dead_code_test 既有注记同源）。
+    const MethodDump after = dumpMethod(classBytes(container, "fixture/RdGoto.class"), 0);
+    EXPECT_EQ(countOp(after, jbc::core::Op::GOTO), 0u) << "冗余 goto 必须穿线消失";
+    ASSERT_EQ(after.ops.size(), 4u);
+    EXPECT_EQ(after.ops[0], jbc::core::Op::LDC);
+    EXPECT_EQ(after.ops[1], jbc::core::Op::LDC);
+    EXPECT_EQ(after.ops[2], jbc::core::Op::IADD);
+    EXPECT_EQ(after.ops[3], jbc::core::Op::IRETURN);
+
+    const ProofResult verdict = proof(container, dirty, 1);
+    EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
+}
+
+/// b.main 族实证形（eraseBatch 锚定拒绝，2026-11-16）：victim 可达且被活
+/// 分支正跳到——入边标签锚在 victim 本体上，不重绑整批拒绝。穿线 = 入边
+/// 标签搬到落点（句柄身份不变，语义逐位等价）后擦除。
+const char* kInboundBranchGotoSource =
+    ".super java/lang/Object\n"
+    ".class public super fixture/RdGotoIn {\n"
+    "  .method public static grab ()I {\n"
+    "    code: {\n"
+    "      iconst_1\n"
+    "      ifne Ljump\n"
+    "      bipush 3\n"
+    "      ireturn\n"
+    "    Ljump:\n"
+    "      goto Lnext\n"
+    "    Lnext:\n"
+    "      bipush 5\n"
+    "      ireturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+TEST(DeadCodeRewrite, ThreadsGotoWithInboundLiveBranch)
+{
+    model::ResourceContainer container = makeContainer({
+        {"fixture/RdGotoIn", kInboundBranchGotoSource},
+    });
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites.front().victimCount, 1u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_EQ(dirty.methods, 1u);
+    EXPECT_EQ(dirty.insns, 1u);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+
+    // goto 消失，活分支的入边标签落到原落点（ifne 指向的指令变为原
+    // Lnext 上的指令）。
+    const MethodDump after = dumpMethod(classBytes(container, "fixture/RdGotoIn.class"), 0);
+    EXPECT_EQ(countOp(after, jbc::core::Op::GOTO), 0u);
+    EXPECT_EQ(countOp(after, jbc::core::Op::IFNE), 1u);
+    ASSERT_EQ(after.ops.size(), 6u);
+
+    const ProofResult verdict = proof(container, dirty, 1);
+    EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
+}
+
+/// 链形冗余（victim 的落点是批内另一 victim）：入边标签要沿目标链穿透到
+/// 批外落点，重绑到批内成员仍会被锚定保护拒绝。
+const char* kChainedGotoSource =
+    ".super java/lang/Object\n"
+    ".class public super fixture/RdGotoChain {\n"
+    "  .method public static grab ()I {\n"
+    "    code: {\n"
+    "      bipush 7\n"
+    "      goto La\n"
+    "    La:\n"
+    "      goto Lb\n"
+    "    Lb:\n"
+    "      bipush 5\n"
+    "      iadd\n"
+    "      ireturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+TEST(DeadCodeRewrite, ThreadsChainedRedundantGotos)
+{
+    model::ResourceContainer container = makeContainer({
+        {"fixture/RdGotoChain", kChainedGotoSource},
+    });
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    EXPECT_EQ(scanned.sites.front().victimCount, 2u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_EQ(dirty.methods, 1u);
+    EXPECT_EQ(dirty.insns, 2u);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+
+    const MethodDump after = dumpMethod(classBytes(container, "fixture/RdGotoChain.class"), 0);
+    EXPECT_EQ(countOp(after, jbc::core::Op::GOTO), 0u);
+    ASSERT_EQ(after.ops.size(), 4u);
+    EXPECT_EQ(after.ops[2], jbc::core::Op::IADD);
+    EXPECT_EQ(after.ops[3], jbc::core::Op::IRETURN);
+
+    const ProofResult verdict = proof(container, dirty, 1);
+    EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
+}
+
 }   // namespace
 }   // namespace grunt::dead_code

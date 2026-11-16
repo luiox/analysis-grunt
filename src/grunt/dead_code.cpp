@@ -45,6 +45,7 @@
 /// 求解从代码真值整体重算，不存在锚在被擦指令上的孤儿帧。
 #include "grunt/dead_code.hpp"
 
+#include <cstdio>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -170,6 +171,169 @@ std::vector<ca::u8> reachability(const ir::CodeUnit& cu)
     return reach;
 }
 
+/// @brief 冗余无条件跳转收集（跳转穿线退化形）：goto/goto_w 的目标 =
+///        顺序后继（紧邻落点指令）时，跳转与顺序执行语义全等，擦除即穿线。
+///
+/// 混淆器用这对（goto + 落点标签）把常量表达式 / 调用实参区从中间劈开，
+/// NF/ArithFold 的常量折叠与 PAF 三元组都被落点上的真标签挡死（u/b 族
+/// 池读 + L 族 junk 谓词实证）。只收可达指令上的（死指令本就进受害者
+/// 集）；victim 的目标标签锚在顺序后继（存活）上无涉，锚在 victim 本体
+/// 上的存活入边标签由 rebindThreadingLabels 先行搬到落点，否则锚定保护
+/// 整批拒绝。
+/// @return 冗余 goto 数；out 非空时把受害者句柄按 order 序追加。
+///
+/// 冗余判定走工具箱单源 isFallthroughGoto（backing 布局真值）。
+ca::usize collectRedundantGotos(const ir::CodeUnit& cu, const std::vector<ca::u8>& reach,
+                                std::vector<ir::InsnId>* out)
+{
+    const std::vector<ir::InsnId>& order = cu.dom.order();
+    ca::usize                      n     = 0;
+    for (ca::usize i = 0; i < order.size(); ++i) {
+        if (reach[i] == 0) continue;
+        const ir::Insn* in = cu.dom.peek(order[i]);
+        if (in == nullptr || !rewrite_tools::isFallthroughGoto(cu, *in)) continue;
+        ++n;
+        if (out != nullptr) out->push_back(order[i]);
+    }
+    return n;
+}
+
+/// @brief 穿线批的落点重绑 + 无引用者销毁。
+///
+/// victim 自身可达，存活分支 / 异常表可以正跳到它——标签锚在 victim 上
+/// 时 eraseBatch 锚定保护整批拒绝（b.main 族实证）。冗余 goto 语义 =
+/// 直落落点，把入边标签重绑到落点 insn（句柄身份不变，分支 / 表项引用
+/// 方不动）后跳转语义逐位等价。链形冗余（victim 的落点是批内另一
+/// victim）沿目标链穿透到批外落点——每个冗余 goto 严格前进 3/5 字节，
+/// 无环。
+///
+/// 无引用者销毁（2026-11-16 补）：victim 的目标标签锚在落点（存活指令）
+/// 上，goto 擦除后若再无引用者则成为残渣——落点落在常量窗口中段时
+/// ArithFold 的「窗口内除锚点外无标签」判据被这枚死标签挡死（b.main
+/// hint 块池读实证，v27 链 const=0 复扫钉因）。引用者清点 = 批外分支
+/// （in->target）+ 存活异常表（start/end/handler）；受害者自身的引用随
+/// 批消亡，不保活标签。无引用者一律 destroyLabel，有引用者 bindLabel。
+/// @return true = 处置完成可擦；false = 任一解析 / bindLabel / destroy
+///          失败（调用方整体放弃本方法，fail-closed）。
+bool rebindThreadingLabels(ir::CodeUnit& cu, const std::vector<ir::InsnId>& gotos)
+{
+    const auto inBatch = [&gotos](ir::InsnId id) {
+        for (const ir::InsnId g : gotos) {
+            if (g == id) return true;
+        }
+        return false;
+    };
+    // 引用者清点：批外分支 + 存活异常表。victim 自身的引用不算（随批
+    // 消亡）。线性双扫，序确定。
+    const auto referenced = [&cu, &inBatch](ir::LabelId lbl) {
+        const std::vector<ir::InsnId>& order = cu.dom.order();
+        for (const ir::InsnId id : order) {
+            if (inBatch(id)) continue;
+            const ir::Insn* in = cu.dom.peek(id);
+            if (in != nullptr && in->target == lbl) return true;
+        }
+        for (const ir::CodeUnit::Exc& e : cu.exc) {
+            if (e.start == lbl || e.end == lbl || e.handler == lbl) return true;
+        }
+        return false;
+    };
+    // 两阶段：先全量链解析（后一 victim 的链走查依赖前一 victim 尚未处置
+    // 的目标标签），再统一处置标签。
+    std::vector<ir::InsnId>         landings(gotos.size());
+    std::vector<std::vector<ir::LabelId>> chainTargets(gotos.size());
+    for (ca::usize gi = 0; gi < gotos.size(); ++gi) {
+        const ir::Insn* cur = cu.dom.peek(gotos[gi]);
+        if (cur == nullptr) return false;
+        for (;;) {
+            chainTargets[gi].push_back(cur->target);
+            auto resolved = cu.dom.resolveLabel(cur->target);
+            if (resolved.is_err()) return false;
+            const ir::LabelTarget t = resolved.unwrap();
+            if (t.isEnd()) return false;   // 收集面已保证非 End，防御口径
+            landings[gi] = t.insn;
+            if (!inBatch(t.insn)) break;
+            cur = cu.dom.peek(t.insn);
+            if (cur == nullptr) return false;
+        }
+    }
+    for (ca::usize gi = 0; gi < gotos.size(); ++gi) {
+        const ir::InsnId gid = gotos[gi];
+        // 入边标签：锚在 victim 本体上的（存活分支 / 异常表跳到这里）。
+        for (const ir::LabelId lbl : cu.dom.labelsAt(gid)) {
+            if (referenced(lbl)) {
+                if (cu.dom.bindLabel(lbl, landings[gi]).is_err()) return false;
+            }
+            else if (cu.dom.destroyLabel(lbl).is_err()) {
+                return false;
+            }
+        }
+        // 链上各成员的目标标签：锚在落点侧（存活指令），擦除后无引用者
+        // 即残渣，销毁；有引用者搬到最终落点（链中段锚点会挡窗口判据）。
+        for (const ir::LabelId lbl : chainTargets[gi]) {
+            if (!cu.dom.validLabel(lbl)) continue;   // 链内共享已处置，跳过
+            if (referenced(lbl)) {
+                if (cu.dom.bindLabel(lbl, landings[gi]).is_err()) return false;
+            }
+            else if (cu.dom.destroyLabel(lbl).is_err()) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/// @brief 穿线面的声明帧退化路径（Strict 帧重算不支持时的唯一出路）。
+///
+/// b.main 族 20 法实证：junk 走廊在合并点留栈形不一致，frame_rewire 的
+/// Strict 求解从代码真值重推断必炸（inconsistent stack depth at merge），
+/// 但声明帧口径本就 verifier 有效（原 jar 可加载运行即证据），且同方法上
+/// ConstantCall 的改写路径（prunePcAttrs + eraseBatch + lowerMethod，不重
+/// 推断）实证可落地。擦 goto-to-fallthrough 不改任何剩余边的栈形：目标
+/// 帧 = 落点帧，声明帧 relocation 后仍与代码真值一致。
+///
+/// 配套面只有 LNT/LVT 行剪（victim pc 上无 SMT 帧——分支指令不锚帧，帧
+/// 锚在目标 pc 上而目标 = 落点存活指令，帧面原样保留 relocation）。
+/// @return 穿线掉的 goto 数（0 = 未动）。
+ca::usize threadGotosDeclaredFrames(ir::ClassSession& s, ca::usize methodIndex)
+{
+    const bool trace = std::getenv("GRUNT_DC_TRACE") != nullptr;
+    auto       promoted = ir::promoteMethod(s, methodIndex);
+    if (promoted.is_err()) return 0;
+    ir::CodeUnit* cu = promoted.unwrap().get();
+    if (cu == nullptr) return 0;
+
+    const std::vector<ca::u8> reach = reachability(*cu);
+    std::vector<ir::InsnId>   gotos;
+    collectRedundantGotos(*cu, reach, &gotos);
+    if (gotos.empty()) return 0;
+
+    std::vector<ca::u32> victimPcs;
+    victimPcs.reserve(gotos.size());
+    for (const ir::InsnId id : gotos) {
+        const ir::Insn* v = cu->dom.peek(id);
+        if (v != nullptr && v->srcPc != jbc::ir::kNoPc) victimPcs.push_back(v->srcPc);
+    }
+    const ir::ClassUnit& unit = s.unit();
+    const char*          fail = nullptr;
+    if (methodIndex >= unit.methods.size()) fail = "method oob";
+    else {
+        const ca::usize backingIdx = unit.methods[methodIndex].backingIndex;
+        if (backingIdx >= s.backing().methods.size()) fail = "backing oob";
+        else if (!rewrite_tools::prunePcAttrs(s.backing(), s.backing().methods[backingIdx],
+                                              victimPcs)) fail = "prunePcAttrs";
+        else if (!rebindThreadingLabels(*cu, gotos)) fail = "rebind";
+        else if (cu->dom.eraseBatch(gotos).is_err()) fail = "eraseBatch";
+        else if (ir::lowerMethod(s, methodIndex).is_err()) fail = "lower";
+    }
+    if (fail != nullptr) {
+        if (trace) {
+            std::fprintf(stderr, "[dc] method#%zu 退化放弃: %s\n", methodIndex, fail);
+        }
+        return 0;
+    }
+    return gotos.size();
+}
+
 /// @brief 单方法 REWRITE。@return 清掉的指令数（0 = 没动）。
 ///
 /// cu 是 mutateMethodWithFrames 提升好的当前 unit：promote 只发生一次，
@@ -275,15 +439,34 @@ ca::usize rewriteMethod(ir::CodeUnit* cu)
     for (ca::usize i = 0; i < order.size(); ++i) {
         if (reach[i] == 0) victims.push_back(order[i]);
     }
-    if (victims.empty() && !excChanged) return 0;
+    // 冗余 goto 独立成批（穿线面与死区面各自 fail-closed，见批序注记）。
+    std::vector<ir::InsnId> gotoVictims;
+    const ca::usize redundant = collectRedundantGotos(*cu, reach, &gotoVictims);
+    if (victims.empty() && gotoVictims.empty() && !excChanged) return 0;
     if (excChanged) cu->exc = std::move(liveExc);
-    // 断言注记（不另设遍历）：被存活 Boundary 标签锚定或被存活指令跳转
-    // 引用的指令必然可达（异常边已入 reachability），不会进受害者集合；
-    // 受害者内部互指（死块内 goto 等）的 ControlFlow 标签不保护锚点，
-    // 按 eraseBatch 契约随批消亡。若收敛逻辑漏处置某枚 Boundary 标签，
-    // eraseBatch 返回 Err，本函数保守放弃，fail-closed 兜底即断言。
-    if (!victims.empty() && cu->dom.eraseBatch(victims).is_err()) return 0;
-    return victims.size();
+    // 断言注记（不另设遍历，只关死区批）：被存活 Boundary 标签锚定或被
+    // 存活指令跳转引用的指令必然可达（异常边已入 reachability），不会进
+    // 死区受害者集合；受害者内部互指（死块内 goto 等）的 ControlFlow 标
+    // 签不保护锚点，按 eraseBatch 契约随批消亡。穿线批的 victim 可达且可
+    // 被存活分支正跳到，入边标签由 rebindThreadingLabels 先行搬移（见
+    // 上）。若收敛逻辑漏处置某枚 Boundary 标签，eraseBatch 返回 Err，本
+    // 函数保守放弃，fail-closed 兜底即断言。
+    ca::usize killed = 0;
+    // 穿线批先行（死区批异常时穿线成果不连坐）；入边标签先重绑到落点——
+    // victim 可达，存活分支可正跳到它，锚在 victim 上的标签不重绑会被
+    // 锚定保护整批拒绝（b.main 族实证）。
+    if (!gotoVictims.empty()) {
+        if (!rebindThreadingLabels(*cu, gotoVictims)) return 0;
+        if (cu->dom.eraseBatch(gotoVictims).is_err()) return 0;
+        killed += gotoVictims.size();
+    }
+    if (!victims.empty()) {
+        // 死区批整批拒（锚定保护）不连坐穿线面：本轮回写只含穿线
+        // 成果，死区留给下一轮 DC（链上多轮）。
+        if (cu->dom.eraseBatch(victims).is_err()) return killed;
+        killed += victims.size();
+    }
+    return killed;
 }
 
 }   // namespace
@@ -312,7 +495,12 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
             const std::vector<ca::u8> reach = reachability(*cu);
             ca::usize                 dead  = 0;
             for (const ca::u8 r : reach) dead += (r == 0 ? 1 : 0);
-            if (dead != 0) result.sites.push_back(Site{std::string(entry.uri), mi, dead});
+            // 冗余无条件跳转与死指令同入改写面（混批 victims，eraseBatch
+            // 一次清完）。
+            const ca::usize redundant = collectRedundantGotos(*cu, reach, nullptr);
+            if (dead + redundant != 0) {
+                result.sites.push_back(Site{std::string(entry.uri), mi, dead + redundant});
+            }
         }
     });
     return result;
@@ -366,7 +554,13 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         ca::usize            hitInsns   = 0;
         for (const ca::usize mi : methodIdxs) {
             dirty.attempted += 1;
-            if (safe.count(mi) == 0) continue;
+            if (safe.count(mi) == 0) {
+                if (std::getenv("GRUNT_DC_TRACE") != nullptr) {
+                    std::fprintf(stderr, "[dc] %s#%zu skip: roundTripUnsafe\n",
+                                 uri.c_str(), mi);
+                }
+                continue;
+            }
             ca::usize killed = 0;
             const bool ok = rewrite_tools::mutateMethodWithFrames(
                 s, mi, frames.resolver(),
@@ -374,7 +568,16 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                     killed = rewriteMethod(&cu);
                     return killed > 0;
                 });
-            if (!ok) continue;   // fail-closed：该方法放弃，其余方法已写回的不受影响
+            if (!ok) {
+                // Strict 帧重算不支持的方法（junk 栈形合并点）：穿线面退化
+                // 为声明帧口径（CC 同构路径），死区面维持 fail-closed 不动。
+                killed = threadGotosDeclaredFrames(s, mi);
+                if (killed == 0) continue;
+                if (std::getenv("GRUNT_DC_TRACE") != nullptr) {
+                    std::fprintf(stderr, "[dc] %s#%zu 穿线退化路径 killed=%zu\n",
+                                 uri.c_str(), mi, killed);
+                }
+            }
             hitMethods += 1;
             hitInsns += killed;
         }

@@ -26,6 +26,7 @@
 
 #include "grunt/container.hpp"
 #include "grunt/iter_budget.hpp"
+#include "grunt/rewrite_toolbox.hpp"
 #include "grunt/proof_toolbox.hpp"
 
 namespace grunt::trampoline_squeeze {
@@ -52,12 +53,10 @@ bool scanMethod(ir::ClassSession& s, ca::usize methodIndex, const std::string& u
         if (in == nullptr) continue;
         if (in->op != jbc::core::Op::GOTO && in->op != jbc::core::Op::GOTO_W) continue;
 
-        auto resolved = cu->dom.resolveLabel(in->target);
-        if (resolved.is_err()) continue;
-        const ir::LabelTarget t = resolved.unwrap();
-        if (t.isEnd()) continue;
-        // 目标必须是布局顺序后继（句柄相等判据，与字节布局无关）。
-        if (i + 1 >= order.size() || !(t.insn == order[i + 1])) continue;
+        // 目标必须是布局顺序后继（工具箱单源 isFallthroughGoto：backing
+        // 布局真值判据，order 相邻判据在真 jar 上漏站点——order 不保证
+        // pc 升序，b.main 族蹦床全漏实证，2026-11-16 修）。
+        if (!rewrite_tools::isFallthroughGoto(*cu, *in)) continue;
 
         result.sites.push_back(
             Site{uri, methodIndex, in->srcPc, in->op == jbc::core::Op::GOTO_W});
@@ -95,17 +94,19 @@ ca::usize rewriteMethod(ir::ClassSession& s, ca::usize methodIndex,
             const bool isTrampoline = in->op == jbc::core::Op::GOTO
                                       || in->op == jbc::core::Op::GOTO_W;
             if (!isTrampoline || in->srcPc != site->srcPc) continue;
-            // 复核判据（字节可能已被同方法其他站点改写挤压，不盲改）。
-            auto resolved = cu->dom.resolveLabel(in->target);
-            if (resolved.is_err()) break;
-            const ir::LabelTarget t = resolved.unwrap();
-            const ca::usize         pos = [&] {
-                for (ca::usize i = 0; i < order.size(); ++i) {
-                    if (order[i] == id) return i;
-                }
-                return order.size();
+            // 复核判据（字节可能已被同方法其他站点改写挤压，不盲改）；
+            // 布局真值单源 isFallthroughGoto（同 scan 修）。
+            if (!rewrite_tools::isFallthroughGoto(*cu, *in)) break;
+
+            // 目标标签残渣处置（2026-11-16，与 DeadCode 穿线同根因）：标签
+            // 锚在落点（存活指令）上，NOP 化后蹦床不再引用它——再无引用者
+            // 时它成为死标签，落在常量窗口中段会把下游折叠判据挡死。引用
+            // 者清点 = 存活分支（此刻蹦床尚未 NOP，排除自身）+ 异常表。
+            const ir::LabelId targetLbl = in->target;
+            const ir::InsnId  landing   = [&] {
+                auto resolved = cu->dom.resolveLabel(targetLbl);
+                return resolved.is_err() ? ir::kNoInsn : resolved.unwrap().insn;
             }();
-            if (t.isEnd() || pos + 1 >= order.size() || !(t.insn == order[pos + 1])) break;
 
             auto slot = cu->dom.get(id);
             if (slot.is_err()) break;
@@ -114,6 +115,29 @@ ca::usize rewriteMethod(ir::ClassSession& s, ca::usize methodIndex,
             *m                    = ir::Insn{};
             m->op                 = jbc::core::Op::NOP;
             m->srcPc              = keepPc;
+
+            if (landing == ir::kNoInsn || !cu->dom.validLabel(targetLbl)) {
+                ++hit;
+                break;   // 解析失败 / 标签已被其他站点处置：NOP 本身已等价
+            }
+            bool referenced = false;
+            for (const ir::InsnId oid : order) {
+                const ir::Insn* o = cu->dom.peek(oid);
+                if (o != nullptr && o->target == targetLbl) {
+                    referenced = true;
+                    break;
+                }
+            }
+            if (!referenced) {
+                for (const ir::CodeUnit::Exc& e : cu->exc) {
+                    if (e.start == targetLbl || e.end == targetLbl
+                        || e.handler == targetLbl) {
+                        referenced = true;
+                        break;
+                    }
+                }
+            }
+            if (!referenced && cu->dom.destroyLabel(targetLbl).is_err()) break;
             ++hit;
             break;
         }

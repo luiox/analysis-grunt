@@ -49,6 +49,24 @@ To bitCast(const From& from) noexcept
     return to;
 }
 
+/// @brief goto/goto_w 的目标是否即 backing 布局顺序后继（冗余蹦床判据）。
+///
+/// 按 **backing 布局真值**（落点 srcPc == 自身 pc + 指令宽：goto 3 字节 /
+/// goto_w 5 字节）判，不按 dom.order() 相邻性——order 不保证 pc 升序（异
+/// 常 handler 等重排），相邻判据在真 jar 上静默漏站点（b.main 族蹦床
+/// TrampolineSqueeze 实测全漏，2026-11-16 修）。
+inline bool isFallthroughGoto(const jbc::ir::CodeUnit& cu, const jbc::ir::Insn& in)
+{
+    if (in.op != jbc::core::Op::GOTO && in.op != jbc::core::Op::GOTO_W) return false;
+    auto resolved = cu.dom.resolveLabel(in.target);
+    if (resolved.is_err()) return false;
+    const jbc::ir::LabelTarget t = resolved.unwrap();
+    if (t.isEnd()) return false;
+    const jbc::ir::Insn* tgt = cu.dom.peek(t.insn);
+    return tgt != nullptr
+        && tgt->srcPc == in.srcPc + (in.op == jbc::core::Op::GOTO_W ? 5u : 3u);
+}
+
 /// @brief 按求值结果造一条常量装载：短形态优先，放不下才落池。
 ///
 /// 池索引走 `CodeEditor::loadConst` 选形态，`LDC` 的操作数域只有 u1，大类
