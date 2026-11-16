@@ -383,10 +383,20 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri,
                    return cu != nullptr && pureGetterShape(*cu);
                }();
         if (!gateA && !gateB && !gateC && !gateD) continue;
-        if (bsmUnresolved && gateB && !gateC && !gateA) continue;  // indy 目标形状：宁留
+        // bsmUnresolved（存在未收敛 BSM）时所有 static 门整档豁免：Grunteon
+        // ReferenceObfuscate 的 indy 目标名是密文（运行时 findStatic 才解出
+        // 来），CP 普查看不见引用；被隐藏的目标不限于 synthetic/bridge——
+        // RuntimeMaterial 的 processor / GateProcessorFold 的转发体都是
+        // public static 纯算术形（gateA），常量 getter 也是 findStatic 命中
+        // 面。验收阵 t3_full 实证：豁免只盖 gateB 时 DeadMember 单跑删 219
+        // 法，Test 1.1 起 NoSuchMethodError；扩到 gateA/gateD 后整链行为回
+        // 稳（2026-11-16 修）。private（gateC）不受影响：findStatic 跨类
+        // 不可达，同类 BSM 由 hasBsm 整类豁免覆盖。
+        if (bsmUnresolved && !gateC) continue;
         // getter 门按未收敛站点的实参槽形豁免：槽数不吻合的 lambda 站点
-        // asType 同 arity 硬规则下不可能命中，不整档宁留。
-        if (bsmUnresolved && gateD && !gateC && !gateA
+        // asType 同 arity 硬规则下不可能命中，不整档宁留。（bsmUnresolved
+        // 已整档宁留，本条仅剩无未收敛 BSM 时的余量面。）
+        if (bsmUnresolved && gateD && !gateC
             && indyUnresolvedSlots.count(const_args::argSlots(desc)) != 0) {
             continue;
         }
