@@ -338,7 +338,7 @@ public:
 };
 
 /// @brief `grunt.PoolArrayFold`：字符串池数组读点求值通道压池（模拟执行池类
-/// <clinit> 读回数组终态，GETSTATIC; idx; AALOAD 三元组原地折 ldc 明文）。
+/// `<clinit>` 读回数组终态，GETSTATIC; idx; AALOAD 三元组原地折 ldc 明文）。
 class PoolArrayFoldPass final : public mjbase::spi::GlobalPass
 {
 public:
