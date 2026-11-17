@@ -4,10 +4,10 @@
 ///              `ldc` 明文（S1）→ residual + 类数 + 重解析验收。
 ///
 /// 形态、判据分级与锚保留/槽位面设计见头文件；骨架对齐 string_cache_fold
-/// （读点折叠）：scan 只读、rewrite 只写（mutateMethodWithFrames 正统帧链
-/// 写回）、proof 只判（类数不增 + 脏类可重解析 + residual 统计）。解密算
-/// 法是家族知识转写（grunt2@36c0eef / grunt3@e41e852 逐行同源，源锚点见各
-/// 函数头注与 knowledge/grunt_names.hpp）。
+/// （读点折叠）：scan 只读、rewrite 只写（lower 按 pcmap 保真重定位写回，
+/// 帧内容不动，同 pool_array_fold 口径）、proof 只判（类数不增 + 脏类可重
+/// 解析 + residual 统计）。解密算法是家族知识转写（grunt2@36c0eef /
+/// grunt3@e41e852 逐行同源，源锚点见各函数头注与 knowledge/grunt_names.hpp）。
 ///
 /// ## SCAN
 ///
@@ -41,7 +41,10 @@
 /// 点不变）。明文落池先 findUtf8 / 线性扫 String 复用，miss 才 addUtf8 /
 /// addString（先 intern 后动 DOM）。池字段 / arrayInit / 解密器不在此删：
 /// 供给链仍被 clinit 前导引用而存活（运行期空转填池，无读方），整体摘除
-/// 属压池面的后续工作。失败粒度 = 类：帧链/编码失败整类放弃。
+/// 属压池面的后续工作。写回走 lower 保真重定位（帧内容不动）——折改写是
+/// 栈形等价的语义恒等替换，不走 Strict 帧重推导（推导在容器外类上的合并
+/// 点会落错误 lub，见 rewrite 内写回处注）。失败粒度 = 类：帧链/编码失败
+/// 整类放弃。
 ///
 /// ## PROOF
 ///
@@ -1029,9 +1032,6 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 {
     DirtySet dirty;
 
-    // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
-    rewrite_tools::FrameContext frames(container);
-
     // 站点按 uri 聚类（万类大 jar 上避免 classes × sites 平方账）。
     std::unordered_map<std::string, std::vector<const Site*>> byUri;
     for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
@@ -1078,31 +1078,43 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                 dirty.skippedByRoundTrip += sitesOfMethod.size();
                 continue;
             }
+            auto promoted = ir::promoteMethod(s, mi);
+            if (promoted.is_err()) {
+                failed += sitesOfMethod.size();
+                continue;
+            }
+            ir::CodeUnit* cu = promoted.unwrap().get();
             ca::usize methodHit   = 0;
             ca::usize methodFail  = 0;
             ca::usize methodLit   = 0;
             ca::usize methodArr   = 0;
-            const bool ok = rewrite_tools::mutateMethodWithFrames(
-                s, mi, frames.resolver(),
-                [&](ir::CodeUnit& cu) {
-                    for (const Site* site : sitesOfMethod) {
-                        if (rewriteSite(s, cu, *site)) {
-                            ++methodHit;
-                            if (site->form == CipherForm::Literal) ++methodLit;
-                            else ++methodArr;
-                        } else {
-                            ++methodFail;
-                        }
-                    }
-                    return methodHit > 0;
-                });
-            if (!ok) {
+            for (const Site* site : sitesOfMethod) {
+                if (rewriteSite(s, *cu, *site)) {
+                    ++methodHit;
+                    if (site->form == CipherForm::Literal) ++methodLit;
+                    else ++methodArr;
+                } else {
+                    ++methodFail;
+                }
+            }
+            if (methodHit == 0) {
+                failed += methodFail;
+                continue;
+            }
+            // 保真写回：lower 按 pcmap 重定位 SMT/LVT/LNT，帧内容不动。折改
+            // 写是栈形等价的语义恒等替换，无需帧重推导——Strict 帧再生的 CFG
+            // 推导在合并点上按容器内层级图求 lub，JDK 类的继承关系不在图里，
+            // InputStream×GZIPInputStream 这类跨分支合并被写成 Object/top，
+            // 方法不可校验（jsoup v3_string 实证 DataUtil.openStream
+            // VerifyError；与样本 C 同族，pool_array_fold 同口径先行）。
+            auto lowered = ir::lowerMethod(s, mi);
+            if (lowered.is_err()) {
                 // 帧链失败：该方法整方法放弃（session 内半改写态不外泄）。
                 failed += methodHit + methodFail;
                 continue;
             }
-            hit += methodHit;
-            failed += methodFail;
+            hit     += methodHit;
+            failed  += methodFail;
             literal += methodLit;
             arrayed += methodArr;
         }

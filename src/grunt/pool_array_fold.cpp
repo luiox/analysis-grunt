@@ -12,8 +12,9 @@
 ///   3. 读点三元组：全类方法扫 `GETSTATIC <本类池>; <int idx>; AALOAD`（NOP
 ///      跳过、跨度无合并点标签），终态表命中 → Site，孤立代理明文拒。
 ///
-/// REWRITE 对齐 string_pool_fold：roundTripSafe 前置 + FrameContext Strict
-/// 帧链 + 锚点原地 ldc（srcPc 保留）+ eraseBatch（kRejectIfUsed 拒收回滚）。
+/// REWRITE 对齐 string_pool_fold / string_cache_fold：roundTripSafe 前置 +
+/// 锚点原地 ldc（srcPc 保留）+ eraseBatch（kRejectIfUsed 拒收回滚）+ lower
+/// 保真重定位写回（帧内容不动，三读点折叠同一口径）。
 ///
 /// PROOF：类数不增 + 脏类重解析 + residual（重跑求值与三元组 countOnly）。
 #include "grunt/pool_array_fold.hpp"

@@ -4,8 +4,9 @@
 ///
 /// 形态、判据分级与锚保留/槽位面设计见头文件；骨架对齐 number_fold（跨度
 /// 折叠）与 indy_decode（Era 分支内消费旁证）：scan 只读、rewrite 只写
-/// （mutateMethodWithFrames 正统帧链写回）、proof 只判（类数不增 + 脏类可
-/// 重解析 + residual 统计）。
+/// （lower 按 pcmap 保真重定位写回，帧内容不动，同 pool_array_fold /
+/// string_pool_fold 口径）、proof 只判（类数不增 + 脏类可重解析 + residual
+/// 统计）。
 ///
 /// ## TSV 注入面
 ///
@@ -79,7 +80,6 @@
 #include "grunt/knowledge/const_args.hpp"
 #include "grunt/knowledge/kasumi_names.hpp"
 #include "grunt/proof_toolbox.hpp"
-#include "grunt/rewrite_toolbox.hpp"
 
 namespace grunt::string_cache_fold {
 
@@ -625,9 +625,6 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 {
     DirtySet dirty;
 
-    // Strict 帧重算上下文：层级图盖全容器（构建一次，整个 rewrite 复用）。
-    rewrite_tools::FrameContext frames(container);
-
     // 站点按 uri 聚类（对齐 number_fold：万类大 jar 上避免 classes × sites 平方账）。
     std::unordered_map<std::string, std::vector<const Site*>> byUri;
     for (const Site& site : result.sites) byUri[site.uri].push_back(&site);
@@ -672,18 +669,28 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                 dirty.skippedByRoundTrip += sitesOfMethod.size();
                 continue;
             }
+            auto promoted = ir::promoteMethod(s, mi);
+            if (promoted.is_err()) {
+                failed += sitesOfMethod.size();
+                continue;
+            }
+            ir::CodeUnit* cu = promoted.unwrap().get();
             ca::usize         methodHit    = 0;
             ca::usize         methodFailed = 0;
             std::vector<Form> methodForms;
-            const bool ok = rewrite_tools::mutateMethodWithFrames(
-                s, mi, frames.resolver(),
-                [&](ir::CodeUnit& cu) {
-                    methodHit = rewriteMethod(s, cu, sitesOfMethod, methodForms,
-                                              methodFailed);
-                    return methodHit > 0;
-                });
-            if (!ok) {
-                // 帧链/编码失败：该方法整方法放弃（session 内半改写态不外泄）。
+            methodHit = rewriteMethod(s, *cu, sitesOfMethod, methodForms, methodFailed);
+            if (methodHit == 0) {
+                failed += methodFailed;
+                continue;
+            }
+            // 保真写回：lower 按 pcmap 重定位 SMT/LVT/LNT，帧内容不动。折改
+            // 写是栈形等价的语义恒等替换（锚点原地 ldc + 跨度擦除），无需帧
+            // 重推导——Strict 帧再生的 CFG 推导在容器外类（JDK 继承关系不在
+            // 图里）的合并点上会落错误 lub 写出不可校验帧（pool_array_fold
+            // 样本 C、string_pool_fold jsoup v3_string 双实证，同口径先行）。
+            auto lowered = ir::lowerMethod(s, mi);
+            if (lowered.is_err()) {
+                // 帧链失败：该方法整方法放弃（session 内半改写态不外泄）。
                 failed += methodHit + methodFailed;
                 continue;
             }
