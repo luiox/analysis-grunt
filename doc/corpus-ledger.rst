@@ -231,65 +231,64 @@
   t2_constpool 3 轮收敛（69→10→0，回填跨轮完成）。Arrayed 池面（parseUL
   种子）不在本阵（bench 默认 ``Arrayed=false`` ），由 q8 批承载。
 
-- **解锁批（2026-11-17，libjbc 0.4.29 + indy 键窗 + 第二形解密器 + DeadMember
-  收尾，v3 终值与阵回归抓错）**：四件套一次性收口前批登记的 t3 残面：
+- **解锁批（2026-11-17）**：libjbc 0.4.29（SourceDebugExtension 放行）+ indy BSM 键窗 + 解密器第二形 + DeadMember 收尾，四件套一次性收口前批登记的 t3 残面；v3 终值与阵回归抓错。
   ① **libjbc 0.4.29** ``cp_compact`` SourceDebugExtension（JVMS 4.7.11，纯字
-    节串属性）闭包放行——此前 planRaw AttrNotModeled 整类拒绝压缩，260705
-    语料 79 类 junk 体把引用普查与死成员删除全冻结（t3_full bsm 1759 残留
-    的根因）；放行后压缩复活，死 BSM 条目剪除 + gateE 收孤解锁（bsm
-    1759→2，strxf 68→0）。
+  节串属性）闭包放行——此前 planRaw AttrNotModeled 整类拒绝压缩，260705
+  语料 79 类 junk 体把引用普查与死成员删除全冻结（t3_full bsm 1759 残留
+  的根因）；放行后压缩复活，死 BSM 条目剪除 + gateE 收孤解锁（bsm
+  1759→2，strxf 68→0）。
   ② **indy BSM 键窗收编 pc 布局真值**（ ``const_args::decryptKeyWindow``
-    单源）：indy_decode 原形按 dom.order() 位置回溯取 key 并注释「DOM
-    order 是布局序」——循环回边/handler 重排下不成立，260705 带 ``while``
-    的解密器三形全失配（IndyRestore ``keyMissing=984`` 实证，即前批「BSM
-    键形不在三路键链覆盖内」缺口的主桶）。pc 布局窗单源后 t3_full indy
-    2311→**3** ，前批缺口登记条目收口；Material 形不在 Kasumi 面，
-    fail-closed。
+  单源）：indy_decode 原形按 dom.order() 位置回溯取 key 并注释「DOM
+  order 是布局序」——循环回边/handler 重排下不成立，260705 带 ``while``
+  的解密器三形全失配（IndyRestore ``keyMissing=984`` 实证，即前批「BSM
+  键形不在三路键链覆盖内」缺口的主桶）。pc 布局窗单源后 t3_full indy
+  2311→**3** ，前批缺口登记条目收口；Material 形不在 Kasumi 面，
+  fail-closed。
   ③ **解密器族第二形**（ ``(Ljava/lang/String;)Ljava/lang/String;`` 逐码元
-    XOR，grunt2-fork 260705 createDecryptMethod 形）：ConstantCall 按「紧邻
-    前驱恰一条密文 LDC」收集面 + jsim 实跑解密器体求值（ ``charAt`` /
-    ``length`` 接管只认 Str 接收者， ``toString`` 接管产出 Str），clinit 站
-    点走同类豁免（JVMS 5.5）；记录形 ``u16ToUtf8Record`` 收为全码元函数
-    （孤立代理按码元落 3 字节 CESU-8，与池写 ``u16ToMutf8`` 逐字节同口径
-    ——q8 bD.t 孤代理 U+DEFA 实证，此前记录门 fail-closed 拒掉 20 个
-    clinit 站点）。q8 strxf 223→0、t3 strxf 68→0、两语料 calls=0。
+  XOR，grunt2-fork 260705 createDecryptMethod 形）：ConstantCall 按「紧邻
+  前驱恰一条密文 LDC」收集面 + jsim 实跑解密器体求值（ ``charAt`` /
+  ``length`` 接管只认 Str 接收者， ``toString`` 接管产出 Str），clinit 站
+  点走同类豁免（JVMS 5.5）；记录形 ``u16ToUtf8Record`` 收为全码元函数
+  （孤立代理按码元落 3 字节 CESU-8，与池写 ``u16ToMutf8`` 逐字节同口径
+  ——q8 bD.t 孤代理 U+DEFA 实证，此前记录门 fail-closed 拒掉 20 个
+  clinit 站点）。q8 strxf 223→0、t3 strxf 68→0、两语料 calls=0。
   ④ **DeadMember 收尾面扩第二形**： ``stringXorDecryptorDesc``（private
-    static 描述符预滤）+ ``stringXorDecryptorShape``（体形五件套：SB
-    init/append(C)/toString + String.length/charAt + IXOR + ARETURN，调用
-    面白名单五件，LDC 载荷只许数）+ 同类零 INVOKESTATIC 走查（decOrphan
-    双证）——名字撞 junk 池明文（q8 bA.i/a/b）不构成保护面；
-    ``gateE`` BSM 签名孤儿（simple/heavy Lookup 描述符 + 无活条目指向 =
-    永不可达）收 public static 桶；死 BSM 条目剪除（pruneDeadBsmEntries，
-    活条目 = CP InvokeDynamic 引用，剪后下标重映射、全空摘属性）。
+  static 描述符预滤）+ ``stringXorDecryptorShape``（体形五件套：SB
+  init/append(C)/toString + String.length/charAt + IXOR + ARETURN，调用
+  面白名单五件，LDC 载荷只许数）+ 同类零 INVOKESTATIC 走查（decOrphan
+  双证）——名字撞 junk 池明文（q8 bA.i/a/b）不构成保护面；
+  ``gateE`` BSM 签名孤儿（simple/heavy Lookup 描述符 + 无活条目指向 =
+  永不可达）收 public static 桶；死 BSM 条目剪除（pruneDeadBsmEntries，
+  活条目 = CP InvokeDynamic 引用，剪后下标重映射、全空摘属性）。
   ⑤ **阵抓出并修掉一个真回归（Test 2.1 计数反射破行）**：重跑 v3 阵发现
-    轻变体 dec 侧 2.1 Counter 系统性 FAIL（obf PASS）——JavaObfuscatorTest
-    2.1 按 ``getDeclaredMethods().length == 4`` 计数，t3_plain Countee 被
-    删 2 法（C.c/d）、ClassLoader 子类被删 ``getResourceAsStream``（m）、
-    SecurityManager 子类被删 ``checkPermission``（H）。根因：Grunteon
-    260705 给**全部成员**撒 ACC_SYNTHETIC/ACC_BRIDGE 位（实例方法
-    acc=0x1041 逐位实证，javac 从不产零引用实例 synthetic）——DeadMember
-    gateB 位证据在该家族零信息量；前批基线全等是「压缩失败类整类不删」
-    的**兜底掩蔽**，0.4.29 放行后掩蔽脱落。修法 = gateB 位证据限 static
-    面（实例 bridge 有真调用点 census 自会保；两代混淆器与 javac 的可删
-    静态合成转发器全落 static；单测
-    ``GateBTakesStaticOnlyForSyntheticBits`` 钉）。修后 probe 复核 C/m/H
-    全保、仅 Grunteon 注入空壳 junk 类 a 收除。
+  轻变体 dec 侧 2.1 Counter 系统性 FAIL（obf PASS）——JavaObfuscatorTest
+  2.1 按 ``getDeclaredMethods().length == 4`` 计数，t3_plain Countee 被
+  删 2 法（C.c/d）、ClassLoader 子类被删 ``getResourceAsStream``（m）、
+  SecurityManager 子类被删 ``checkPermission``（H）。根因：Grunteon
+  260705 给**全部成员**撒 ACC_SYNTHETIC/ACC_BRIDGE 位（实例方法
+  acc=0x1041 逐位实证，javac 从不产零引用实例 synthetic）——DeadMember
+  gateB 位证据在该家族零信息量；前批基线全等是「压缩失败类整类不删」
+  的**兜底掩蔽**，0.4.29 放行后掩蔽脱落。修法 = gateB 位证据限 static
+  面（实例 bridge 有真调用点 census 自会保；两代混淆器与 javac 的可删
+  静态合成转发器全落 static；单测
+  ``GateBTakesStaticOnlyForSyntheticBits`` 钉）。修后 probe 复核 C/m/H
+  全保、仅 Grunteon 注入空壳 junk 类 a 收除。
   ⑥ **CFR 面定案（修正前批口径）**：t3_full（crasher 面在开）152/152 类全
-    带垃圾 ``Signature`` 属性（151 类字节 0 乱码串 + bF 类「形合法实非
-    法」方法签名 ``Ljava/lang/Class<...>;``——方法签名必须带括号），
-    CFR 0.152 逐类扫描 **input 0/152 = dec 0/152 同因同败**（
-    ``ConfusedCFRException: Prototype``；JVM 无视该属性故运行时无恙）。
-    全 jar 模式 driver 死于首个坏类（input 首类 m 即坏 → 0 产出），exit 0
-    掩盖 0 产出——前批「CFR 零错误（crasher 变体除外）」的口径修正：
-    crasher 面语料的 CFR 门 = **输入/产物同败对账**（同败 = 零回归），
-    「CFR 零错」只对无此脸语料（q8 族 209/210，唯一失败 F.b 为输入自带
-    dup2 VerifyError，jsim fail-closed 如实拒）成立。
+  带垃圾 ``Signature`` 属性（151 类字节 0 乱码串 + bF 类「形合法实非
+  法」方法签名 ``Ljava/lang/Class<...>;``——方法签名必须带括号），
+  CFR 0.152 逐类扫描 **input 0/152 = dec 0/152 同因同败**（
+  ``ConfusedCFRException: Prototype``；JVM 无视该属性故运行时无恙）。
+  全 jar 模式 driver 死于首个坏类（input 首类 m 即坏 → 0 产出），exit 0
+  掩盖 0 产出——前批「CFR 零错误（crasher 变体除外）」的口径修正：
+  crasher 面语料的 CFR 门 = **输入/产物同败对账**（同败 = 零回归），
+  「CFR 零错」只对无此脸语料（q8 族 209/210，唯一失败 F.b 为输入自带
+  dup2 VerifyError，jsim fail-closed 如实拒）成立。
   **v3 阵终值（gateB 修复后二进制）**：9 变体全收敛（plain/number/string/
   dispatch/crash 2 轮、flow 3 轮、ref 4 轮、material 5 轮、full 5 轮）、
   双跑 CRC 全 True、CFR 逐变体 0 错（crasher 面语料按同败口径 0/0 与
   0/1）、行为同分布（轻变体 dec 恢复 ``11,3`` = obf 全等，2.1 复活；
   t3_flow ``10,4`` / t3_full ``7,7`` 与 obf 的 ±1 = 已登记 1.6 时序面，
-   2.1 双侧同值）。indy 全变体 3（= 非混淆 indy 正确不碰）。
+  2.1 双侧同值）。indy 全变体 3（= 非混淆 indy 正确不碰）。
   **v2 阵重跑**：9 变体全收敛全 twin True；行为同分布（t2_string/t2_crash
   的 dec ±1 = 2.1 上游已破（obf=dec 同 FAIL）+ 1.6 时序噪声，采样复核逐
   测试对齐）。
