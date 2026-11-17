@@ -79,6 +79,8 @@ struct BsmValue
     std::string text;   ///< Str 内容 / Class 内部名 / MethodType 描述符
     ca::i32     i = 0;  ///< Int
     ca::i64     l = 0;  ///< Long
+    std::string mhOwner;  ///< MethodHandle 实参的目标 owner（JDK 标准 BSM 目标直读用）
+    std::string mhName;   ///< MethodHandle 实参的目标名
 };
 
 /// 一个 invokedynamic 调用点。

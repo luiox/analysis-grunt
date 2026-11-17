@@ -161,36 +161,20 @@ bool parseMethod(std::string_view desc, MethodDesc& out) noexcept
 /// @brief 从解密器方法体提取 XOR key。
 ///
 /// Kasumi 双层形如 `charAt; LDC K1; LDC K2; IXOR; IXOR; i2c`（内层 IXOR 算
-/// `K1^K2`，外层把 charAt 结果与之异或）；兼容单层 `LDC K; IXOR`。定位 `i2c`
-/// （解密循环里把异或结果转回 char 的唯一位点）后按布局回溯：DOM 的 order
-/// 是布局序，`p-1/p-2/…` 即 ASM previousReal 的等价面（无 LABEL/FRAME 夹层）。
+/// `K1^K2`，外层把 charAt 结果与之异或）；兼容单层 `LDC K; IXOR`。判定收编
+/// const_args::decryptKeyWindow 单源（pc 布局真值窗）——本文件原形按
+/// dom.order() 位置回溯并注释「DOM order 是布局序」，循环回边 / handler
+/// 重排下不成立（260705 带 `while` 的解密器三形全失配，IndyRestore 同族
+/// keyMissing=984 实证，2026-11-17 修）；Material 形不在 Kasumi 面，
+/// fail-closed 返回 nullopt。
 std::optional<ca::i32> extractDecryptKey(const ir::ClassSession& s, ir::CodeUnit& cu)
 {
-    const std::vector<ir::InsnId>& order = cu.dom.order();
-    for (ca::usize p = 0; p < order.size(); ++p) {
-        const ir::Insn* in = cu.dom.peek(order[p]);
-        if (in == nullptr || in->op != Op::I2C) continue;
-        if (p < 1) break;
-        const ir::Insn* outer = cu.dom.peek(order[p - 1]);
-        if (outer == nullptr || outer->op != Op::IXOR) continue;
-        if (p < 2) break;
-        const ir::Insn* inner = cu.dom.peek(order[p - 2]);
-        if (inner == nullptr) break;
-        // 双层：innerXor 前驱是 K2，再前驱是 K1，key = K1 ^ K2。
-        if (inner->op == Op::IXOR) {
-            if (p < 4) break;
-            ca::i32 k2 = 0;
-            if (!const_args::decodeConstInt(s, cu, order, p - 3, k2)) break;
-            ca::i32 k1 = 0;
-            if (!const_args::decodeConstInt(s, cu, order, p - 4, k1)) break;
-            return k1 ^ k2;
-        }
-        // 单层：inner 位置直接是 int 常量。
-        ca::i32 single = 0;
-        if (const_args::decodeConstInt(s, cu, order, p - 2, single)) return single;
-        break;
+    const std::optional<const_args::DecryptKeyWindow> win = const_args::decryptKeyWindow(s, cu);
+    if (!win.has_value()
+        || win->shape != const_args::DecryptKeyWindow::Shape::Plain) {
+        return std::nullopt;
     }
-    return std::nullopt;
+    return win->key;
 }
 
 // ============================================================================

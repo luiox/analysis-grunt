@@ -186,53 +186,20 @@ struct ClassKeys
     std::unordered_map<std::string, ca::i32> heavyBsmKey;
 };
 
-/// @brief 解密器窗口提取：定位 `I2C` 回溯两层（对齐 indy_decode 的 key 链
-///        提取形状）。@return 形状 + key；无窗口 nullopt。
+/// @brief 解密器窗口提取：const_args::decryptKeyWindow 单源（pc 布局真值
+///        窗）的形状映射薄壳。@return 形状 + key；无窗口 nullopt。
+///
+/// 本文件原形按 dom.order() 位置回溯，带循环的 260705 解密器（`while` 形，
+/// goto 前跳 + 回边标签）DOM 序错位导致三形全失配——keyMissing=984 的
+/// 根因，2026-11-17 修。
 std::optional<std::pair<DecShape, ca::i32>> scanDecryptKey(ir::ClassSession& s, ir::CodeUnit& cu)
 {
-    const std::vector<ir::InsnId>& order = cu.dom.order();
-    const std::string self = std::string(s.unit().symbols().str(s.unit().thisClass));
-    for (ca::usize p = 0; p < order.size(); ++p) {
-        const ir::Insn* in = cu.dom.peek(order[p]);
-        if (in == nullptr || in->op != Op::I2C) continue;
-        if (p < 1) break;
-        const ir::Insn* outer = cu.dom.peek(order[p - 1]);
-        if (outer == nullptr || outer->op != Op::IXOR) continue;
-
-        // plain 单层：I2C ← IXOR ← LDC K。
-        ca::i32 single = 0;
-        if (p >= 2 && const_args::decodeConstInt(s, cu, order, p - 2, single)) {
-            return std::make_pair(DecShape::Plain, single);
-        }
-        if (p < 4) continue;
-        const ir::Insn* inner = cu.dom.peek(order[p - 2]);
-        if (inner == nullptr || inner->op != Op::IXOR) continue;
-        const ir::Insn* mid = cu.dom.peek(order[p - 3]);
-        if (mid == nullptr) continue;
-
-        // v3 材料通道：I2C ← IXOR ← IXOR ← INVOKESTATIC <self> ()I ← LDC K。
-        if (mid->op == Op::INVOKESTATIC) {
-            ir::ClassSession::MemberSem sem;
-            if (!s.memberOf(*mid, sem) || sem.kind != ir::ClassSession::MemberSem::Kind::Method
-                || sem.desc != "()I" || sem.owner != self) {
-                continue;
-            }
-            ca::i32 raw = 0;
-            if (const_args::decodeConstInt(s, cu, order, p - 4, raw)) {
-                return std::make_pair(DecShape::Material, raw);
-            }
-            continue;
-        }
-
-        // reobf 折叠键（INT(value^K); INT(K); IXOR）：I2C ← IXOR ← IXOR ←
-        // LDC K ← LDC value，key = value ^ K。
-        ca::i32 ka = 0;
-        ca::i32 kb = 0;
-        if (const_args::decodeConstInt(s, cu, order, p - 3, ka) && const_args::decodeConstInt(s, cu, order, p - 4, kb)) {
-            return std::make_pair(DecShape::Plain, ka ^ kb);
-        }
-    }
-    return std::nullopt;
+    const std::optional<const_args::DecryptKeyWindow> win = const_args::decryptKeyWindow(s, cu);
+    if (!win.has_value()) return std::nullopt;
+    const DecShape shape = win->shape == const_args::DecryptKeyWindow::Shape::Material
+                               ? DecShape::Material
+                               : DecShape::Plain;
+    return std::make_pair(shape, win->key);
 }
 
 /// @brief 收集一类的解密器键表与 BSM 体跟随面（纯读；BSM 壳死按缺席计数）。
@@ -272,15 +239,20 @@ void collectClassKeys(ir::ClassSession& s, ClassKeys& out)
             && mdesc != knowledge::kGruntHeavyBsmDesc) {
             continue;
         }
-        // BSM 体跟随面（壳死 = 无 Code，缺席计数）。
+        // BSM 体跟随面（壳死 = 无 Code，缺席计数）。BSM 体是 junk 谓词 +
+        // 多字符串解密的直线段混合，dom 序不保 pc 升序，键窗按 pc 布局真
+        // 值扫（与 decryptKeyWindow 同族；260705 heavy 体里折叠键实参
+        // `LDC K1; LDC K2; IXOR; INVOKESTATIC dec(String;I)` 的单条回溯
+        // 失配，key=984 实证，2026-11-17 修）。
         if (!ir::hasCode(s, mi)) continue;
         auto promoted = ir::promoteMethod(s, mi);
         if (promoted.is_err()) continue;
         ir::CodeUnit* cu = promoted.unwrap().get();
         if (cu == nullptr) continue;
-        const std::vector<ir::InsnId>& order = cu->dom.order();
-        for (ca::usize p = 0; p < order.size(); ++p) {
-            const ir::Insn* in = cu->dom.peek(order[p]);
+        const std::vector<const ir::Insn*> pcIns = rewrite_tools::pcOrderedInsns(*cu);
+        std::unordered_map<std::string, ca::i32> heavyKey;
+        for (ca::usize p = 0; p < pcIns.size(); ++p) {
+            const ir::Insn* in = pcIns[p];
             if (in == nullptr) continue;
             ir::ClassSession::MemberSem sem;
             if (!s.memberOf(*in, sem) || sem.kind != ir::ClassSession::MemberSem::Kind::Method) {
@@ -295,17 +267,28 @@ void collectClassKeys(ir::ClassSession& s, ClassKeys& out)
                 }
                 continue;
             }
-            // heavy：`LDC K; INVOKESTATIC <self> (String;I)String` 窗口的 K。
+            // heavy：解密器实参的 const 键表达式（`LDC K` 单层或 `LDC K1;
+            // LDC K2; IXOR` 折叠；实参来自运行期值的装饰点回溯不过即跳）。
+            // 同键多窗是常态（一 BSM 解多串共用 generalKey）；异键 = 歧义
+            // fail-closed 不定键。
             if (in->op != Op::INVOKESTATIC || sem.owner != self
                 || sem.desc != knowledge::kGruntHeavyDecryptorDesc) {
                 continue;
             }
-            if (p == 0) continue;
-            ca::i32 key = 0;
-            if (const_args::decodeConstInt(s, *cu, order, p - 1, key)) {
-                out.heavyBsmKey[mname] = key;
+            const std::optional<ca::i32> key =
+                const_args::constIntExprBefore(s, self, pcIns, p);
+            if (!key.has_value()) continue;
+            if (const auto hit = heavyKey.find(mname); hit != heavyKey.end()) {
+                if (hit->second != *key) {
+                    heavyKey.clear();
+                    break;
+                }
+                continue;
             }
-            break;
+            heavyKey.emplace(mname, *key);
+        }
+        if (!heavyKey.empty()) {
+            out.heavyBsmKey[mname] = heavyKey[mname];
         }
     }
 }

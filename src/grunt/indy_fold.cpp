@@ -123,9 +123,23 @@ BsmValue readBsmArg(const jbc::core::ConstantPool& cp, ca::u32 index)
         value.kind = BsmValue::Kind::MethodType;
         value.text = std::string(cp.utf8Of(e.a));
         return value;
-    case CpTag::MethodHandle:
+    case CpTag::MethodHandle: {
         value.kind = BsmValue::Kind::MethodHandle;
+        if (cp.valid(e.b)) {
+            const jbc::core::ConstantPool::Entry& ref = cp.at(e.b);
+            if ((ref.tag == CpTag::Methodref || ref.tag == CpTag::InterfaceMethodref)
+                && cp.valid(ref.a) && cp.valid(ref.b)) {
+                const jbc::core::ConstantPool::Entry& cls = cp.at(ref.a);
+                const jbc::core::ConstantPool::Entry& nat = cp.at(ref.b);
+                if (cls.tag == CpTag::Class && cp.valid(cls.a) && nat.tag == CpTag::NameAndType
+                    && cp.valid(nat.a)) {
+                    value.mhOwner = std::string(cp.utf8Of(cls.a));
+                    value.mhName  = std::string(cp.utf8Of(nat.a));
+                }
+            }
+        }
         return value;
+    }
     default: return value;
     }
 }
@@ -436,6 +450,27 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
                 jsim::indy::Target target;
                 std::string       why;
                 if (!runBsm(engine, uri, site, target, why)) {
+                    // JDK 标准 BSM（LambdaMetafactory 族，owner 在容器外）不算
+                    // 未收敛：它的目标静态可见——implMethod 就是 BSM 静态实参
+                    // 里的 MethodHandle 常量，直读记入 target 供 DeadMember 的
+                    // indyTargets 普查消费（metafactory 的 findStatic 目标不在
+                    // 混淆盲区，目标名不走解密）。容器内 BSM 跑挂才计 bsmFailed
+                    // （那才是「运行时才解出目标」的盲区面）。
+                    if (findClassBytes(container, site.bsmOwner + ".class") == nullptr) {
+                        for (const BsmValue& arg : site.args) {
+                            if (arg.kind == BsmValue::Kind::MethodHandle
+                                && !arg.mhOwner.empty() && !arg.mhName.empty()) {
+                                site.target.owner = arg.mhOwner;
+                                site.target.name  = arg.mhName;
+                                break;
+                            }
+                        }
+                        site.why = site.target.owner.empty()
+                                       ? "JDK 标准 BSM：静态实参无 MethodHandle 可读"
+                                       : "JDK 标准 BSM：目标从静态实参直读";
+                        result.sites.push_back(std::move(site));
+                        continue;
+                    }
                     site.why = std::move(why);
                     ++result.bsmFailed;
                     result.sites.push_back(std::move(site));
