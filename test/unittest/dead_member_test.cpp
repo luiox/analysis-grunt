@@ -301,7 +301,6 @@ std::string stringXorDecryptorBody()
            "      ixor\n"
            "      i2c\n"
            "      invokevirtual java/lang/StringBuilder.append (C)Ljava/lang/StringBuilder;\n"
-           "      pop\n"
            "      iinc 2 1\n"
            "      goto Lloop\n"
            "    Ldone:\n"
