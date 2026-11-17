@@ -194,6 +194,21 @@ mjbase::spi::PreservedAnalyses ConstantCallPass::run(
         std::fprintf(stderr, "[grunt.ConstantCall] scan: sites=%zu rejects=%zu\n",
                      scanned.sites.size(), scanned.rejects.size());
     }
+    if (std::getenv("GRUNT_DEBUG_REJECT") != nullptr) {
+        static const char* kRejName[] = {
+            "not-in-container", "not-static",     "no-code",     "initializer",
+            "synchronized",     "void",           "class-init",  "args-not-const",
+            "args-kind",        "eval-unsupport", "step-limit",  "eval-bad-state",
+            "value-kind"};
+        for (const constant_call::RejectedSite& r : scanned.rejects) {
+            const char* name = static_cast<ca::u8>(r.reason)
+                                       < sizeof(kRejName) / sizeof(kRejName[0])
+                                   ? kRejName[static_cast<ca::u8>(r.reason)]
+                                   : "?";
+            std::fprintf(stderr, "[cc-reject] %s.%s pc=%u %s\n",
+                         r.callerOwner.c_str(), r.callerMethod.c_str(), r.callSrcPc, name);
+        }
+    }
     if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
 
     const constant_call::DirtySet dirty = constant_call::rewrite(container, scanned);

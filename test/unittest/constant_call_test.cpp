@@ -998,5 +998,148 @@ TEST(ConstantCallExternalBuiltin, RewriteFoldsParseUlToLdc2W)
     EXPECT_EQ(out.value.intBits, parseUlExpect());
 }
 
+// ============================================================================
+// ==== 解密器族第二形（(String;)String 逐码元 XOR）============================
+// ============================================================================
+
+// 第二形夹具：SB 环解密器（private static，key 走体内 bipush）+ 两个同类
+// 填充点——`<clinit>`（ldc 密文 · invokestatic · putstatic 本类字段，t3 语
+// 料 cl 系实证形态）与直线 fill。密文 "RUS" ^ 33 = "str"（独立重算）。
+const char* kDec2Host =
+    ".super java/lang/Object\n"
+    ".class public super fixture/Dec2Host {\n"
+    "  .field public static msg Ljava/lang/String;\n"
+    "  .method private static a (Ljava/lang/String;)Ljava/lang/String; {\n"
+    "    parameters: { s },\n"
+    "    code: {\n"
+    "      new java/lang/StringBuilder\n"
+    "      dup\n"
+    "      invokespecial java/lang/StringBuilder.<init> ()V\n"
+    "      bipush 33\n"
+    "      istore 1\n"
+    "      iconst_0\n"
+    "      istore 2\n"
+    "    Lloop:\n"
+    "      iload 2\n"
+    "      aload 0\n"
+    "      invokevirtual java/lang/String.length ()I\n"
+    "      if_icmpge Ldone\n"
+    "      aload 0\n"
+    "      iload 2\n"
+    "      invokevirtual java/lang/String.charAt (I)C\n"
+    "      iload 1\n"
+    "      ixor\n"
+    "      i2c\n"
+    "      invokevirtual java/lang/StringBuilder.append (C)Ljava/lang/StringBuilder;\n"
+    "      pop\n"
+    "      iinc 2 1\n"
+    "      goto Lloop\n"
+    "    Ldone:\n"
+    "      invokevirtual java/lang/StringBuilder.toString ()Ljava/lang/String;\n"
+    "      areturn\n"
+    "    }\n"
+    "  }\n"
+    "  .method public static <clinit> ()V {\n"
+    "    code: {\n"
+    "      ldc \"RUS\"\n"
+    "      invokestatic fixture/Dec2Host.a (Ljava/lang/String;)Ljava/lang/String;\n"
+    "      putstatic fixture/Dec2Host.msg Ljava/lang/String;\n"
+    "      return\n"
+    "    }\n"
+    "  }\n"
+    "  .method public static fill ()Ljava/lang/String; {\n"
+    "    code: {\n"
+    "      ldc \"RUS\"\n"
+    "      invokestatic fixture/Dec2Host.a (Ljava/lang/String;)Ljava/lang/String;\n"
+    "      areturn\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+std::vector<ca::u16> dec2CipherUnits()
+{
+    return {static_cast<ca::u16>('R'), static_cast<ca::u16>('U'), static_cast<ca::u16>('S')};
+}
+
+std::string dec2Plain()
+{
+    // "RUS" 逐码元 ^ 33 → "str"（夹具密文设计成结果可见字符，独立重算）。
+    std::string out;
+    for (const char c : std::string("RUS")) out.push_back(static_cast<char>(c ^ 33));
+    return out;
+}
+
+TEST(ConstantCallDecryptor2, ScanMatchesClinitAndFillSites)
+{
+    model::ResourceContainer container = makeContainer({{"fixture/Dec2Host", kDec2Host}});
+    const ScanResult         result    = scan(container);
+
+    ASSERT_EQ(result.sites.size(), 2u);
+    for (const Site& site : result.sites) {
+        EXPECT_TRUE(site.isDecryptor) << site.callerMethod;
+        EXPECT_EQ(site.targetName, "a");
+        EXPECT_EQ(site.targetDesc, "(Ljava/lang/String;)Ljava/lang/String;");
+        EXPECT_EQ(site.cipherUnits, dec2CipherUnits());
+        ASSERT_EQ(site.plainUnits.size(), 3u);
+        EXPECT_EQ(site.plaintext, dec2Plain());
+    }
+}
+
+TEST(ConstantCallDecryptor2, RewriteFoldsBothSitesToPlainLdc)
+{
+    model::ResourceContainer container = makeContainer({{"fixture/Dec2Host", kDec2Host}});
+    const ScanResult         scanned   = scan(container);
+    ASSERT_EQ(scanned.sites.size(), 2u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.applied, 2u);
+    ASSERT_EQ(dirty.uris.size(), 1u);
+
+    const std::string after = disassemble(classBytes(container, "fixture/Dec2Host.class"));
+    // clinit 折后 = ldc 明文 + putstatic（纯常量初值面）；fill 只剩明文装载。
+    EXPECT_EQ(after.find("invokestatic"), std::string::npos) << after;
+    EXPECT_EQ(after.find("\"RUS\""), std::string::npos) << after;
+    EXPECT_NE(after.find("\"str\""), std::string::npos) << after;
+    const ProofResult verdict = proof(container, dirty, 1);
+    EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
+
+    // 语义闭环：折叠后的 fill 用 jsim 复跑，返回值 = 期望明文。
+    grunt::SimExecutor exec(container);
+    jsim::str::install(exec.session());
+    jsim::str::installStringAlloc(exec.session());
+    jsim::num::install(exec.session());
+    const SimOutcome out = exec.invoke("fixture/Dec2Host", "fill()Ljava/lang/String;", {});
+    ASSERT_TRUE(out.ok()) << out.detail;
+    ASSERT_EQ(out.value.type, jsim::ValType::Ref);
+    ASSERT_EQ(out.value.ref.kind, jsim::RefPayload::Kind::Str);
+    std::vector<ca::u16> folded;
+    ASSERT_TRUE(scan_tools::mutf8ToUnits(out.value.ref.str, folded));
+    std::string foldedText;
+    ASSERT_TRUE(rewrite_tools::u16ToUtf8Record(folded, foldedText));
+    EXPECT_EQ(foldedText, dec2Plain());
+}
+
+// ----------------------------------------------------------------------------
+// 记录形编码面（u16ToUtf8Record）：与池写面 u16ToMutf8 必须逐字节同口径。
+// 孤立代理（q8 bD.t 实证 U+DEFA）按码元落 3 字节 CESU-8 形；成对代理重组
+// 4 字节——两支都全码元可记录（fail-closed 拒绝分支已撤）。
+// ----------------------------------------------------------------------------
+TEST(ConstantCallToolbox, RecordMirrorsCpWriteForLoneSurrogateAndPairs)
+{
+    const std::vector<ca::u16> lone = {0xDEFA};
+    std::string                record, cpWrite;
+    ASSERT_TRUE(rewrite_tools::u16ToUtf8Record(lone, record));
+    rewrite_tools::u16ToMutf8(lone, cpWrite);   // 池写面全量函数（void）
+    EXPECT_EQ(record, cpWrite) << "记录门不比池写更严：两支必须逐字节一致";
+    EXPECT_EQ(record.size(), 3u);
+    EXPECT_EQ(record, std::string("\xED\xBB\xBA", 3));
+
+    const std::vector<ca::u16> pair = {0xD83D, 0xDE00};   // U+1F600
+    std::string                paired;
+    ASSERT_TRUE(rewrite_tools::u16ToUtf8Record(pair, paired));
+    EXPECT_EQ(paired.size(), 4u);
+    EXPECT_EQ(paired, std::string("\xF0\x9F\x98\x80", 4));
+}
+
 }   // namespace
 }   // namespace grunt::constant_call

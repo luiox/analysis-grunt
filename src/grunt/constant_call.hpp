@@ -46,6 +46,14 @@
 /// 求值明文 intern 进池后调用点折成一条 `ldc 明文`。判据与改写细节见
 /// constant_call.cpp 解密器族段；桥面前置（junk 死走廊 athrow 的整方法
 /// 拒）由 jsim_executor 的桥前可达性剥离解决。
+///
+/// 第二形（260705 / grunt2-fork 逐码元 XOR，2026-11-17 收口）：`ldc 密文;
+/// invokestatic <self>.dec:(Ljava/lang/String;)Ljava/lang/String;`——
+/// cl.a..g 单串单方法与 IJIoWgQdhJ7vqTpO 共享辅助都是这一形。目标体形
+/// 不钉（while 循环 XOR / junk 尾巴都在族内），纯性由 jsim 实跑证明
+/// （jsim::str 包的 String.charAt/length + StringBuilder 全套接管在位）；
+/// 实参构造 knownStr(MUTF-8 密文)，产物提取 Obj 堆 String 与 Str 引用
+/// 双形态都收。改写锚 = 密文 LDC（原地换 `ldc 明文`），受害面 = 调用一条。
 #pragma once
 
 #include <string>

@@ -265,6 +265,38 @@ bool matchDecryptorShape(ir::ClassSession& s, ir::CodeDom& dom,
     return true;
 }
 
+/// 解密器族第二形（260705 / grunt2-fork 逐码元 XOR）形态匹配：紧邻前驱
+/// （NOP 跳过）恰一条 LDC String。目标体形不钉——junk 状态机 / while 循环
+/// XOR 都在族内，纯性由 jsim 实跑证明（求值成功 = 可静态重放）；这里只
+/// 钉「实参是常量密文串」这一收集面。producers 仅密文一条（改写的锚）。
+bool matchStringDecryptorShape(ir::ClassSession& s, ir::CodeDom& dom,
+                               const std::vector<ir::InsnId>& order, ca::usize callPos,
+                               DecryptorShape& out)
+{
+    ca::usize       cipherPos = 0;
+    const ir::Insn* cipher    = nullptr;
+    for (ca::usize k = callPos; k-- > 0;) {
+        const ir::Insn* p = dom.peek(order[k]);
+        if (p == nullptr || p->op == Op::NOP) continue;
+        cipher    = p;
+        cipherPos = k;
+        break;
+    }
+    if (cipher == nullptr) return false;
+    if (cipher->op != Op::LDC && cipher->op != Op::LDC_W) return false;
+    ir::ClassSession::ConstSem sem;
+    if (!s.constOf(*cipher, sem) || sem.kind != ir::ClassSession::ConstSem::Kind::String) {
+        return false;
+    }
+    std::vector<ca::u16> units;
+    if (!scan_tools::mutf8ToUnits(sem.str, units)) return false;
+    out.producers.assign(1, order[cipherPos]);
+    out.cipherUnits = std::move(units);
+    out.key         = 0;
+    out.seed        = 0;
+    return true;
+}
+
 /// 容器方法索引构建：scan_tools::buildMethodIndex 收口，本 pass 只钉两件
 /// 口径，重名类撞键取先到（emplace 原形 = KeepFirst）、stderr 前缀走本
 /// pass 的 scanGuard。
@@ -480,20 +512,31 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
                 if (ok[si] == 2) continue;   // 检查组拒绝已计数
 
                 if (site.isDecryptor) {
-                    // 解密器求值：密文码元落堆成 char[]，jsim 实跑解密器体，
-                    // 返回 String 从堆提取回码元。installStringAlloc 的
-                    // `new String(char[])` 接管是这条提取链的最后一环。
-                    const jsim::u64 arrId = exec.session().nextAllocId++;
-                    jsim::HeapObj         arr;
-                    arr.className = "[C";
-                    arr.elems.reserve(site.cipherUnits.size());
-                    for (const ca::u16 u : site.cipherUnits) {
-                        arr.elems.push_back(static_cast<jsim::i64>(u));
-                    }
-                    exec.session().heap[arrId] = std::move(arr);
-                    const std::vector<jsim::SimValue> dargs{jsim::SimValue::knownObj(arrId),
+                    // 解密器求值：jsim 实跑解密器体。([CJI) 形密文码元落堆
+                    // 成 char[]（installStringAlloc 的 `new String(char[])`
+                    // 接管是提取链最后一环）；(String;)String 第二形实参走
+                    // knownStr——charAt/length 接管只认 Str 接收者，toString
+                    // 接管产出也是 Str。
+                    std::vector<jsim::SimValue> dargs;
+                    const bool stringFamily =
+                        site.targetDesc == "(Ljava/lang/String;)Ljava/lang/String;";
+                    if (stringFamily) {
+                        std::string cipherText;
+                        rewrite_tools::u16ToMutf8(site.cipherUnits, cipherText);
+                        dargs.push_back(jsim::SimValue::knownStr(std::move(cipherText)));
+                    } else {
+                        const jsim::u64 arrId = exec.session().nextAllocId++;
+                        jsim::HeapObj         arr;
+                        arr.className = "[C";
+                        arr.elems.reserve(site.cipherUnits.size());
+                        for (const ca::u16 u : site.cipherUnits) {
+                            arr.elems.push_back(static_cast<jsim::i64>(u));
+                        }
+                        exec.session().heap[arrId] = std::move(arr);
+                        dargs = std::vector<jsim::SimValue>{jsim::SimValue::knownObj(arrId),
                                                             jsim::SimValue::knownI64(site.key),
                                                             jsim::SimValue::knownI32(site.seed)};
+                    }
                     const SimOutcome out =
                         exec.invoke(site.targetOwner, site.targetName + site.targetDesc, dargs);
                     if (!out.ok() && std::getenv("GRUNT_DEBUG_FOLD") != nullptr) {
@@ -512,20 +555,36 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
                         continue;
                     }
                     bool plainOk = false;
-                    if (out.value.known && out.value.type == jsim::ValType::Ref
-                        && out.value.ref.kind == jsim::RefPayload::Kind::Obj) {
-                        const auto hit = exec.session().heap.find(out.value.ref.objId);
-                        if (hit != exec.session().heap.end()
-                            && hit->second.className == "java/lang/String") {
-                            std::vector<ca::u16> plain;
-                            std::string          plainText;
-                            if (scan_tools::mutf8ToUnits(hit->second.data, plain)
-                                && rewrite_tools::u16ToUtf8Record(plain, plainText)) {
-                                site.plainUnits = std::move(plain);
-                                site.plaintext  = std::move(plainText);
-                                plainOk         = true;
+                    if (out.value.known && out.value.type == jsim::ValType::Ref) {
+                        std::string mutf8;
+                        bool        found = false;
+                        if (out.value.ref.kind == jsim::RefPayload::Kind::Obj) {
+                            const auto hit = exec.session().heap.find(out.value.ref.objId);
+                            if (hit != exec.session().heap.end()
+                                && hit->second.className == "java/lang/String") {
+                                mutf8 = hit->second.data;
+                                found = true;
                             }
+                        } else if (out.value.ref.kind == jsim::RefPayload::Kind::Str) {
+                            mutf8 = out.value.ref.str;
+                            found = true;
                         }
+                        std::vector<ca::u16> plain;
+                        std::string          plainText;
+                        if (found && scan_tools::mutf8ToUnits(mutf8, plain)
+                            && rewrite_tools::u16ToUtf8Record(plain, plainText)) {
+                            site.plainUnits = std::move(plain);
+                            site.plaintext  = std::move(plainText);
+                            plainOk         = true;
+                        }
+                    }
+                    if (!plainOk && std::getenv("GRUNT_DEBUG_FOLD") != nullptr) {
+                        std::fprintf(stderr,
+                                     "[dec-plain-fail] %s.%s pc=%u known=%d type=%d refkind=%d\n",
+                                     site.callerOwner.c_str(), site.callerMethod.c_str(),
+                                     site.callSrcPc, static_cast<int>(out.value.known),
+                                     static_cast<int>(out.value.type),
+                                     out.value.known ? static_cast<int>(out.value.ref.kind) : -1);
                     }
                     if (!plainOk) {
                         rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod,
@@ -728,15 +787,27 @@ RwResult rewriteDecryptorSite(ir::ClassSession& session, ir::CodeUnit& cu, const
         return RwResult::MemberMismatch;
     }
 
+    // 改写会话重新收集（防 scan 与 rewrite 间 DOM 语义漂移）；第二形只有
+    // 密文一个载荷（key/seed 恒 0，不参与复核）。
+    const bool stringFamily = site.targetDesc == "(Ljava/lang/String;)Ljava/lang/String;";
     DecryptorShape shape;
-    if (!matchDecryptorShape(session, dom, order, callPos, shape)) {
-        return RwResult::ArgsMismatch;
+    if (stringFamily) {
+        if (!matchStringDecryptorShape(session, dom, order, callPos, shape)) {
+            return RwResult::ArgsMismatch;
+        }
+        if (shape.cipherUnits != site.cipherUnits) {
+            return RwResult::ArgsMismatch;
+        }
+    } else {
+        if (!matchDecryptorShape(session, dom, order, callPos, shape)) {
+            return RwResult::ArgsMismatch;
+        }
+        if (shape.seed != site.seed || shape.key != site.key
+            || shape.cipherUnits != site.cipherUnits) {
+            return RwResult::ArgsMismatch;
+        }
+        if (shape.producers.size() != 4) return RwResult::ArgsMismatch;
     }
-    if (shape.seed != site.seed || shape.key != site.key
-        || shape.cipherUnits != site.cipherUnits) {
-        return RwResult::ArgsMismatch;
-    }
-    if (shape.producers.size() != 4) return RwResult::ArgsMismatch;
     // 空明文照常落折（internPlainString 内部处理 findUtf8 占位槽陷阱）。
 
     const ca::u32 strIdx = rewrite_tools::internPlainString(session.backing().cp,
@@ -745,12 +816,20 @@ RwResult rewriteDecryptorSite(ir::ClassSession& session, ir::CodeUnit& cu, const
     ir::Insn load = ir::CodeEditor::loadConst(strIdx);
     load.srcPc = jbc::ir::kNoPc;   ///< 原地写时被 keepPc 覆盖
 
-    // order 是 DOM 的活视图：先把句柄取出来。anchor = cipher（收集序最末，
-    // 栈最深）；victims = seed·key·toCharArray + 调用。
-    const ir::InsnId callId   = order[callPos];
-    const ir::InsnId anchorId = shape.producers.back();
-    std::vector<ir::InsnId> victims(shape.producers.begin(), shape.producers.end() - 1);
-    victims.push_back(callId);
+    // order 是 DOM 的活视图：先把句柄取出来。([CJI) 形 anchor = cipher
+    // （收集序最末，栈最深），victims = seed·key·toCharArray + 调用；
+    // 第二形 anchor = 密文 LDC（原地换 plain LDC），victims = 调用一条。
+    const ir::InsnId callId = order[callPos];
+    std::vector<ir::InsnId> victims;
+    ir::InsnId anchorId;
+    if (stringFamily) {
+        anchorId = shape.producers.front();
+        victims.push_back(callId);
+    } else {
+        anchorId = shape.producers.back();
+        victims.assign(shape.producers.begin(), shape.producers.end() - 1);
+        victims.push_back(callId);
+    }
 
     for (const ir::InsnId id : victims) {
         if (!dom.labelsAt(id).empty()) return RwResult::LabelBlocked;
@@ -1041,6 +1120,33 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
                             site.cipherUnits       = std::move(shape.cipherUnits);
                             site.key               = shape.key;
                             site.seed              = shape.seed;
+                            result.sites.push_back(std::move(site));
+                            continue;
+                        }
+                    }
+
+                    // 解密器族第二形（260705 / grunt2-fork 逐码元 XOR）：
+                    // `ldc 密文; invokestatic <self>.dec:(String;)String`。
+                    // 体形不钉（while 循环 XOR / junk 尾巴都在族内），纯性
+                    // 由求值段 jsim 实跑证明；不命中不拒——落回通用收集按
+                    // String 实参拒（ArgsKindUnsupported，trace 可见）。
+                    if (enc.desc == "(Ljava/lang/String;)Ljava/lang/String;"
+                        && enc.owner == self) {
+                        DecryptorShape shape;
+                        if (matchStringDecryptorShape(s, cu->dom, order, pos, shape)) {
+                            Site site;
+                            site.callerUri         = std::string(entry.uri);
+                            site.callerOwner       = std::string(self);
+                            site.callerMethod      = std::string(name);
+                            site.callerDesc        = std::string(desc);
+                            site.callerMethodIndex = mi;
+                            site.callSrcPc         = in->srcPc;
+                            site.targetOwner       = std::string(enc.owner);
+                            site.targetName        = std::string(enc.name);
+                            site.targetDesc        = std::string(enc.desc);
+                            site.targetMethodIndex = loc.index;
+                            site.isDecryptor       = true;
+                            site.cipherUnits       = std::move(shape.cipherUnits);
                             result.sites.push_back(std::move(site));
                             continue;
                         }
