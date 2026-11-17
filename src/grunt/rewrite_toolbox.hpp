@@ -292,28 +292,30 @@ inline void u16ToMutf8(const std::vector<ca::u16>& units, std::string& out)
 }
 
 /// @brief UTF-16 码元序列 → UTF-8 记录形（有效代理对重组 4 字节；孤立代理
-///        返回 false）。记录形进 Site.plaintext（trace/统计/单测），孤立
-///        代理不可表示即整站拒绝（javac ldc 源语言面不含孤立代理，语料
-///        不受影响；fail-closed 不猜）。
+///        按码元落 3 字节形，与 u16ToMutf8 池写口径同构）。记录形进
+///        Site.plaintext（trace/统计/单测）+ 各折叠的明文门。全码元可表
+///        示，恒返 true。
+///        孤立代理语料证据（q8 bD.t）：Grunt 加密的是裸 UTF-16 码元序列，
+///        明文可含孤立代理（\uDEFA^0x1C3 = 0xDF39）；classfile
+///        CONSTANT_Utf8 修饰 UTF-8 按码元 3 字节形同可表示。旧口径（孤立
+///        代理整站拒）预设"明文必过 javac 源语言面"——池写面 u16ToMutf8
+///        早就不设此限，记录门不比池写更严。
 inline bool u16ToUtf8Record(const std::vector<ca::u16>& units, std::string& out)
 {
     out.clear();
     for (ca::usize i = 0; i < units.size(); ++i) {
         const ca::u16 u = units[i];
-        if (u >= 0xD800 && u <= 0xDBFF) {
-            if (i + 1 >= units.size()) return false;
-            const ca::u16 lo = units[i + 1];
-            if (lo < 0xDC00 || lo > 0xDFFF) return false;
+        const bool pairable = u >= 0xD800 && u <= 0xDBFF && i + 1 < units.size()
+                              && units[i + 1] >= 0xDC00 && units[i + 1] <= 0xDFFF;
+        if (pairable) {
             const ca::u32 cp = 0x10000u
-                             + ((static_cast<ca::u32>(u - 0xD800) << 10)
-                                | static_cast<ca::u32>(lo - 0xDC00));
+                             + (((static_cast<ca::u32>(u) - 0xD800u) << 10)
+                                | (static_cast<ca::u32>(units[i + 1]) - 0xDC00u));
             out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
             out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
             out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
             out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
             ++i;
-        } else if (u >= 0xDC00 && u <= 0xDFFF) {
-            return false;   // 孤立低位代理
         } else if (u < 0x80) {
             out.push_back(static_cast<char>(u));
         } else if (u < 0x800) {
@@ -353,6 +355,29 @@ inline ca::u32 internPlainString(jbc::core::ConstantPool& cp, const std::vector<
         if (e.tag == jbc::core::CpTag::String && e.a == utf8Idx) return i;
     }
     return cp.addString(utf8Idx);
+}
+
+/// @brief 方法体的 **pc 布局序**只读视图（srcPc 升序；kNoPc 指令不在
+///        backing 布局上，不进视图）。
+///
+/// 布局窗扫描（key 窗 / 回收集 / 蹦床窗这类「紧邻 N 条」判定）一律走本
+/// 视图，不走 dom.order()——order 不保证 pc 升序（循环回边 / 异常 handler
+/// 等重排），位置相邻判据在带环方法上静默错窗（indy_restore 260705
+/// keyMissing=984 同族实证，2026-11-17 修）。
+inline std::vector<const jbc::ir::Insn*> pcOrderedInsns(const jbc::ir::CodeUnit& cu)
+{
+    std::vector<const jbc::ir::Insn*> out;
+    const auto&                       order = cu.dom.order();
+    out.reserve(order.size());
+    for (const jbc::ir::InsnId id : order) {
+        const jbc::ir::Insn* in = cu.dom.peek(id);
+        if (in != nullptr && in->srcPc != jbc::ir::kNoPc) out.push_back(in);
+    }
+    std::stable_sort(out.begin(), out.end(),
+                     [](const jbc::ir::Insn* a, const jbc::ir::Insn* b) {
+                         return a->srcPc < b->srcPc;
+                     });
+    return out;
 }
 
 /// @brief pc 是否在列表中（小列表线性扫，fold 类改写受害面通常个位数）。

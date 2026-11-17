@@ -411,7 +411,7 @@ void scanClassTriples(ir::ClassSession& s, const std::string& uri,
             if (countOnly) {
                 // residual 口径按最终折叠面：先入候选，聚合判定后计数。
                 std::string record;
-                if (!rewrite_tools::u16ToUtf8Record(hit->second, record)) continue;
+                rewrite_tools::u16ToUtf8Record(hit->second, record);
                 Site site;
                 site.uri         = uri;
                 site.methodIndex = mi;
@@ -426,16 +426,7 @@ void scanClassTriples(ir::ClassSession& s, const std::string& uri,
             }
 
             std::string record;
-            if (!rewrite_tools::u16ToUtf8Record(hit->second, record)) {
-                Reject rej;
-                rej.uri         = uri;
-                rej.methodIndex = mi;
-                rej.anchorSrcPc = head->srcPc;
-                rej.why         = "池条目 " + std::to_string(idx)
-                                  + " 明文含孤立代理，不可记录（fail-closed）";
-                localRejects.push_back(std::move(rej));
-                continue;
-            }
+            rewrite_tools::u16ToUtf8Record(hit->second, record);
             Site site;
             site.uri         = uri;
             site.methodIndex = mi;

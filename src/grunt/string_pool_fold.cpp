@@ -850,19 +850,12 @@ void scanClass(ir::ClassSession& s, const std::string& uri, ScanResult& result,
     }
     ++result.poolClasses;
 
-    // ---- 明文记录形编码（孤立代理不可记录 → 该条目退出池表）----
+    // ---- 明文记录形编码（全码元可记录：有效代理对重组，孤立代理 3 字节
+    //      形，见 u16ToMutf8/u16ToUtf8Record 同构口径）----
     std::unordered_map<ca::i32, std::pair<CipherForm, std::string>> plainTable;
     for (const auto& [idx, entry] : chain.entries) {
         std::string record;
-        if (!rewrite_tools::u16ToUtf8Record(entry.plain, record)) {
-            if (!countOnly) {
-                Reject rej;
-                rej.uri = uri;
-                rej.why = "池条目 " + std::to_string(idx) + " 明文含孤立代理，不可记录（fail-closed）";
-                result.rejects.push_back(std::move(rej));
-            }
-            continue;
-        }
+        rewrite_tools::u16ToUtf8Record(entry.plain, record);
         plainTable.emplace(idx, std::make_pair(entry.form, std::move(record)));
     }
 
