@@ -54,7 +54,7 @@ add_repositories("luiox-repo https://github.com/luiox/luiox-repo.git")
 -- 版本经顶层钉定收敛）；jsim/* → libjsim 包（jbc 桥 config 开，桥迁官方
 -- jsim/jbc.hpp，libjbc 随桥面进 jsim 消费图，与 grunt 直连面同实例归并）。
 add_requires("mjbase 0.0.18")
-add_requires("libjbc >=0.4.24")
+add_requires("libjbc >=0.4.29")
 add_requires("libjsim 0.0.1", {configs = {jbc = true}})
 add_requires("libca " .. LUIOX_LIBCA_VERSION, {configs = {modules = LUIOX_LIBCA_MODULES}})
 add_requireconfs("mjbase.libca",     {version = LUIOX_LIBCA_VERSION, configs = {modules = LUIOX_LIBCA_MODULES}})
