@@ -144,11 +144,46 @@ inline bool makeConstLoad(jbc::ir::ClassSession& session, const jsim::SimValue& 
 // 字节重建 mu->code，同方法只准 promote 一次，DOM 改写、prepare、lower
 // 全落在同一 unit 上；中间任何再 promote 都会静默弃掉全部改写。
 
+/// @brief CLI `--jdk` 装填的 JDK 类最小骨架种子（FrameContext 与 CLI 每轮
+/// 层次图装配共用；空 = 无 JDK 旁证的历史口径）。
+///
+/// 只装 this/super/接口/access（成员表清空：resolver 的 lub 只走父链/接口
+/// 闭包，成员面无消费方）；键驻留装填侧专属池，消费方换池重驻留。装填入口
+/// 在 pipeline_adapter（ensureJdkHierarchySeed），CLI 于管线启动前调用。
+inline std::vector<mjbase::hierarchy::ClassSummary> gJdkHierarchySeed;
+/// @brief 种子按 dst 池换驻后的整体副本（FrameContext / CLI 每轮层次图装配
+/// 共用一条换池路径；种子空时返回空表）。实现与装填同源在 pipeline_adapter。
+std::vector<mjbase::hierarchy::ClassSummary> jdkSeededSummaries(mjbase::KeyPool& dst);
+
+/// @brief 种子摘要换池重驻留（self/super/接口名逐一 intern 进目标池）。
+inline mjbase::hierarchy::ClassSummary reseedSummary(
+    mjbase::KeyPool& dst, const mjbase::KeyPool& src,
+    const mjbase::hierarchy::ClassSummary& s)
+{
+    mjbase::hierarchy::ClassSummary out;
+    const auto keyOf = [&](mjbase::ClassKey k) {
+        return k.valid() ? mjbase::classKeyOf(dst, src.str(k.id)) : mjbase::ClassKey{};
+    };
+    out.self  = keyOf(s.self);
+    out.super = keyOf(s.super);
+    out.interfaces.reserve(s.interfaces.size());
+    for (const mjbase::ClassKey k : s.interfaces) out.interfaces.push_back(keyOf(k));
+    out.access = s.access;
+    return out;
+}
+
 /// @brief 容器级帧重算上下文：Strict 求解所需的类层级 + resolver 适配器。
 ///
 /// summary 与 session 解绑：构造期逐类开会话 → fillSummary 抽骨架 → addClass 入库 → 会话当场弃置，任何时刻至多一个会话在场。解绑的依据是 fillSummary 的产出只有两处自持落点，pool_（内容寻址驻留池，arena 只增不移，视图随池存活）与 hierarchy_ 入库的 ClassSummary 值拷贝（键全是 pool_ 的 u32 id，vector 拷贝即快照）；byName_ 的名字视图同样借用 pool_ 而非会话符号池。构造完成后没有任何数据活引用 session，rewrite 阶段按类重开会话（容器里有原始字节），Strict 帧重算的 CommonSuperClassResolver 只读层级骨架，照常工作。
 ///
 /// 遍历序沿用原 scanClassResources 的容器资源序（visitResources），驻留键的 intern 序逐位一致 → 键 id、环/重复登记的判定时点、resolver 查询缓存全部不动，这是 trace/产物逐位等价的前提。不挂 pass 级时间片检查：层次图必须盖全容器（与原口径一致，空条目与畸形类不产出事实，fail-open）。
+///
+/// 容器层骨架之后追加 `gJdkHierarchySeed`（CLI `--jdk` 装填的 JDK 类最小骨
+/// 架）：层级图只盖容器时，Strict 求解在「两个容器外类」的合并点上求不出
+/// 真 lub（InputStream×GZIPInputStream 落成 Object/top），帧不可校验——
+/// jsoup v3_string DataUtil.openStream 实证（string 折叠改保真重定位后由
+/// indy_restore 折叠同一方法复现）。种子类是 jmods 直读的最小骨架（成员表
+/// 清空：resolver 的 lub 只走父链/接口闭包，成员面无消费方）。
 ///
 /// 成员间是借用关系（adapter 借 super，super 借 hierarchy，hierarchy 借 pool），禁拷贝禁移动；按 rewrite() 单次调用于栈上持有。
 class FrameContext
@@ -169,6 +204,11 @@ public:
                     mjbase::hierarchy::fillSummary(*session.unwrap(), pool_));
                 // session 随作用域结束弃置：骨架已收进 pool_ 与 hierarchy_。
             });
+        // JDK 种子（键驻 fill 侧种子池；addClass 拷贝入库时按文本在本 pool_
+        // 重新 intern，借用关系不跨池）。空种子 = 历史口径。
+        for (const auto& summary : jdkSeededSummaries(pool_)) {
+            (void)hierarchy_.addClass(summary);
+        }
     }
 
     jbc::analysis::ITypeResolver& resolver() { return adapter_; }

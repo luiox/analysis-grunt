@@ -11,6 +11,7 @@
 #include <unordered_set>
 
 #include "grunt/pass_clock.hpp"
+#include "grunt/rewrite_toolbox.hpp"
 #include "mjbase/spi/pass_pipeline.hpp"
 
 namespace grunt {
@@ -32,9 +33,17 @@ extern std::string gKasumiTsvPath;
 ///        在 string_cache_fold::parseTsv 纯函数面）。
 bool readTextFile(const std::string& path, std::string& out);
 
-/// @brief 扫描 JDK（jmods/ 优先，lib/ 兜底）收集接口内部名（ACC_INTERFACE）。
-/// 读不了的归档跳过；结果可能为空（调用方按无旁证口径处理）。
-std::unordered_set<std::string> scanJdkInterfaces(const std::string& jdkPath);
+/// @brief 装填 JDK 类最小骨架种子（rewrite_toolbox::gJdkHierarchySeed）。
+///
+/// 扫描 JDK（jmods/ 优先，lib/ 兜底）逐类开会话抽 this/super/接口/access
+/// 骨架（fillSummary 后清成员表：resolver 的 lub 只走父链/接口闭包，成员
+/// 面无消费方）。按 `--jdk` 路径幂等（重复调用只扫一次）；空路径清空种子。
+/// 读不了的归档跳过；种子可能为空（调用方按无旁证口径处理）。
+void ensureJdkHierarchySeed();
+
+/// @brief JDK 接口内部名穷举集（ensureJdkHierarchySeed 的同源派生，indy
+/// 三面共用）。空 = 无旁证（调用方按各自 fail-closed 口径处理）。
+const std::unordered_set<std::string>& jdkInterfacesCached();
 
 /// @brief fail-closed 装饰器：pass 体抛出的异常（含 /EHa 下的 SEH 硬崩）不再
 /// 穿透管线，stderr 点名后按本 pass 产出丢弃收场，jar 不拖垮整轮语料。
@@ -96,6 +105,25 @@ public:
 
 /// @brief `grunt.FlagsStrip`：伪造访问标志清除的管线入口。
 class FlagsStripPass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
+/// @brief `grunt.KeyProcEval`：Grunt v3 ControlflowFlattening key processor
+/// 夹心跨方法静态求值（cff_unflatten processor 桥 fail-closed 的解锁面，缺
+/// 口 #4 联动；(II)I 夹心逐字钉 + jsim 编排层求值 + rotateLeft 接管；求值
+/// 未知/熔断/堆访问面 fail-closed，逐桶计数；Era 不消费）。
+class KeyProcEvalPass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
+/// @brief `grunt.NoiseAttrStrip`：Crasher/AntiLLM 噪声属性摘除的管线入口。
+class NoiseAttrStripPass final : public mjbase::spi::GlobalPass
 {
 public:
     mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,

@@ -98,6 +98,16 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         return Err(std::string("grunt.DeadMember"));
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.NoiseAttrStrip",
+            [] { return makeFailClosed<NoiseAttrStripPass>("grunt.NoiseAttrStrip"); },
+            "Strip Crasher massive-Signature attributes whose string fails the"
+            " JVMS 4.7.9.1 grammar (CFR 0.152 hard-fails on them at class load)"
+            " and AntiLLM SourceDebugExtension payloads (debug-only, no runtime"
+            " semantics); valid generic signatures are kept verbatim.");
+        r.is_err()) {
+        return Err(std::string("grunt.NoiseAttrStrip"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.BoogerAnnoStrip",
             [] { return makeFailClosed<BoogerAnnoStripPass>("grunt.BoogerAnnoStrip"); },
             "Strip @Booger runtime annotation entries once no class in the"
@@ -226,6 +236,26 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
             "DeadMember.");
         r.is_err()) {
         return Err(std::string("grunt.DispatcherRestore"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.KeyProcEval",
+            [] { return makeFailClosed<KeyProcEvalPass>("grunt.KeyProcEval"); },
+            "Statically evaluate Grunt v3 ControlflowFlattening key-processor"
+            " sandwiches (emitProcessorStateProgram form: [int inputKey; ISTORE"
+            " slot; ILOAD slot; int salt; invokestatic proc (II)I; ISTORE slot]):"
+            " resolve the container-resident pure-arithmetic processor body,"
+            " evaluate it cross-method through the jsim orchestration layer with"
+            " an Integer.rotateLeft mock for the salt-rotate steps, then rewrite"
+            " the sandwich in place to [int result; ISTORE slot] so the bridge"
+            " degrades to a plain inline span that grunt.CffUnflatten already"
+            " folds. This is the documented unlock path for the processor-bridge"
+            " fail-closed face (obf-behaviors gap #4): jsoup v3_full measured"
+            " 295 CFR decompilation-fallback methods caused by the leftover"
+            " dispatcher islands. Heap/string/indy surfaces fail closed at the"
+            " evaluator (per-bucket counters); the processor method itself stays"
+            " for DeadMember to collect once its supply chain dries up.");
+        r.is_err()) {
+        return Err(std::string("grunt.KeyProcEval"));
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.CffUnflatten",
@@ -444,6 +474,7 @@ std::string defaultMainLine()
            "grunt.ConstantCall,"
            "grunt.ExcBridgeRestore,"
            "grunt.GateProcessorFold,"
+           "grunt.KeyProcEval,"
            "grunt.CffUnflatten,"
            "grunt.NumberFold,"
            "grunt.ArithFold,"
@@ -459,7 +490,7 @@ std::string defaultMainLine()
            "grunt.ArithFold,"
            "grunt.ConstantCall,"
            "grunt.DeadMember,"
-           "grunt.FlagsStrip,"
+           "grunt.FlagsStrip,grunt.NoiseAttrStrip,"
            "grunt.BoogerAnnoStrip";
 }
 

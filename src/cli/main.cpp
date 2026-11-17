@@ -80,9 +80,10 @@ constexpr const char* kUsage =
     "  --converge[=N]  不动点驱动：整条 -p 程序重复执行到容器字节面不再变化\n"
     "         （N = 轮上限，默认 12；达上限未收敛如实报告仍导出）。强制\n"
     "         GRUNT_SLICE_SEC=0——片钟截断会让整轮空转造成假收敛\n"
-    "  --jdk  JDK 根目录（可选）：grunt.IndyDecode 的接口旁证注入面，扫描\n"
-    "         jmods/lib 收集接口集，Era=Kasumi 才激活；空 = 接口路 fail-closed\n"
-    "  --tsv  明文表路径（可选）：grunt.StringCacheFold 的 TSV 旁证注入面，\n"
+    "  --jdk  JDK 根目录（可选）：indy 三面（IndyDecode/IndyRestore/IndyFold）\n"
+    "         的接口旁证注入面，扫描 jmods/lib 收集接口集；接口 owner 的调用\n"
+    "         站点按它分派 invokeinterface/InterfaceMethodref；空 = 接口落点\n"
+    "         无旁证（virtual 面 fail-closed 留站点，static 面按类落）\n"    "  --tsv  明文表路径（可选）：grunt.StringCacheFold 的 TSV 旁证注入面，\n"
     "         KasumiStringDumper 产出的 owner/key/index/plaintext 四列明文映射，\n"
     "         Era=Kasumi 才激活；缺失/不可读 = 旁证降级 fail-closed\n"
     "  --list  列出本 pack 注册的全部 pass 后退出\n"
@@ -221,6 +222,7 @@ int main(int argc, char** argv)
     // IndyDecode 的接口旁证注入：文件系统扫描收敛在管线启动前（adapter 在
     // Era=Kasumi 时才消费）。
     grunt::gKasumiJdkPath = jdkPath;
+    grunt::ensureJdkHierarchySeed();   // JDK 骨架种子（帧链 lub + 接口集）
 
     // StringCacheFold 的 TSV 明文旁证注入：文件读取收敛在管线启动前（adapter
     // 在 Era=Kasumi 时才消费；缺失/不可读按旁证降级 fail-closed 计数）。
@@ -325,6 +327,9 @@ int main(int argc, char** argv)
                     (void)hierarchy.addClass(
                         mjbase::hierarchy::fillSummary(*session.unwrap(), pool));
                 });
+            for (const auto& summary : grunt::rewrite_tools::jdkSeededSummaries(pool)) {
+                (void)hierarchy.addClass(summary);   // JDK 骨架（--jdk 装填）
+            }
             mjbase::spi::CommonSuperClassResolver  superResolver(hierarchy);
             mjbase::spi::StrictTypeResolverAdapter typeResolver(superResolver);
             mjbase::spi::PassPipelineOptions       options;

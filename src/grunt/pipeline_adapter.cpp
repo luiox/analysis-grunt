@@ -2,6 +2,8 @@
 /// @brief       `grunt.ConstantCall` 的管线入口：三段编排 + trace。
 #include "grunt/pipeline_adapter.hpp"
 
+#include "grunt/rewrite_toolbox.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -27,7 +29,9 @@
 #include "grunt/exc_bridge_restore.hpp"
 #include "grunt/field_access_proxy.hpp"
 #include "grunt/flags_strip.hpp"
+#include "grunt/noise_attr_strip.hpp"
 #include "grunt/gate_processor_fold.hpp"
+#include "grunt/key_proc_eval.hpp"
 #include "grunt/indy_decode.hpp"
 #include "grunt/indy_fold.hpp"
 #include "grunt/indy_restore.hpp"
@@ -117,17 +121,19 @@ bool classAccessSkipCp(const std::vector<ca::u8>& data, ca::u16& access)
 
 }   // namespace
 
-std::unordered_set<std::string> scanJdkInterfaces(const std::string& jdkPath)
-{
-    std::unordered_set<std::string> interfaces;
-    if (jdkPath.empty()) return interfaces;
+namespace {
+mjbase::KeyPool                 gSeedPool;       // 种子键驻留（进程级自持）
+std::unordered_set<std::string> gSeedInterfaces; // 接口名派生集（同源装填）
+}
 
+/// @brief 收集 JDK 归档清单（jmods/ 优先，lib/ 兜底）。
+static std::vector<std::filesystem::path> jdkArchives(const std::string& jdkPath)
+{
     namespace fs = std::filesystem;
     const fs::path homeDir(jdkPath);
-    // JDK 9+ 用 jmods/，JDK 8 用 lib/（rt.jar 之类）。
     std::vector<fs::path> archives;
-    const fs::path        jmods = homeDir / "jmods";
-    const fs::path        lib   = homeDir / "lib";
+    const fs::path jmods = homeDir / "jmods";
+    const fs::path lib   = homeDir / "lib";
     const auto collect = [&](const fs::path& dir) {
         std::error_code ec;
         if (!fs::exists(dir, ec)) return;
@@ -140,37 +146,77 @@ std::unordered_set<std::string> scanJdkInterfaces(const std::string& jdkPath)
     };
     collect(jmods);
     if (archives.empty()) collect(lib);
-    if (archives.empty()) return interfaces;
+    return archives;
+}
 
-    for (const fs::path& archive : archives) {
-        try {
-            mjbase::jar::JvmJarReader reader(
-                ca::str::Utf8StringRef::from_cstr(archive.string().c_str()));
-            (void)reader.read([&](const ca::str::Utf8String& name,
-                                  const std::vector<ca::u8>& data) {
-                std::string internal = name.to_std_string();
-                // jmod 条目名带 "classes/" 前缀，去掉得到标准内部名。
-                constexpr std::string_view kClasses = "classes/";
-                if (internal.size() >= kClasses.size()
-                    && internal.compare(0, kClasses.size(), kClasses) == 0) {
-                    internal.erase(0, kClasses.size());
-                }
-                if (internal.size() <= 6
-                    || internal.compare(internal.size() - 6, 6, ".class") != 0) {
-                    return;
-                }
-                if (internal.find("module-info") != std::string::npos) return;
-                ca::u16 access = 0;
-                if (!classAccessSkipCp(data, access)) return;
-                if ((access & kAccInterface) != 0) {
-                    interfaces.insert(internal.substr(0, internal.size() - 6));
-                }
-            });
-        } catch (const std::exception&) {
-            // 跳过无法读取的归档。
+void ensureJdkHierarchySeed()
+{
+    static std::string filledFor;
+    if (filledFor == gKasumiJdkPath) return;   // 含两侧同空的幂等
+    grunt::rewrite_tools::gJdkHierarchySeed.clear();
+    gSeedInterfaces.clear();
+    if (!gKasumiJdkPath.empty()) {
+        for (const std::filesystem::path& archive : jdkArchives(gKasumiJdkPath)) {
+            try {
+                mjbase::jar::JvmJarReader reader(
+                    ca::str::Utf8StringRef::from_cstr(archive.string().c_str()));
+                (void)reader.read([&](const ca::str::Utf8String& name,
+                                      const std::vector<ca::u8>& data) {
+                    std::string internal = name.to_std_string();
+                    constexpr std::string_view kClasses = "classes/";
+                    if (internal.size() >= kClasses.size()
+                        && internal.compare(0, kClasses.size(), kClasses) == 0) {
+                        internal.erase(0, kClasses.size());
+                    }
+                    if (internal.size() <= 6
+                        || internal.compare(internal.size() - 6, 6, ".class") != 0) {
+                        return;
+                    }
+                    if (internal.find("module-info") != std::string::npos) return;
+                    auto session = jbc::ir::makeSessionFromBytes(
+                        jbc::core::ByteView{data.data(), data.size()});
+                    if (session.is_err()) return;
+                    const jbc::ir::ClassUnit& unit = session.unwrap()->unit();
+                    if ((unit.access & 0x0200) != 0) {   // ACC_INTERFACE
+                        gSeedInterfaces.emplace(unit.symbols().str(unit.thisClass));
+                    }
+                    mjbase::hierarchy::ClassSummary summary =
+                        mjbase::hierarchy::fillSummary(*session.unwrap(), gSeedPool);
+                    summary.methods.clear();   // 最小骨架：lub 只走父链/接口闭包
+                    summary.fields.clear();
+                    grunt::rewrite_tools::gJdkHierarchySeed.push_back(std::move(summary));
+                });
+            } catch (const std::exception&) {
+                // 跳过无法读取的归档。
+            }
         }
     }
-    return interfaces;
+    filledFor = gKasumiJdkPath;
+}
+
+}   // namespace grunt
+
+namespace grunt::rewrite_tools {
+
+std::vector<mjbase::hierarchy::ClassSummary> jdkSeededSummaries(mjbase::KeyPool& dst)
+{
+    ensureJdkHierarchySeed();
+    std::vector<mjbase::hierarchy::ClassSummary> out;
+    out.reserve(gJdkHierarchySeed.size());
+    for (const auto& summary : gJdkHierarchySeed) {
+        out.push_back(reseedSummary(dst, gSeedPool, summary));
+    }
+    return out;
+}
+
+}   // namespace grunt::rewrite_tools
+
+namespace grunt {
+
+const std::unordered_set<std::string>& jdkInterfacesCached()
+{
+    ensureJdkHierarchySeed();
+    return gSeedInterfaces;
 }
 
 bool readTextFile(const std::string& path, std::string& out)
@@ -260,6 +306,38 @@ mjbase::spi::PreservedAnalyses FlagsStripPass::run(
                      proof.ok ? "ok" : "FAILED");
         for (const std::string& f : proof.failed) {
             std::fprintf(stderr, "[grunt.FlagsStrip] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+
+mjbase::spi::PreservedAnalyses NoiseAttrStripPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;   // 本残留自包含三段，不消费注册分析
+
+    const ca::usize before = countClasses(container);
+
+    const noise_attr_strip::ScanResult scanned = noise_attr_strip::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.NoiseAttrStrip] scan: sig-invalid=%zu sde=%zu sites=%zu skipped=%zu\n",
+                     scanned.sigInvalid, scanned.sdeCount, scanned.sites.size(),
+                     scanned.classesSkipped);
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const noise_attr_strip::DirtySet dirty = noise_attr_strip::rewrite(container, scanned);
+    const noise_attr_strip::ProofResult proof =
+        noise_attr_strip::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.NoiseAttrStrip] rewrite: classes=%zu attrs=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.attrsRemoved, proof.ok ? "ok" : "FAILED");
+        for (const std::string& f : proof.failed) {
+            std::fprintf(stderr, "[grunt.NoiseAttrStrip] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
@@ -547,7 +625,10 @@ mjbase::spi::PreservedAnalyses IndyFoldPass::run(mjbase::model::ResourceContaine
     (void)am;
 
     const ca::usize before = countClasses(container);
-    const indy_fold::ScanResult scanned = indy_fold::scan(container);
+    const indy_fold::ScanResult scanned =
+        indy_fold::scan(container, iter_budget::ClassBudget{indy_fold::kScanClassBudget},
+                        gKasumiJdkPath.empty() ? std::unordered_set<std::string>{}
+                                               : jdkInterfacesCached());
     if (traceEnabled()) {
         std::fprintf(stderr,
                      "[grunt.IndyFold] scan: classes=%zu sites=%zu foldable=%zu bsmFailed=%zu"
@@ -703,7 +784,7 @@ mjbase::spi::PreservedAnalyses IndyDecodePass::run(
     indy_decode::ScanInput input;
     input.era = knowledge::probeEra(container);
     if (input.era == knowledge::Era::Kasumi && !gKasumiJdkPath.empty()) {
-        input.jdkInterfaces = scanJdkInterfaces(gKasumiJdkPath);
+        input.jdkInterfaces = jdkInterfacesCached();
     }
 
     const indy_decode::ScanResult scanned = indy_decode::scan(container, input);
@@ -893,13 +974,13 @@ mjbase::spi::PreservedAnalyses IndyRestorePass::run(
 
     const ca::usize before = countClasses(container);
 
-    // Era 探测（adapter 调一次，结果注入 scan）+ JDK 接口旁证（Era 非
-    // Unknown 才激活文件系统扫描，simple 面自证不挂 Era，但旁证只在家族
-    // 判定后注入；残留本体不做遍历）。
+    // Era 探测（adapter 调一次，结果注入 scan）+ JDK 接口旁证：--jdk 给了
+    // 就注入（接口 owner 的 ref-kind 分派不挂 Era 门——jsoup v2_indy 实证
+    // Gruntpocalypse jar era=Unknown，接口站点照常需要旁证）。
     indy_restore::ScanInput input;
     input.era = knowledge::probeEra(container);
-    if (input.era != knowledge::Era::Unknown && !gKasumiJdkPath.empty()) {
-        input.jdkInterfaces = scanJdkInterfaces(gKasumiJdkPath);
+    if (!gKasumiJdkPath.empty()) {
+        input.jdkInterfaces = jdkInterfacesCached();
     }
 
     const indy_restore::ScanResult scanned = indy_restore::scan(container, input);
@@ -1218,6 +1299,77 @@ mjbase::spi::PreservedAnalyses ExcBridgeRestorePass::run(
                      verdict.residual);
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.ExcBridgeRestore] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses KeyProcEvalPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;   // 本残留自包含三段，不消费注册分析
+
+    const ca::usize before = countClasses(container);
+
+    // 无旁证注入面：判据全为容器自证事实（(II)I ActionDesc 指纹 + 夹心逐字
+    // 形 + 跨方法求值），Era 不消费（v3-only 形态，v2 Controlflow 无 state
+    // 槽摊平面）。
+    const key_proc_eval::ScanResult scanned = key_proc_eval::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.KeyProcEval] scan: shape=%zu sites=%zu rejects=%zu"
+                     " (target-outside=%zu not-static=%zu sync=%zu clinit=%zu"
+                     " eval-bad=%zu step-limit=%zu value-kind=%zu) skip-classes=%zu\n",
+                     scanned.totalShape, scanned.sites.size(), scanned.rejects.size(),
+                     scanned.targetOutside, scanned.targetNotStatic,
+                     scanned.targetSynchronized, scanned.classInitPresent,
+                     scanned.evalBadState, scanned.evalStepLimit,
+                     scanned.valueKindUnsupported, scanned.classesSkipped);
+        if (std::getenv("GRUNT_KEY_PROC_EVAL_TRACE") != nullptr) {
+            for (const key_proc_eval::Site& site : scanned.sites) {
+                std::fprintf(stderr,
+                             "[grunt.KeyProcEval]   %s#%zu pc=%u slot=%u %s.%s"
+                             " in=%d salt=%d -> %d\n",
+                             site.uri.c_str(), site.methodIndex, site.callSrcPc,
+                             site.stateSlot, site.targetOwner.c_str(),
+                             site.targetName.c_str(), site.inputKey, site.salt,
+                             site.result);
+            }
+            for (const key_proc_eval::Reject& rej : scanned.rejects) {
+                static const char* kWhy[] = {
+                    "target-outside", "not-static", "synchronized", "clinit-present",
+                    "eval-bad", "step-limit", "value-kind"};
+                const ca::usize idx = static_cast<ca::usize>(rej.reason);
+                std::fprintf(stderr, "[grunt.KeyProcEval]   reject %s.%s pc=%u: %s\n",
+                             rej.callerOwner.c_str(), rej.callerMethod.c_str(),
+                             rej.callSrcPc,
+                             idx < sizeof(kWhy) / sizeof(kWhy[0]) ? kWhy[idx] : "?");
+            }
+        }
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const key_proc_eval::DirtySet dirty = key_proc_eval::rewrite(container, scanned);
+    const key_proc_eval::ProofResult verdict =
+        key_proc_eval::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.KeyProcEval] rewrite: classes=%zu sites=%zu/%zu failed=%zu"
+                     " roundtrip-skip=%zu proof=%s residual=%zu\n",
+                     dirty.uris.size(), dirty.sites, dirty.attempted, dirty.failed,
+                     dirty.skippedByRoundTrip, verdict.ok ? "ok" : "FAILED",
+                     verdict.residual);
+        static const char* kRwReason[] = {"ok", "proc-not-found", "region-mismatch",
+                                          "anchor-intern", "label-blocked", "erase-fail"};
+        for (ca::usize i = 0; i < dirty.failedByReason.size(); ++i) {
+            if (dirty.failedByReason[i] == 0) continue;
+            const char* name = i < sizeof(kRwReason) / sizeof(kRwReason[0]) ? kRwReason[i] : "?";
+            std::fprintf(stderr, "[grunt.KeyProcEval]   %-16s %zu\n", name,
+                         dirty.failedByReason[i]);
+        }
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.KeyProcEval] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
