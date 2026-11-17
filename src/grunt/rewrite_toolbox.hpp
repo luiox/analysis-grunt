@@ -296,7 +296,7 @@ inline void u16ToMutf8(const std::vector<ca::u16>& units, std::string& out)
 ///        Site.plaintext（trace/统计/单测）+ 各折叠的明文门。全码元可表
 ///        示，恒返 true。
 ///        孤立代理语料证据（q8 bD.t）：Grunt 加密的是裸 UTF-16 码元序列，
-///        明文可含孤立代理（\uDEFA^0x1C3 = 0xDF39）；classfile
+///        明文可含孤立代理（U+DEFA^0x1C3 = 0xDF39）；classfile
 ///        CONSTANT_Utf8 修饰 UTF-8 按码元 3 字节形同可表示。旧口径（孤立
 ///        代理整站拒）预设"明文必过 javac 源语言面"——池写面 u16ToMutf8
 ///        早就不设此限，记录门不比池写更严。
