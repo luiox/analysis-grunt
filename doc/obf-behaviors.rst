@@ -160,7 +160,7 @@ grunt 行为记录总表
    * - ReferenceObfuscate
      - S1
      - 部分
-     - IndyRestore（缺口 #2 已处理完：simple 直接解密回填 + heavy ``@Metadata`` 核对回填，\ ``Era::Grunt3`` 检查；RuntimeMaterial 联动的材料通道由 MaterialKeyRestore 折回 key 后第二轮本 pass 消化）+ IndyFold 作模拟执行备用还原
+     - IndyRestore（缺口 #2 已处理完：simple 直接解密回填 + heavy ``@Metadata`` 核对回填，\ ``Era::Grunt3`` 检查；RuntimeMaterial 联动的材料通道由 MaterialKeyRestore 折回 key 后第二轮本 pass 消化；260705 带 ``while`` 的解密器三形键窗原按 dom.order() 位置回溯失配（keyMissing=984），收编 ``const_args::decryptKeyWindow`` pc 布局真值单源后 t3_full indy 2311→3，台账解锁批 ②）+ IndyFold 作模拟执行备用还原
    * - StringArrayedEncrypt
      - S1
      - 已处理
@@ -271,7 +271,7 @@ grunt 行为记录总表
 
 11. **StringEquals 语义还原** （已处理完）：\ ``grunt.StringEqualsRestore`` 承载（v2 ``StringEqualsRedirect`` / v3 ``StringEqualsOptimize``\ ，hashCode 比较/``==`` 换回 ``equals`` 含 ``equalsIgnoreCase`` 面，两代生成源输出逐字相同一套形状表），判据 = 窗口逐条 op + 成员引用形状钉（equals 面 6 条 / equalsIgnoreCase 面 8 条）锚点原地换 ``String.equals`` / ``String.equalsIgnoreCase``；hashCode 比较对碰撞串误判相等是生成侧自认损失面，还原取严格 equals 语义，如实登记。语料验证登记见 :ref:`corpus-ledger`\ 。
 12. **ParameterObfuscate 收窄** ：私有方法 desc 参数收窄 + 头部 checkcast 删除。
-13. **噪声与检测面清理** ：Watermark（两代水印字段/方法）、Crasher/DecompilerCrasher（massive Signature 属性）、AntiLLM 四渠道噪声、HWID 校验调用摘除（删除需 CFG 副作用证明）。
+13. **噪声与检测面清理** ：Watermark（两代水印字段/方法）、Crasher/DecompilerCrasher（massive Signature 属性）、AntiLLM 四渠道噪声、HWID 校验调用摘除（删除需 CFG 副作用证明）。 ** 属性体面已收半边** （libjbc 0.4.29）：SourceDebugExtension（JVMS 4.7.11 纯字节串属性）在 cp_compact 闭包放行、体原样透传——junk 体不再整类冻结压缩（260705 语料 79 类解锁，台账解锁批 ①）；massive Signature 属性**本体摘除面**仍挂本缺口，且已实证它是 CFR 0.152 的硬死点（t3_full 152/152 类全带，逐类扫描 input 0/152 = 还原产物 0/152 同因同败 ``ConfusedCFRException: Prototype``——含「形合法实非法」方法签名 ``Ljava/lang/Class<...>;`` 缺括号变体；JVM 无视该属性故运行时无恙；crasher 面语料的 CFR 门 = 输入/产物同败对账）。 ** 新登记计数反射脸** ：JavaObfuscatorTest 2.1 按 ``getDeclaredMethods().length`` 计数——名字面保护（注解/池名/indy 目标）对按数反射天然失明，成员删除的判据必须带形状证据（Grunteon 全员撒 ACC_SYNTHETIC/ACC_BRIDGE 位、实例方法 acc=0x1041 实证，DeadMember gateB 位证据因此限 static 面，台账解锁批 ⑤）。
 14. **垃圾类删除面** ：v2 ClonedClass/TrashClass + v3 TrashClassGenerator，零引用 + 生成面形状识别，删除需引用普查确认（反射/资源文本引用）。
 15. **probeEra Grunt2/Grunt3 可靠判据** ：Grunt3 半边已处理完（随 indy_restore 落 era.hpp：Grunt BSM desc 指纹 ∧ 类级 ``@Metadata`` 注解或 ``grunteon`` 命名空间，双半边钉版本）；Grunt2 半边仍缺，两代 ``U+200E`` 尾缀同源、indy BSM desc 逐字同源、模板无稳定差异，待语料积累出真正版本敏感的残留形状再补（era.hpp 明文记载）；v2 现场的 heavy 面暂不处理（simple 面全结构自证，不依赖版本判断，不受影响）。
 
