@@ -35,6 +35,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -123,6 +124,98 @@ const std::vector<ca::u8>& classBytes(const model::ResourceContainer& container,
     const auto*             cls = ca::core::tag_cast::dyn_cast<const model::ClassResource>(raw);
     if (cls == nullptr) throw std::runtime_error("夹具缺类：" + uri);
     return cls->get();
+}
+
+/// @brief 成员引用普查键（owner|name|desc）。
+struct MemberRefKey
+{
+    std::string owner;
+    std::string name;
+    std::string desc;
+    bool operator<(const MemberRefKey& o) const
+    {
+        if (owner != o.owner) return owner < o.owner;
+        if (name != o.name) return name < o.name;
+        return desc < o.desc;
+    }
+};
+
+/// @brief 常量池成员引用普查：`owner|name|desc` → ref-tag（0x0A = Methodref，
+///        0x0B = InterfaceMethodref）。invokestatic 的 ref-kind 在反汇编文本
+///        看不出差别，直接按原字节判型。Long/Double 占双槽，walk 按表宽推进。
+std::map<MemberRefKey, int> memberRefTags(const std::vector<ca::u8>& b)
+{
+    const auto u2 = [&b](ca::usize p) {
+        return static_cast<ca::u16>((b[p] << 8) | b[p + 1]);
+    };
+    std::map<ca::u16, int>                           tags;
+    std::map<ca::u16, std::string>                   utf8s;
+    std::map<ca::u16, ca::u16>                       classAt;
+    std::map<ca::u16, std::pair<ca::u16, ca::u16>>   natAt;
+    std::map<ca::u16, std::pair<ca::u16, ca::u16>>   refAt;
+    const ca::u16                                    n = u2(8);   // cpCount 在 header 8..9
+    ca::usize                                        p = 10;      // 首条目紧跟其后
+    for (ca::u16 i = 1; i < n; ++i) {
+        const ca::u8 tag = b[p++];
+        tags[i] = tag;
+        switch (tag) {
+        case 1: {
+            const ca::u16 len = u2(p);
+            p += 2;
+            utf8s[i] = std::string(reinterpret_cast<const char*>(&b[p]), len);
+            p += len;
+            break;
+        }
+        case 3:
+        case 4:
+            p += 4;
+            break;
+        case 5:
+        case 6:
+            p += 8;
+            ++i;
+            break;
+        case 7:
+            classAt[i] = u2(p);
+            p += 2;
+            break;
+        case 8:
+        case 16:
+        case 19:
+        case 20:
+            p += 2;
+            break;
+        case 9:
+        case 10:
+        case 11:
+            refAt[i] = {u2(p), u2(p + 2)};
+            p += 4;
+            break;
+        case 12:
+            natAt[i] = {u2(p), u2(p + 2)};
+            p += 4;
+            break;
+        case 15:
+            p += 3;
+            break;
+        case 17:
+        case 18:
+            p += 4;
+            break;
+        default:
+            throw std::runtime_error("未知 CP tag：" + std::to_string(tag));
+        }
+    }
+    std::map<MemberRefKey, int> out;
+    for (const auto& [idx, r] : refAt) {
+        MemberRefKey key;
+        key.owner = utf8s.at(classAt.at(r.first));
+        const auto& nt = natAt.at(r.second);
+        key.name  = utf8s.at(nt.first);
+        key.desc  = utf8s.at(nt.second);
+        out[std::move(key)] = tags.at(idx);
+    }
+    return out;
 }
 
 // ============================================================================
@@ -249,6 +342,15 @@ struct SimpleFixture
 std::string staticArgsOk(ca::i32 key = kKey)
 {
     return "\"" + xorEscape("java.lang.Math", key) + "\", \"" + xorEscape("abs", key)
+           + "\", \"" + xorEscape("(I)I", key) + "\", 0";
+}
+
+/// @brief static 站点实参（JDK 接口 owner 面：owner=java.nio.file.Path
+///        name=of desc=(I)I；--jdk 注入集旁证——接口 static 落 Methodref
+///        是运行期 ICCE，jsoup v3_full Path.of 实证）。
+std::string staticArgsPathOf(ca::i32 key = kKey)
+{
+    return "\"" + xorEscape("java.nio.file.Path", key) + "\", \"" + xorEscape("of", key)
            + "\", \"" + xorEscape("(I)I", key) + "\", 0";
 }
 
@@ -735,6 +837,36 @@ TEST(IndyRestoreRewrite, SwapsStaticIndyForInvokestatic)
     const std::string after = disassemble(classBytes(container, "GruntHost.class"));
     EXPECT_EQ(after.find("invokedynamic"), std::string::npos) << after;
     EXPECT_NE(after.find("invokestatic java/lang/Math.abs (I)I"), std::string::npos) << after;
+    // 类 owner 的 static 反向锁：缺席证据落对（Methodref，0x0A）。
+    const MemberRefKey mathAbs{"java/lang/Math", "abs", "(I)I"};
+    EXPECT_EQ(memberRefTags(classBytes(container, "GruntHost.class")).at(mathAbs), 0x0A);
+}
+
+/// 接口 owner 的 static 落点必须 InterfaceMethodref（0x0B）：scan 已按 --jdk
+/// 注入集记 ownerIsInterface，rewrite 按 ref-kind 落——落 Methodref 在
+/// invokestatic 解析即 ICCE（jsoup v3_full Path.of 实证）。
+TEST(IndyRestoreRewrite, SwapsStaticInterfaceTargetToInterfaceMethodref)
+{
+    SimpleFixture fx;
+    fx.staticArgs = staticArgsPathOf();
+    model::ResourceContainer container = makeContainer({{fx.name, fx.source()}});
+    const ScanResult scanned =
+        scan(container, gruntInput(knowledge::Era::Grunt3,
+                                   std::unordered_set<std::string>{"java/nio/file/Path"}));
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    ASSERT_TRUE(scanned.sites.front().ownerIsInterface);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_EQ(dirty.sites, 1u);
+    EXPECT_EQ(dirty.rewrittenStatic, 1u);
+
+    const std::string after = disassemble(classBytes(container, "GruntHost.class"));
+    EXPECT_EQ(after.find("invokedynamic"), std::string::npos) << after;
+    EXPECT_NE(after.find("invokestaticinterface java/nio/file/Path.of (I)I"), std::string::npos)
+        << after;
+    const MemberRefKey pathOf{"java/nio/file/Path", "of", "(I)I"};
+    EXPECT_EQ(memberRefTags(classBytes(container, "GruntHost.class")).at(pathOf), 0x0B)
+        << after;
 }
 
 TEST(IndyRestoreRewrite, SwapsVirtualIndyForInvokevirtualInPlace)

@@ -124,7 +124,7 @@ struct Site
     std::string targetOwner;         ///< 解密结果（slash 内部名）
     std::string targetName;
     std::string targetDesc;
-    bool        ownerIsInterface = false;   ///< virtual 落点分派
+    bool        ownerIsInterface = false;   ///< ref-kind 分派（接口 static 同口径）
 };
 
 /// @brief 拒绝（fail-closed 计数：拒绝原因进 trace，站点逐位不动）。

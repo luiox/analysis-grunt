@@ -418,9 +418,10 @@ TEST(IndyFoldScan, FoldsReceiverWidenedVirtualSite)
     EXPECT_NE(after.find("invokevirtual IndyHost.t ()I"), std::string::npos) << after;
 }
 
-/// 接口 owner 拒绝（fail-closed）：放宽形只产 invokevirtual，接口 owner 要
-/// invokeinterface（字节长度不同，超出不变 pc 布局面），整站拒绝。
-TEST(IndyFoldScan, RejectsWidenedSiteOnInterfaceOwner)
+/// 接口 owner 的放宽形按接口形折（invokeinterface + InterfaceMethodref）：
+/// 容器普查自证接口性；落 invokevirtual 是运行期 ICCE（jsoup v2_indy
+/// Appendable.append 实证），接口形操作数与 indy 同为 5B，布局面一致。
+TEST(IndyFoldScan, FoldsWidenedSiteOnInterfaceOwnerAsInterface)
 {
     model::ResourceContainer container;
     container.addResource(
@@ -436,13 +437,15 @@ TEST(IndyFoldScan, RejectsWidenedSiteOnInterfaceOwner)
     const ScanResult result = scan(container);
     ASSERT_EQ(result.sites.size(), 1u);
     const Site& site = result.sites.front();
-    EXPECT_FALSE(site.foldable);
-    EXPECT_NE(site.why.find("接口"), std::string::npos)
-        << "拒绝原因应点名接口 owner：" << site.why;
+    EXPECT_TRUE(site.foldable);
+    EXPECT_EQ(site.emitForm, Site::EmitForm::Interface);
 
     const DirtySet dirty = rewrite(container, result);
-    EXPECT_EQ(dirty.sites, 0u);
-    EXPECT_TRUE(dirty.uris.empty());
+    EXPECT_EQ(dirty.sites, 1u);
+    const std::string after = disassemble(classBytes(container, "IndyHost.class"));
+    EXPECT_EQ(after.find("invokedynamic"), std::string::npos) << after;
+    EXPECT_NE(after.find("invokeinterface Iface.t ()I"), std::string::npos)
+        << after;
 }
 
 // ============================================================================

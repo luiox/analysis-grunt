@@ -18,9 +18,9 @@
 /// (String;I)String 紧前的 int 常量 generalKey。judgeSite 粗找 =
 /// INVOKEDYNAMIC 全量起锚，细找按 S2 desc 指纹 → 键链 → S1 解密 + desc 互
 /// 证 → S3 heavy Era 检查 + magic 自证 → 接口旁证（容器普查优先 / `--jdk`
-/// 注入的 JDK 接口集双向作证 / 两无 fail-closed）。JDK 接口集由 adapter 在
-/// Era 非 Unknown 时注入（scanJdkInterfaces 与 indy_decode 单源），残留本
-/// 体零文件系统副作用。
+/// 注入的 JDK 接口集双向作证 / 集空时 virtual fail-closed、static 按类落）。
+/// JDK 接口集由 adapter 在 `--jdk` 给出时注入，不挂 Era 门（与
+/// scanJdkInterfaces/indy_decode 单源），残留本体零文件系统副作用。
 ///
 /// ## 族推导只认 c1/c2 两条边
 ///
@@ -778,18 +778,20 @@ Verdict judgeSite(const std::string& uri, ca::usize methodIndex,
         }
     }
 
-    // ---- 接口旁证（virtual 落点分派）：容器普查优先（权威）；JDK 侧是
-    //      穷举普查，成员与否双向作证；两处皆无 = fail-closed 拒绝。
-    if (site.form == Form::Virtual) {
-        const auto jit = jarIsInterface.find(site.targetOwner);
-        if (jit != jarIsInterface.end()) {
-            site.ownerIsInterface = jit->second;
-        } else if (!input.jdkInterfaces.empty()) {
-            site.ownerIsInterface = input.jdkInterfaces.count(site.targetOwner) != 0;
-        } else {
-            return reject("JDK 接口集未注入，virtual 落点无旁证（fail-closed）：" + site.targetOwner,
-                          7);
-        }
+    // ---- 接口旁证（static/virtual 落点 ref-kind 分派）：容器普查优先
+    //      （权威）；JDK 侧穷举普查，集非空即双向作证。集空 + 容器外：
+    //      virtual fail-closed（invokevirtual 落接口 owner 是运行期 ICCE，
+    //      jsoup Appendable 实证）；static 按类放行（历史全绿口径；接口
+    //      static 落点需 --jdk 旁证才落 InterfaceMethodref，jsoup Path.of
+    //      实证）。
+    const auto jit = jarIsInterface.find(site.targetOwner);
+    if (jit != jarIsInterface.end()) {
+        site.ownerIsInterface = jit->second;
+    } else if (!input.jdkInterfaces.empty()) {
+        site.ownerIsInterface = input.jdkInterfaces.count(site.targetOwner) != 0;
+    } else if (site.form == Form::Virtual) {
+        return reject("JDK 接口集未注入，virtual 落点无旁证（fail-closed）：" + site.targetOwner,
+                      7);
     }
 
     outSite = std::move(site);
@@ -904,15 +906,16 @@ std::optional<Form> rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Sit
         return std::nullopt;
     }
 
+    // ref-kind 单一依据 ownerIsInterface：接口 owner 的 static 落点若落
+    // Methodref，invokestatic 解析即 ICCE（jsoup v3_full Path.of 实证——
+    // scan 已按 --jdk 旁证记 ownerIsInterface，rewrite 不得再按 static 丢弃）。
     in->op = site.form == Form::Static
                  ? Op::INVOKESTATIC
                  : (site.ownerIsInterface ? Op::INVOKEINTERFACE : Op::INVOKEVIRTUAL);
     const bool ok = s.setMember(
         *in,
-        site.form == Form::Static
-            ? ir::ClassSession::MemberSem::Kind::Method
-            : (site.ownerIsInterface ? ir::ClassSession::MemberSem::Kind::InterfaceMethod
-                                     : ir::ClassSession::MemberSem::Kind::Method),
+        site.ownerIsInterface ? ir::ClassSession::MemberSem::Kind::InterfaceMethod
+                              : ir::ClassSession::MemberSem::Kind::Method,
         site.targetOwner, site.targetName, site.targetDesc);
     if (!ok) {
         in->op = Op::INVOKEDYNAMIC;   // 换指令失败：还原，不留半截指令

@@ -519,19 +519,22 @@ Verdict judgeSite(ir::CodeUnit& cu, const std::string& uri, ca::usize methodInde
         return reject(std::move(why), 4);
     }
 
-    // ---- 接口旁证（virtual 落点分派）：容器普查优先（权威）。JDK 侧是
-    //      穷举普查（scanJdkInterfaces 收全集内全部接口），故**成员与否双向
-    //      作证**：在集 = 接口（invokeinterface），不在集 = 类（invokevirtual
-    //      ，ArrayList 这类 JDK 类目标靠缺席证据落对）。集合为空 = 没有任何
-    //      旁证，fail-closed 拒绝（invokevirtual 误调接口方法在运行时
-    //      IncompatibleClassChangeError）。
-    if (form == knowledge::KasumiIndyForm::Virtual) {
+    // ---- 接口旁证（static/virtual 落点 ref-kind 分派）：容器普查优先
+    //      （权威）。JDK 侧是穷举普查（scanJdkInterfaces 收全集内全部接口），
+    //      故**成员与否双向作证**：在集 = 接口，不在集 = 类（ArrayList 这类
+    //      JDK 类目标靠缺席证据落对）。集合为空 = 没有任何旁证：virtual
+    //      fail-closed 拒绝（invokevirtual 误调接口方法在运行时
+    //      IncompatibleClassChangeError）；static 按类放行（无旁证不猜接口，
+    //      历史全绿口径）。旁证成立时接口 static 落点必须 InterfaceMethodref
+    //      （invokestatic + Methodref 指向接口方法运行期 ICCE，jsoup v3_full
+    //      Path.of 实证），rewrite 按同一位分派。
+    {
         const auto jit = jarIsInterface.find(site.targetOwner);
         if (jit != jarIsInterface.end()) {
             site.ownerIsInterface = jit->second;
         } else if (!input.jdkInterfaces.empty()) {
             site.ownerIsInterface = input.jdkInterfaces.count(site.targetOwner) != 0;
-        } else {
+        } else if (form == knowledge::KasumiIndyForm::Virtual) {
             return reject("JDK 接口集未注入，virtual 落点无旁证（fail-closed）：" + site.targetOwner,
                           5);
         }
@@ -620,7 +623,7 @@ FormHit rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu,
     // ---- 纯原地三态：static / getstatic / putstatic ----
     switch (site.form) {
     case knowledge::KasumiIndyForm::Static:
-        if (!swapInvoke(Op::INVOKESTATIC, false)) {
+        if (!swapInvoke(Op::INVOKESTATIC, site.ownerIsInterface)) {
             ++failed;
             return std::nullopt;
         }

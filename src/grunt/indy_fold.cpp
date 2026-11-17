@@ -17,15 +17,19 @@
 /// 复核是防御性的）。scan 产出全部调用点并给不可折叠的记 why，便于观测失
 /// 败面；折叠三条件见头文件，任一不成立记 why 不猜。
 ///
-/// REWRITE 就地换指令（invokestatic/invokevirtual + setMember 换目标方法引
-/// 用，CP 只追加 intern），换不动把 op 还原，失败不留半截指令。无删除无
+/// REWRITE 就地换指令（按 scan 判定的 EmitForm 落 op + setMember 换目标
+/// 方法引用：类 owner 走 invokestatic/invokevirtual + Methodref，接口 owner
+/// 走 invokestatic/invokeinterface + InterfaceMethodref——jsoup v2_indy
+/// Appendable.append / v3_full Path.of 实证接口 owner 落 class 形运行期
+/// ICCE。CP 只追加 intern），换不动把 op 还原，失败不留半截指令。无删除无
 /// 插入，pc 布局不变，调试属性与栈帧无需重定位；lowerMethod 失败整类放弃
 /// 回写。不压缩常量池：BootstrapMethods 仍引用 BSM 句柄与密文参数，压缩会
 /// 把活条目当死数据搬走；清属性是另一个 pass 的事。
 ///
-/// 已知边界：Special/Interface 句柄不折（换指令要动 this 槽栈语义，收益配
-/// 不上风险）；非 ConstantCallSite（可变调用点）不折，目标可能被运行期
-/// 换掉，静态改写不安全。BSM 引用容器内解密方法时，先跑整链前序
+/// 已知边界：Special/Interface CP 句柄（reference_kind 7/9）仍不折
+/// （judge 判据面保持，站点留 indy 行为安全）；接口目标面由 owner 旁证
+/// （容器普查 → JDK 接口集）按接口形正确折。非 ConstantCallSite（可变调
+/// 用点）不折，目标可能被运行期换掉，静态改写不安全。BSM 引用容器内解密方法时，先跑整链前序
 /// （ConstantCall 折解密体）不改变本残留结论，BSM 模拟自带 str/num/
 /// reflect/indy 扩展，解密在模拟里直接算出来，不依赖调用点侧折叠。单轮不
 /// 迭代：改写产出的普通 invoke 若又被混淆器包 indy（不存在此生成面），靠
@@ -352,7 +356,8 @@ private:
 // ============================================================================
 
 ScanResult scan(const mjbase::model::ResourceContainer& container,
-                const iter_budget::ClassBudget& budgetTemplate)
+                const iter_budget::ClassBudget& budgetTemplate,
+                const std::unordered_set<std::string>& jdkInterfaces)
 {
     ScanResult result;
     Engine     engine(container);
@@ -482,15 +487,21 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
                     result.sites.push_back(std::move(site));
                     continue;
                 }
-                // 放宽形的目标 owner 必须是类不是接口：原地改写只产
-                // invokevirtual，接口 owner 要 invokeinterface（字节长度不
-                // 同，超出本 pass 不变 pc 布局面），误用会运行期 ICCE。
-                if (target.kind == jsim::indy::Target::Kind::Virtual
-                    && target.desc != site.indyDesc && ownerKinds.isInterface(target.owner)) {
-                    site.why = "接收者放宽形的目标 owner 是接口：invokeinterface 超出不变布局面";
-                    result.sites.push_back(std::move(site));
-                    continue;
-                }
+                // 落地形态判定：owner 接口性 = 容器普查（ACC_INTERFACE
+                // 原字节）→ JDK 接口集（CLI --jdk 注入，jmods/lib 穷举普查，
+                // 集非空即双向作证）。接口 owner 折接口形（invokeinterface
+                // / invokestatic + InterfaceMethodref），类 owner 折历史
+                // 口径。jsoup v2_indy 实证 Appendable.append、v3_full 实证
+                // Path.of：接口 owner 落 class 形运行期 ICCE。放宽形（句柄
+                // 描述符接收者单边放宽）同口径分派，不再按 owner 接口性
+                // 拒——接口形与 indy 同为 5B 操作数，重定位面一致。
+                const bool iface = jdkInterfaces.count(target.owner) != 0
+                                   || ownerKinds.isInterface(target.owner);
+                site.emitForm = target.kind == jsim::indy::Target::Kind::Static
+                                    ? (iface ? Site::EmitForm::StaticIface
+                                             : Site::EmitForm::Static)
+                                    : (iface ? Site::EmitForm::Interface
+                                             : Site::EmitForm::Virtual);
                 site.foldable = true;
                 ++result.foldable;
                 result.sites.push_back(std::move(site));
@@ -547,10 +558,18 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                 jbc::ir::Insn* in = slot.unwrap();
                 if (in->op != jbc::core::Op::INVOKEDYNAMIC) continue;   // 已被别的站点改过
 
-                const bool isStatic = site->target.kind == jsim::indy::Target::Kind::Static;
-                in->op = isStatic ? jbc::core::Op::INVOKESTATIC : jbc::core::Op::INVOKEVIRTUAL;
+                const bool isStatic = site->emitForm == Site::EmitForm::Static
+                                      || site->emitForm == Site::EmitForm::StaticIface;
+                const bool iface = site->emitForm == Site::EmitForm::Interface
+                                   || site->emitForm == Site::EmitForm::StaticIface;
+                in->op = isStatic ? jbc::core::Op::INVOKESTATIC
+                         : iface  ? jbc::core::Op::INVOKEINTERFACE
+                                  : jbc::core::Op::INVOKEVIRTUAL;
                 // 操作数整族换成目标方法引用：intern 去重，CP 只追加。
-                if (!session->setMember(*in, jbc::ir::ClassSession::MemberSem::Kind::Method,
+                if (!session->setMember(*in,
+                                        iface
+                                            ? jbc::ir::ClassSession::MemberSem::Kind::InterfaceMethod
+                                            : jbc::ir::ClassSession::MemberSem::Kind::Method,
                                         site->target.owner, site->target.name,
                                         site->target.desc)) {
                     // 改不动就把 op 还原，保证失败不留半截指令。
