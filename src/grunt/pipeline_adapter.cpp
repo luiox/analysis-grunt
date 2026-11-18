@@ -1041,8 +1041,8 @@ mjbase::spi::PreservedAnalyses MetadataStripPass::run(
     const ca::usize classesBefore   = countClasses(container);
     const ca::usize resourcesBefore = proof_tools::countResources(container);
 
-    // Era 探测（adapter 调一次，结果注入 scan）：三面判据全是 Kasumi 版本
-    // 知识，Era 未判整面关闭（fail-closed）。
+    // Era 探测（adapter 调一次，结果注入 scan）：三面判据全是版本知识
+    // （Kasumi/Grunt3 各自分支），Era 未判整面关闭（fail-closed）。
     metadata_strip::ScanInput input;
     input.era = knowledge::probeEra(container);
 
@@ -1051,7 +1051,8 @@ mjbase::spi::PreservedAnalyses MetadataStripPass::run(
         std::fprintf(stderr,
                      "[grunt.MetadataStrip] scan: era=%s classes=%zu annos=%zu fields=%zu"
                      " resources=%zu (candidates=%zu anno-blocked=%zu skip-classes=%zu)\n",
-                     input.era == knowledge::Era::Kasumi ? "Kasumi" : "Unknown",
+                     input.era == knowledge::Era::Kasumi ? "Kasumi"
+                         : input.era == knowledge::Era::Grunt3 ? "Grunt3" : "Unknown",
                      scanned.sites.size(), scanned.totalAnnos, scanned.totalFields,
                      scanned.resources.size(), scanned.resourceCandidates,
                      scanned.annoBlocked, scanned.classesSkipped);
@@ -1069,9 +1070,9 @@ mjbase::spi::PreservedAnalyses MetadataStripPass::run(
         return mjbase::spi::PreservedAnalyses::all();
     }
 
-    const metadata_strip::DirtySet dirty = metadata_strip::rewrite(container, scanned);
+    const metadata_strip::DirtySet dirty = metadata_strip::rewrite(container, scanned, input.era);
     const metadata_strip::ProofResult verdict =
-        metadata_strip::proof(container, dirty, classesBefore, resourcesBefore);
+        metadata_strip::proof(container, dirty, classesBefore, resourcesBefore, input.era);
     if (traceEnabled()) {
         std::fprintf(stderr,
                      "[grunt.MetadataStrip] rewrite: classes=%zu annos=%zu fields=%zu"

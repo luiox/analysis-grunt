@@ -491,7 +491,8 @@ std::string defaultMainLine()
            "grunt.ConstantCall,"
            "grunt.DeadMember,"
            "grunt.FlagsStrip,grunt.NoiseAttrStrip,"
-           "grunt.BoogerAnnoStrip";
+           "grunt.BoogerAnnoStrip,"
+           "grunt.MetadataStrip";
 }
 
 }   // namespace grunt
