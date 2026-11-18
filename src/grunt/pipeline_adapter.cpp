@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "grunt/booger_anno_strip.hpp"
+#include "grunt/concat_restore.hpp"
 #include "grunt/arith_fold.hpp"
 #include "grunt/const_pool_restore.hpp"
 #include "grunt/const_value_promote.hpp"
@@ -1027,6 +1028,40 @@ mjbase::spi::PreservedAnalyses IndyRestorePass::run(
                      verdict.ok ? "ok" : "FAILED", verdict.residual);
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.IndyRestore] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses ConcatRestorePass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+
+    // 结构自证（包装体逐字节形状 + recipe/常量数互证），无 Era 门、无旁证面。
+    concat_restore::ScanResult scanned = concat_restore::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.ConcatRestore] scan: entries=%zu wrappers=%zu"
+                     " (shape-bad=%zu recipe=%zu) skip-classes=%zu\n",
+                     scanned.totalBsmEntries, scanned.sites.size(), scanned.wrapperShapeBad,
+                     scanned.recipeMismatch, scanned.classesSkipped);
+    }
+    if (scanned.sites.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const concat_restore::DirtySet dirty = concat_restore::rewrite(container, scanned);
+    const concat_restore::ProofResult verdict = concat_restore::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.ConcatRestore] rewrite: classes=%zu entries=%zu failed=%zu"
+                     " proof=%s residual=%zu\n",
+                     dirty.classes, dirty.entries, dirty.failed,
+                     verdict.ok ? "ok" : "FAILED", verdict.residual);
+        for (const std::string& f : verdict.failed) {
+            std::fprintf(stderr, "[grunt.ConcatRestore] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

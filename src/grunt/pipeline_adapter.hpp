@@ -111,6 +111,14 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
+/// @brief `grunt.ConcatRestore`：拼接 BSM 包装收口（v2/v3 makeConcatWithConstants 转发形 → JDK 标准四参单形，recipe 回填，站点零改动；CFR 析出 `+` 的前置面）。
+class ConcatRestorePass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
 /// @brief `grunt.KeyProcEval`：Grunt v3 ControlflowFlattening key processor
 /// 夹心跨方法静态求值（cff_unflatten processor 桥 fail-closed 的解锁面，缺
 /// 口 #4 联动；(II)I 夹心逐字钉 + jsim 编排层求值 + rotateLeft 接管；求值

@@ -107,6 +107,26 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.NoiseAttrStrip"));
     }
+    Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.ConcatRestore",
+            [] { return makeFailClosed<ConcatRestorePass>("grunt.ConcatRestore"); },
+            "Collapse Grunt v2/v3 string-concat bootstrap wrappers into the"
+            " standard JDK single form: the obfuscator splits the recipe into a"
+            " tag-only string at the indy site plus an Object[] of constant"
+            " segments baked inside a self-owned wrapper BSM that forwards to"
+            " StringConcatFactory.makeConcatWithConstants (5-arg). CFR 0.152"
+            " cannot reassemble the two halves and renders the indy as an"
+            " opaque static call. Restore = refill each backslash-u0002 slot"
+            " with the wrapper constants in order, retarget the BSM handle to"
+            " the standard 4-arg makeConcatWithConstants with the merged"
+            " recipe; call sites are untouched (they only reference the BSM"
+            " index). Semantics are provably identical (makeConcatWithConstants"
+            " resolves backslash-u0002 by consuming the varargs in order)."
+            " Structural self-certification (byte-exact wrapper shape), no Era"
+            " gate. jsoup v3_full: 28 classes, 35 wrappers.");
+    if (r.is_err()) {
+        return Err(std::string("grunt.ConcatRestore"));
+    }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.BoogerAnnoStrip",
             [] { return makeFailClosed<BoogerAnnoStripPass>("grunt.BoogerAnnoStrip"); },
@@ -492,6 +512,7 @@ std::string defaultMainLine()
            "grunt.DeadMember,"
            "grunt.FlagsStrip,grunt.NoiseAttrStrip,"
            "grunt.BoogerAnnoStrip,"
+           "grunt.ConcatRestore,"
            "grunt.MetadataStrip";
 }
 
