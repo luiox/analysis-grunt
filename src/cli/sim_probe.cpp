@@ -154,9 +154,9 @@ void installTrace(jsim::Session& session)
     };
 }
 
-/// @brief 把连续重复的 Jasm 空白转义压成 `\u0020×N`。
+/// @brief 把连续重复的 Jasm 空白转义压成 `U+0020×N`。
 ///
-/// Grunt 的方法名是三万个空格，Jasm 按码点转义成三万个 `\u0020`，一行就 200KB。
+/// Grunt 的方法名是三万个空格，Jasm 按码点转义成三万个 `U+0020`，一行就 200KB。
 /// 压成计数后信息不丢、行还能读，否则 --dump 的输出没法看。
 std::string collapseEscapes(const std::string& text)
 {

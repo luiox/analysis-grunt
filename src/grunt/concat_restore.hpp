@@ -5,7 +5,7 @@
 /// ## 形态（jsoup v3_full 28 类实证；v2 同族转发形）
 ///
 /// 混淆器把 `makeConcatWithConstants` 的 recipe 拆成两半：indy 站点的
-/// bootstrap 静态参数只留 tag 串（`\u0001`=实参位、`\u0002`=常量位），
+/// bootstrap 静态参数只留 tag 串（`U+0001`=实参位、`U+0002`=常量位），
 /// 常量段搬进 BSM 体里的 `Object[]`，BSM 本体是一个纯转发包装：
 ///
 ///     CallSite <wrapper>(Lookup l, String name, MethodType t, String tags) {
@@ -22,11 +22,11 @@
 /// 包装体逐字节形状（aload×4 → [iconst_N; anewarray Object; N×(dup;
 /// iconst_i; ldc String; aastore)] → invokestatic
 /// StringConcatFactory.makeConcatWithConstants 五参形 → areturn）；
-/// recipe 只含 tag 字节且 `\u0002` 数 == 常量数。改写 = 把 `\u0002` 位用
+/// recipe 只含 tag 字节且 `U+0002` 数 == 常量数。改写 = 把 `U+0002` 位用
 /// BSM 体常量按序回填成完整 recipe，句柄改指 JDK 标准
 /// `StringConcatFactory.makeConcatWithConstants(Lookup,String,MethodType,
 /// String)CallSite`，静态参数表换成 [完整 recipe]——站点零改动（站点只
-/// 引 BSM 序号）。语义等价依据：makeConcatWithConstants 对 `\u0002` 的
+/// 引 BSM 序号）。语义等价依据：makeConcatWithConstants 对 `U+0002` 的
 /// 解析就是按序吃 varargs，包装转发与标准形产出同一 CallSite。
 ///
 /// 包装方法还原后零引用，DeadMember 引用普查收走；体里的常量串由压池
@@ -52,7 +52,7 @@ struct Site
 {
     std::string uri;
     ca::usize   entryIndex   = 0;   ///< BootstrapMethods 条目序号
-    std::string mergedRecipe;          ///< \u0002 回填后的完整 recipe（运行时拼 UTF-8 字节）
+    std::string mergedRecipe;          ///< U+0002 回填后的完整 recipe（运行时拼 UTF-8 字节）
 };
 
 /// @brief 三段之间唯一的数据流。
@@ -62,7 +62,7 @@ struct ScanResult
 
     ca::usize totalBsmEntries   = 0;   ///< 全容器 BootstrapMethods 条目数（盘点口径）
     ca::usize wrapperShapeBad   = 0;   ///< 包装体形状不符（非转发形/读不开）
-    ca::usize recipeMismatch    = 0;   ///< recipe 非 tag 串 / \u0002 数与常量数不齐
+    ca::usize recipeMismatch    = 0;   ///< recipe 非 tag 串 / U+0002 数与常量数不齐
     ca::usize classesSkipped    = 0;   ///< 会话开不了的类
 };
 

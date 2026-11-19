@@ -155,9 +155,9 @@ bool parseWrapperBody(const ClassFile& cf, const std::vector<ca::u8>& code,
     return i == code.size();
 }
 
-/// @brief recipe 回填：\u0002 位逐个替换为常量串内容（makeConcatWithConstants
-///        对 \u0002 的解析就是按序吃 varargs，回填产出与包装转发同一 recipe）。
-/// @return 空串 = 判据不齐（\u0002 数与常量数不等）。
+/// @brief recipe 回填：U+0002 位逐个替换为常量串内容（makeConcatWithConstants
+///        对 U+0002 的解析就是按序吃 varargs，回填产出与包装转发同一 recipe）。
+/// @return 空串 = 判据不齐（U+0002 数与常量数不等）。
 std::string mergeRecipe(const ClassFile& cf, ca::u32 argCp,
                         const std::vector<ca::u32>& constants)
 {
