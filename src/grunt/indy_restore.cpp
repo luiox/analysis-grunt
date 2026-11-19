@@ -51,10 +51,10 @@
 ///
 /// ## 边界与不做
 ///
-/// 材料通道不猜（见头文件）。v2 专面不建：heavy 的 @GruntMetadata 注解名
+/// 材料通道不猜（见头文件）。v2 专面不建：heavy 的 `@GruntMetadata` 注解名
 /// 可配置、heavy 关闭时注解类不生成，不能当版本判据，probeEra 的 Grunt2
 /// 判据因此在 era.hpp 明文挂缺（缺口 #15 口径），v2 现场的 heavy 面不激
-/// 活（simple 面两代同源自证，不挂 Era）。BSM / 解密器 / @Metadata 注解清
+/// 活（simple 面两代同源自证，不挂 Era）。BSM / 解密器 / `@Metadata` 注解清
 /// 理不做：改写只动调用点，指纹条目交 DeadMember 引用普查与 metadata-strip
 /// 类面。
 
@@ -415,7 +415,7 @@ bool readStringArray(const jbc::core::AnnotationsAttr::ElemValue& value,
     return true;
 }
 
-/// @brief 从 owner 类字节读 @Metadata 形注解（mv/d1/d2 元素名 + mv 版本检查 +
+/// @brief 从 owner 类字节读 `@Metadata` 形注解（mv/d1/d2 元素名 + mv 版本检查 +
 ///        注解类在容器内的 mv/d1/d2 抽象方法面）。@return 读到填 d1/d2。
 bool readMetadata(const std::unordered_map<std::string, const std::vector<ca::u8>*>& classesBySelf,
                   const std::string& ownerInternal, std::vector<std::string>& d1,

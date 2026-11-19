@@ -13,9 +13,9 @@
 /// era != Kasumi 整面关闭（eraBlocked，fail-closed），未判时一个字节都不
 /// 看内容判据（非 Kasumi jar 挂同前缀资源时 scan 空手而归，产物资源逐字节
 /// 原样）。注解面走 decodeAttr 直调位（booger_anno_strip 同一通路）普查
-/// 类/字段/方法三张挂载面的 @Metadata 条目；深度预检（attrSafeToDecode）
+/// 类/字段/方法三张挂载面的 `@Metadata` 条目；深度预检（attrSafeToDecode）
 /// 拦下的槽计 annoBlocked，解不开的 fail-closed 不摘、不猜条目数。水印
-/// 字段面：字段带 @Metadata 或 ConstantValue 为水印串都计入；ConstantValue
+/// 字段面：字段带 `@Metadata` 或 ConstantValue 为水印串都计入；ConstantValue
 /// 双形态都收，jbc 原生 ConstantValueAttr 解码产物与 RawAttr 2 字节载荷
 /// （const_value_promote 新建形态）。资源面 visitResources 全量走一遍，
 /// 只看 UnknownResource 载荷（参考实现同口径），URI 前缀 + `.md` + 内容探针
@@ -84,9 +84,9 @@ namespace ir = jbc::ir;
 // ==== 判据谓词（scan / rewrite / proof 三段共用，单源）=======================
 // ============================================================================
 
-/// @brief 单条注解是否 @Metadata（S2 形状钉面：描述符全等，参考实现
+/// @brief 单条注解是否 `@Metadata`（S2 形状钉面：描述符全等，参考实现
 ///        isKasumiMetadataAnnotation 对齐）。Era 分支：Kasumi 本家描述符；
-///        Grunt3 双枚（@Metadata + @NativeIncluded，后者 RuntimeInvisible
+///        Grunt3 双枚（`@Metadata` + `@NativeIncluded`，后者 RuntimeInvisible
 ///        无载荷，同类批次剥离）。
 bool isMetadataAnno(const jbc::core::ClassFile&                   cf,
                     const jbc::core::AnnotationsAttr::Annotation& anno,
@@ -172,7 +172,7 @@ bool resourcePrefixHit(std::string_view uri, knowledge::Era era)
 // ==== 注解槽普查 / 摘除（booger_anno_strip 同一 decodeAttr 直调位）===========
 // ============================================================================
 
-/// @brief 一张属性表里的 @Metadata 条目普查。深度预检拦下的槽计 blocked
+/// @brief 一张属性表里的 `@Metadata` 条目普查。深度预检拦下的槽计 blocked
 ///        （fail-closed：解不开的不算没有，如实计数但不产出条目）。
 ca::usize countMetadataTable(jbc::core::ClassFile& cf, std::vector<jbc::core::AttrSlot>& slots,
                              ca::usize& blocked, knowledge::Era era)
@@ -197,7 +197,7 @@ ca::usize countMetadataTable(jbc::core::ClassFile& cf, std::vector<jbc::core::At
     return n;
 }
 
-/// @brief 一张属性表里的 @Metadata 条目摘除（其余注解保留；摘空的属性槽
+/// @brief 一张属性表里的 `@Metadata` 条目摘除（其余注解保留；摘空的属性槽
 ///        整槽移除）。@return 摘除条数。
 ca::usize stripMetadataTable(jbc::core::ClassFile& cf, std::vector<jbc::core::AttrSlot>& slots,
                              ca::usize& blocked, knowledge::Era era)

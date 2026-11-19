@@ -37,7 +37,7 @@ public:
         start_  = std::chrono::steady_clock::now();
     }
 
-    /// @brief 到墙没：超上限即过期（测试钩子 @c forceExpire 强制过期）。
+    /// @brief 到墙没：超上限即过期（测试钩子 `@c` forceExpire 强制过期）。
     bool expired() const
     {
         if (forced_) return true;

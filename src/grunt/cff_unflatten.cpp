@@ -283,7 +283,7 @@ struct SpanParse
 
 /// @brief 从 block 内 tailIdx（应为 ISTORE s）向回反推 state span 并求值。
 ///
-/// 源算法逐行对照（grunt3@e41e852 FlowControlFlowFlattener.kt）：
+/// 源算法逐行对照（`grunt3`@e41e852`` FlowControlFlowFlattener.kt）：
 /// - inline：`[pushInt(baseKey); (pushInt(c); IADD|ISUB|IXOR|IMUL|IDIV|
 ///   INVOKESTATIC Math.max (II)I)*; ISTORE(slot)]`（emitInlineStateProgram +
 ///   StateOp.emitTo，DivConst 常量是除数 `v / value`，nextDivisor 恒正，

@@ -25,7 +25,7 @@
 /// - **注解面**：双枚描述符——`@Lnet/spartanb312/grunteon/internal/Metadata;`
 ///   （mv/d1/d2，RuntimeVisible）+ `@Lnet/spartanb312/grunteon/annotation/
 ///   native/NativeIncluded;`（RuntimeInvisible 无载荷，v3 native 包含标记，
-///   782/846 类在场，与 @Metadata 同批剥离）；
+///   782/846 类在场，与 `@Metadata` 同批剥离）；
 /// - **字段面**：水印串判据 `PROTECTED BY <作者>` 三变体（GRUNTEON/
 ///   YuShengJun/EVERETT，混淆器多作者署名轮换）+ `Gruntpocalypse`；
 /// - **资源面**：URI 前缀 `META-INF/grunteon/` + `.md` 后缀 + 内容探针

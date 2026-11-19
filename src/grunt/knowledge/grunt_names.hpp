@@ -116,8 +116,8 @@ inline constexpr std::string_view kGrunt3MetadataAnnoDesc =
 inline constexpr std::string_view kGrunt3NamespacePrefix = "net/spartanb312/grunteon/";
 
 /// @brief v3 `@NativeIncluded` 注解描述符（RuntimeInvisible、无载荷，v3
-///        native 包含标记，挂方法面为主；metadata_strip 与 @Metadata 同批
-///        剥离。jsoup v3_full 782/846 类在场，全部与 @Metadata 同类共存）。
+///        native 包含标记，挂方法面为主；metadata_strip 与 `@Metadata` 同批
+///        剥离。jsoup v3_full 782/846 类在场，全部与 `@Metadata` 同类共存）。
 inline constexpr std::string_view kGrunt3NativeAnnoDesc =
     "Lnet/spartanb312/grunteon/annotation/native/NativeIncluded;";
 

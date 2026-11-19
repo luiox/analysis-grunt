@@ -16,7 +16,7 @@
 ///             owner 是点分名（java.lang.Math），virtual 时 indy desc 首参
 ///             补 Object receiver；
 ///     heavy:  encOwner 经 BSM 体内 LDC generalKey 解一层；name&lt;&gt;desc 编在
-///             owner 类 @Metadata 注解的 d1/d2 数组里，遍历 d1，第 i 项经
+///             owner 类 `@Metadata` 注解的 d1/d2 数组里，遍历 d1，第 i 项经
 ///             magic2 解出 data1 整数串，`data1 % 59557 == magic2` 命中即取
 ///             d2[i] 经 magic1 解出 `name&lt;&gt;desc`。
 ///

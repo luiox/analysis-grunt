@@ -2,7 +2,7 @@
 /// @brief       残留 `booger_anno_strip` 的三段实现：SCAN / REWRITE / PROOF。
 ///
 /// 判据：属性槽 decodeAttr 得 AnnotationsAttr，按 anno.typeCp 的 utf8 全等
-/// 比对 @Booger 描述符；保留列表非空走 AttrSlot::mutate() 置 Modified，为
+/// 比对 `@Booger` 描述符；保留列表非空走 AttrSlot::mutate() 置 Modified，为
 /// 空把整槽从属性表删除（倒序 erase 防下标漂移）。
 ///
 /// ## 注解码码深度守卫接线（mjbase #158 随升批的全景）
@@ -28,7 +28,7 @@
 ///
 /// 负例测试 test/unittest/annotation_guard_test.cpp（原始字节夹具，jasm
 /// 表达不了千层嵌套）：5000 层深嵌注解类过 BoogerAnnoStrip / DeadMember
-/// 不栈溢出、字节原样保真、不牵连同容器普通类清理；合法浅嵌 @Booger 照
+/// 不栈溢出、字节原样保真、不牵连同容器普通类清理；合法浅嵌 `@Booger` 照
 /// 常普查剥离（fail-open 回归）。
 ///
 /// 注解类本体（混淆器注解类的类文件）的删除属死类删除面，交 DeadMember
@@ -57,7 +57,7 @@ namespace {
 
 namespace ir = jbc::ir;
 
-/// @brief 一张属性表里的 @Booger 条目剔除。@return 剔除条数（0 = 没动）。
+/// @brief 一张属性表里的 `@Booger` 条目剔除。@return 剔除条数（0 = 没动）。
 ca::usize stripTable(ir::ClassSession& s, std::vector<jbc::core::AttrSlot>& slots)
 {
     ca::usize removed = 0;

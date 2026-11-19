@@ -7,7 +7,7 @@
 /// （读点折叠）：scan 只读、rewrite 只写（lower 按 pcmap 保真重定位写回，
 /// 帧内容不动，同 pool_array_fold 口径）、proof 只判（类数不增 + 脏类可重
 /// 解析 + residual 统计）。解密算法是家族知识转写（grunt2@36c0eef /
-/// grunt3@e41e852 逐行同源，源锚点见各函数头注与 knowledge/grunt_names.hpp）。
+/// `grunt3`@e41e852`` 逐行同源，源锚点见各函数头注与 knowledge/grunt_names.hpp）。
 ///
 /// ## SCAN
 ///
