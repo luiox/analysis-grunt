@@ -730,6 +730,22 @@ TEST(IndyRestoreScan, RejectsVirtualSiteWithoutInterfaceEvidence)
     EXPECT_EQ(result.interfaceUnattested, 1u);
 }
 
+TEST(IndyRestoreScan, CountsStaticSiteWithoutInterfaceEvidence)
+{
+    // static 落点 owner 在容器外 + JDK 接口集未注入：按类放行（历史全绿
+    // 口径），但计数 + 告警不静默——owner 若为接口，落 Methodref 是运行期
+    // ICCE（jsoup Path.of 实证，语料产物必须带 --jdk 才落对）。
+    SimpleFixture fx;
+    fx.staticArgs = "\"" + xorEscape("java.lang.Math", kKey) + "\", \""
+                    + xorEscape("abs", kKey) + "\", \"" + xorEscape("(I)I", kKey) + "\", 0";
+    model::ResourceContainer container = makeContainer({{fx.name, fx.source()}});
+
+    const ScanResult result = scan(container, gruntInput());
+    ASSERT_EQ(result.sites.size(), 1u);
+    EXPECT_FALSE(result.sites.front().ownerIsInterface);
+    EXPECT_EQ(result.staticOwnerUnattested, 1u);
+}
+
 TEST(IndyRestoreScan, RejectsHeavySiteWhenEraNotGrunt3)
 {
     // heavy 面挂 Era 检查：Era 未判 Grunt3（此处 Kasumi）整面关闭。

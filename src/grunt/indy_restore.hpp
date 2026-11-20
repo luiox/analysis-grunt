@@ -151,6 +151,7 @@ struct ScanResult
     ca::usize metadataMissing    = 0;   ///< heavy：owner 类无 mv/d1/d2 形注解（或 Era 未判）
     ca::usize materialLane       = 0;   ///< v3 材料通道解密器（运行期材料字段，静态不可解）
     ca::usize interfaceUnattested = 0;  ///< virtual 目标接口无旁证（fail-closed）
+    ca::usize staticOwnerUnattested = 0; ///< static 落点 owner 无旁证（按类放行 + 告警）
     ca::usize classesSkipped     = 0;   ///< 会话开不了的类
 };
 

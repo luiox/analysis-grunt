@@ -60,6 +60,7 @@
 
 #include "grunt/indy_restore.hpp"
 
+#include <cstdio>
 #include <memory>
 #include <optional>
 #include <set>
@@ -792,6 +793,15 @@ Verdict judgeSite(const std::string& uri, ca::usize methodIndex,
     } else if (site.form == Form::Virtual) {
         return reject("JDK 接口集未注入，virtual 落点无旁证（fail-closed）：" + site.targetOwner,
                       7);
+    } else {
+        // static 按类放行（历史全绿口径）：owner 真是接口时落 Methodref 是
+        // 运行期 ICCE（jsoup Path.of 实证，产物带 --jdk 才落对）。无旁证不
+        // 静默：计数 + 告警，产物消费方看得到这个面。
+        ++stats.staticOwnerUnattested;
+        std::fprintf(stderr,
+                     "[grunt.IndyRestore] static 落点无 JDK 接口旁证，按类落 Methodref"
+                     "（owner 若为接口 = 运行期 ICCE，建议 --jdk）：%s.%s\n",
+                     site.targetOwner.c_str(), site.targetName.c_str());
     }
 
     outSite = std::move(site);

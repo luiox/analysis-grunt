@@ -502,6 +502,16 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
                                              : Site::EmitForm::Static)
                                     : (iface ? Site::EmitForm::Interface
                                              : Site::EmitForm::Virtual);
+                if (target.kind == jsim::indy::Target::Kind::Static && !iface
+                    && jdkInterfaces.empty() && !ownerKinds.isInterface(target.owner)) {
+                    // 与 IndyRestore 同口径：无容器旁证也无 JDK 旁证的 static
+                    // 落点按类放行，但不静默——owner 若为接口，落 class 形
+                    // 运行期 ICCE（jsoup Path.of 实证）。
+                    std::fprintf(stderr,
+                                 "[grunt.IndyFold] static 落点无 JDK 接口旁证，按类落"
+                                 "（owner 若为接口 = 运行期 ICCE，建议 --jdk）：%s.%s\n",
+                                 target.owner.c_str(), target.name.c_str());
+                }
                 site.foldable = true;
                 ++result.foldable;
                 result.sites.push_back(std::move(site));
