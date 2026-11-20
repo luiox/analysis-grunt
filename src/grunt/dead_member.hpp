@@ -7,12 +7,23 @@
 /// `/* bridge */ /* synthetic */` 转发器（调用点已内联）、private 辅助字段、
 /// 拆空后的 `<clinit>`。反编译出来就是用户点名要删的空壳。
 ///
+/// **链序约束**：池明文名字普查在原始 clinit 闭包上真跑 jsim，闭包方法体里
+/// 的 junk 载荷会让求值 Bail（PoolArrayFold 的求值副本有 junk 净化，这里
+/// 直接吃容器字节），Bail 类的名字不入证据面——反射按名定位的成员会失护
+/// 被删。上游必须先跑 `grunt.DeadCode`（对 junk 载荷自带死指令检测，squeeze
+/// 后 clinit 求值收敛；样本取证：q8 上 DC 先行普查恢复 7 池，无 DC 全空）。
+/// junk 区更大时 `grunt.JunkRegionStrip` 先行更稳，DC 单独已够用。
+///
 /// ## 判据（scan 的细找）
 ///
 /// 形状候选（scan，S2 结构事实）：
 ///   - 方法：`static` 且方法体纯算术形态（常量/栈/算术/分支/return 词汇表），
-///     或带 ACC_SYNTHETIC/ACC_BRIDGE，或 `private`；跳过 main / native /
-///     abstract / 无码 / `<init>` 特例不作形状豁免；
+///     或 `static` 且带 ACC_SYNTHETIC/ACC_BRIDGE（位只在 static 面作数：
+///     Grunteon 260705 给全部成员撒位——t3 语料实例方法 acc=0x1041 实证，
+///     实例位零信息量，Test 2.1 计数反射破行是后果面），或 `private`，
+///     或无参 static getter 形（体恰为 GETSTATIC + 值返回两条，字段代理
+///     折完调用点后的零引用壳）；
+///     跳过 main / native / abstract / 无码 / `<init>` 特例不作形状豁免；
 ///   - 字段：`private`（public/包级零引用可能是按名反射面，宁留勿删），或
 ///     `static [I` 零访问孤儿数组（seed_strip 拆除建表后的形状，独立强证
 ///     明）；serialVersionUID / 带 ConstantValue 的不删；
@@ -35,7 +46,10 @@
 /// findStatic 本类任意成员）、注解字符串按名引用（`@Redirect`）；另有跨类
 /// indy 目标，scan 内嵌 indy_fold::scan 跑一遍全容器 BSM，解析出的目标方法
 /// 按 owner+name 保护（Grunt 形态：BSM 在 A 类，目标在 B 类）。反射是理论
-/// 逃逸面（按名反射方法拦不住），统计如实记录每一次删除。
+/// 逃逸面（按名反射方法拦不住），统计如实记录每一次删除。解密器族收尾件
+/// （private static `([CJI)Ljava/lang/String;`，ConstantCall 折净后的内部件）
+/// 有独立豁免面：BSM 盲区按形状放行、按名普查对孤儿件（同类零调用点双证）
+/// 豁免，风险论证见 MethodCand::decryptorOrphan 与 scan 实现注释。
 ///
 /// ## 改写（rewrite）
 ///
@@ -61,8 +75,16 @@
 
 namespace grunt::dead_member {
 
-/// @brief 方法候选的形状检查。
-enum class MethodGate : ca::u8 { PureArith = 0, SyntheticBridge, Private };
+/// @brief 方法候选的形状检查。Getter = 无参 static GETSTATIC+值返回两条体
+///        （字段代理折完全部调用点后的零引用壳，public 不落 Private 门）。
+enum class MethodGate : ca::u8
+{
+    PureArith = 0,
+    SyntheticBridge,
+    Private,
+    Getter,
+    BsmOrphan,   ///< BSM 签名孤儿（无活条目指向；indy 面收链后回收）
+};
 
 /// @brief 一个方法候选（scan 时的 backingIndex + 名字描述，rewrite 双重定位）。
 struct MethodCand
@@ -71,6 +93,16 @@ struct MethodCand
     std::string name;
     std::string desc;
     MethodGate  gate = MethodGate::Private;
+    /// 解密器族收尾件（private static `([CJI)Ljava/lang/String;`，ConstantCall
+    /// 折完全部填充点后的零引用内部件）：BSM 盲区与反射按名普查的豁免面，
+    /// 风险论证见 dead_member.cpp 两处豁免点注释。
+    bool decryptorTail = false;
+    /// 解密器收尾件且同类零调用点（scan 时逐方法普查 INVOKESTATIC 证实）。
+    /// 活引用普查的豁免前提：b 族实证——同类池里折剩的死 Methodref 条目会
+    /// 触发 ref-hit 误保（压缩跳过类的池原样进普查，宁误留口径的超集）；
+    /// t/u 族反证——同类还有真调用点（key 表达式形态折不动）时普查保护是
+    /// 唯一防线，不豁免。MethodHandle 常量面是理论逃逸面（Grunt 不产此形）。
+    bool decryptorOrphan = false;
 };
 
 /// @brief 一个字段候选。

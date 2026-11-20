@@ -61,7 +61,7 @@ Grunt v3（ ``ControlflowJump`` ，grunt3@e41e852， ``exceptionBridgeChance > 0
 ----
 
 
-**``grunt.ExcBridgeRestore`` 排在 ``grunt.CffUnflatten`` 之前 ** ：桥摘除后，CFF 的 state span goto 从经 trap 绕行恢复为直达岛头的整块形，岛识别与 span 求值的输入更干净。样本 A 验证（同供给链 ``IndyRestore,StringPoolFold,ConstantCall`` 之上）：不加本 pass CffUnflatten 还原岛 1281，加本 pass 后 **1543（+262，+20.5%）** ；rejects 面同步收窄（foreign-ref 487→292、shape-mismatch 3073→1866）。组合链 ``-p grunt.IndyRestore,grunt.StringPoolFold,grunt.ConstantCall,grunt.ExcBridgeRestore,grunt.CffUnflatten`` 产物 ``-Xverify:all`` 失败集与输入全等（227 NCDFE，VerifyError=0）。
+**``grunt.ExcBridgeRestore`` 排在 ``grunt.CffUnflatten`` 之前 ** ：桥摘除后，CFF 的 state span goto 从经 trap 绕行恢复为直达岛头的整块形，岛识别与 span 求值的输入更干净。样本 A 验证（同供给链 ``IndyRestore,StringPoolFold,ConstantCall`` 之上）：不加本 pass CffUnflatten 还原岛 1281，加本 pass 后 **1543（+262，+20.5%）** ；rejects 面同步收窄（foreign-ref 487→292、shape-mismatch 3073→1866）。组合链 ``-p grunt.IndyRestore,grunt.StringPoolFold,grunt.ConstantCall,grunt.ExcBridgeRestore,grunt.CffUnflatten`` 产物 ``-Xverify:all`` 失败集与输入全等（227 NCDFE，VerifyError=0）。该排位在驱动器默认主线中同轮保持（ ``--converge`` ，见 :ref:`obf-behaviors-contract`）。
 
 
 边界（不还原的面）

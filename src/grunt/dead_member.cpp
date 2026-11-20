@@ -52,12 +52,14 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <unordered_set>
 
 #include "jbc/core/class_file.hpp"
+#include "jbc/core/cp_resolve.hpp"
 #include "jbc/core/opcode.hpp"
 #include "jbc/core/reader.hpp"
 #include "jbc/ir/cp_compact.hpp"
@@ -70,7 +72,16 @@
 
 #include "grunt/container.hpp"
 #include "grunt/indy_fold.hpp"
+#include "grunt/knowledge/const_args.hpp"
+#include "grunt/knowledge/grunt_names.hpp"
+#include "grunt/jsim_executor.hpp"
 #include "grunt/proof_toolbox.hpp"
+#include "grunt/scan_toolbox.hpp"
+
+#include "jsim/engine.hpp"
+#include "jsim/num.hpp"
+#include "jsim/str.hpp"
+#include "jsim/value.hpp"
 
 namespace grunt::dead_member {
 
@@ -84,6 +95,125 @@ constexpr ca::u32 kAccBridge     = 0x0040;
 constexpr ca::u32 kAccNative     = 0x0100;
 constexpr ca::u32 kAccAbstract   = 0x0400;
 constexpr ca::u32 kAccSynthetic  = 0x1000;
+
+/// @brief 解密器族收尾件形状：private static `([CJI)Ljava/lang/String;`。
+///
+/// ConstantCall 解密器族的目标方法专用描述符（char[]·long·int → String）。
+/// 链上 ConstantCall 已把全部填充点折成明文 ldc，此后它是零引用内部件。
+/// BSM 盲区与反射按名普查对它豁免（风险论证见 scan hasBsm 块注释）。
+bool decryptorTailShape(ca::u32 access, const std::string& desc)
+{
+    return (access & (kAccStatic | kAccPrivate)) == (kAccStatic | kAccPrivate)
+           && desc == "([CJI)Ljava/lang/String;";
+}
+
+/// @brief 解密器族第二形描述符面：private static
+///        `(Ljava/lang/String;)Ljava/lang/String;`（260705 逐码元 XOR）。
+///
+/// 描述符本身不是混淆器专有（真实代码也有 private static String 变换助
+/// 手），所以它只做预滤；豁免要体形证据（stringXorDecryptorShape）加同类
+/// 零调用点普查（decOrphan 走查）双证才成立。
+bool stringXorDecryptorDesc(ca::u32 access, const std::string& desc)
+{
+    return (access & (kAccStatic | kAccPrivate)) == (kAccStatic | kAccPrivate)
+           && desc == "(Ljava/lang/String;)Ljava/lang/String;";
+}
+
+/// @brief 解密器族第二形体形：逐码元 XOR 环（length 定长 + charAt 取码元
+///        + 数值载荷 + IXOR/I2C + StringBuilder.append(C)）+ toString
+///        收尾 ARETURN。
+///
+/// 调用面白名单只收五件（SB.<init>:()V / SB.append:(C) / SB.toString /
+/// String.length:()I / String.charAt:(I)C）；体面数值载荷只许数（字符串
+/// 混入即非本族）；禁字段/数组访问、其余调用与引用类操作（new 除 SB 前
+/// 导）。NOP 容忍：链上 ArithFold 的恒等折叠会留 NOP 缝（240705 键链同
+/// 口径），body 里跳过即可。真实代码的 private String 助手若被直接调
+/// 用，decOrphan 普查（同类零 INVOKESTATIC）会拦下——本形只在"孤儿 +
+/// 体形"双证下进豁免，反射按名调用一个池填充内部件不构成保护面（
+/// q8 bA.i/a/b 实证：名字撞 junk 池明文 "a"/"b"/"i"，池读点全是 public
+/// junk 方法，与解密器无关）。
+bool stringXorDecryptorShape(ir::ClassSession& s, ir::CodeUnit& cu)
+{
+    using jbc::core::Op;
+    bool gotLength   = false;
+    bool gotCharAt   = false;
+    bool gotAppend   = false;
+    bool gotToString = false;
+    bool gotIxor     = false;
+    for (const ir::InsnId id : cu.dom.order()) {
+        const ir::Insn* in = cu.dom.peek(id);
+        if (in == nullptr) return false;
+        switch (in->op) {
+        case Op::NOP:
+            continue;
+        case Op::LDC:
+        case Op::LDC_W: {
+            ir::ClassSession::ConstSem sem;
+            if (!s.constOf(*in, sem)) return false;
+            using K = ir::ClassSession::ConstSem::Kind;
+            if (sem.kind != K::Int && sem.kind != K::Long && sem.kind != K::Float
+                && sem.kind != K::Double) {
+                return false;
+            }
+            continue;
+        }
+        case Op::NEW:
+            if (s.classOf(*in) != "java/lang/StringBuilder") return false;
+            continue;
+        case Op::INVOKESPECIAL: {
+            ir::ClassSession::MemberSem sem;
+            if (!s.memberOf(*in, sem)) return false;
+            if (sem.owner == "java/lang/StringBuilder" && sem.name == "<init>"
+                && sem.desc == "()V") {
+                continue;
+            }
+            return false;
+        }
+        case Op::INVOKEVIRTUAL: {
+            ir::ClassSession::MemberSem sem;
+            if (!s.memberOf(*in, sem)) return false;
+            if (sem.owner == "java/lang/StringBuilder" && sem.name == "append"
+                && sem.desc == "(C)Ljava/lang/StringBuilder;") {
+                gotAppend = true;
+                continue;
+            }
+            if (sem.owner == "java/lang/StringBuilder" && sem.name == "toString"
+                && sem.desc == "()Ljava/lang/String;") {
+                gotToString = true;
+                continue;
+            }
+            if (sem.owner == "java/lang/String" && sem.name == "length"
+                && sem.desc == "()I") {
+                gotLength = true;
+                continue;
+            }
+            if (sem.owner == "java/lang/String" && sem.name == "charAt"
+                && sem.desc == "(I)C") {
+                gotCharAt = true;
+                continue;
+            }
+            return false;
+        }
+        case Op::IXOR:
+            gotIxor = true;
+            continue;
+        case Op::ARETURN:
+            continue;
+        default: {
+            const int op = static_cast<int>(in->op);
+            const bool ok = (op >= 0x00 && op <= 0x2d)     // nop/const/locals（ldc 已单独查）
+                            || (op >= 0x36 && op <= 0x4e)  // 局部 store 族
+                            || (op >= 0x57 && op <= 0x5f)  // 栈操作
+                            || (op >= 0x60 && op <= 0x98)  // 算术/转换/比较
+                            || (op >= 0x99 && op <= 0xa7)  // if/icmp/goto
+                            || op == 0xaa || op == 0xab;   // tableswitch/lookupswitch
+            if (!ok) return false;   // 返回族/字段/数组/其余引用操作一律非本族
+            continue;
+        }
+        }
+    }
+    return gotLength && gotCharAt && gotAppend && gotToString && gotIxor;
+}
 
 std::string cpUtf8(const jbc::core::ClassFile& cf, ca::u32 i)
 {
@@ -120,6 +250,43 @@ bool pureArithShape(ir::ClassSession& s, ir::CodeUnit& cu)
         if (!ok) return false;
     }
     return true;
+}
+
+/// @brief 无参 static getter 形状：体恰为 GETSTATIC + 值返回（两条实体指
+///        令，NOP 落点不算），无异常表。
+///
+/// Grunt 的字段代理在 FieldAccessProxy/ProxyInline 折完全部调用点后剩下的
+/// 零引用壳（`public static String[] o() { return a; }` 一族，public 不落
+/// private 门）。删整个方法没有布局/标签/帧面，形状只限定爆炸半径。
+bool pureGetterShape(ir::CodeUnit& cu)
+{
+    using jbc::core::Op;
+    if (!cu.exc.empty()) return false;
+    ca::usize n  = 0;
+    bool      got = false;
+    for (const ir::InsnId id : cu.dom.order()) {
+        const ir::Insn* in = cu.dom.peek(id);
+        if (in == nullptr) return false;
+        if (in->op == Op::NOP) continue;
+        ++n;
+        if (n == 1) {
+            if (in->op != Op::GETSTATIC) return false;
+            got = true;
+            continue;
+        }
+        if (n == 2) {
+            switch (in->op) {
+            case Op::ARETURN:
+            case Op::IRETURN:
+            case Op::LRETURN:
+            case Op::FRETURN:
+            case Op::DRETURN: return got;
+            default: return false;
+            }
+        }
+        return false;
+    }
+    return false;   // 少于两条实体指令不成立
 }
 
 /// @brief 字段是否已带 ConstantValue（带 = 不删）。
@@ -185,14 +352,17 @@ std::set<std::string> annotationStrings(ir::ClassSession& s)
     return out;
 }
 
-/// @brief 单类 CP 的成员引用快照：枚举 Fieldref/Methodref/接口引用。
+/// @brief 单类 CP 的成员引用快照：枚举 Fieldref/Methodref/接口引用 + 字符串常量。
 ///
 /// 压缩成功的类上池是闭包（枚举即活引用）；压缩失败/未压缩的类上池可能含
 /// 死条目，枚举结果是活引用的超集，两类都按 fail-closed 宁误留口径入集。
+/// 字符串常量是反射按名定位（`getDeclaredMethod("name")` 一族）的证据面：
+/// 引用只存在于运行期字符串里，静态引用普查看不见，宁误留。
 struct CpSnap
 {
     std::set<std::string> methodKeys;   // owner::name::desc
     std::set<std::string> fieldKeys;    // owner::name
+    std::set<std::string> strings;      // 字符串常量内容
 };
 
 CpSnap collectCpSnap(const jbc::core::ClassFile& cf)
@@ -202,6 +372,10 @@ CpSnap collectCpSnap(const jbc::core::ClassFile& cf)
         if (!cf.cp.valid(i)) continue;
         const auto& e = cf.cp.at(i);
         using T       = jbc::core::CpTag;
+        if (e.tag == T::String) {
+            if (cf.cp.valid(e.a)) out.strings.insert(cpUtf8(cf, e.a));
+            continue;
+        }
         if (e.tag != T::Fieldref && e.tag != T::Methodref
             && e.tag != T::InterfaceMethodref) {
             continue;
@@ -221,10 +395,11 @@ CpSnap collectCpSnap(const jbc::core::ClassFile& cf)
 
 /// @brief 把快照并入全容器活引用集。
 void mergeSnap(const CpSnap& snap, std::set<std::string>& liveMethods,
-               std::set<std::string>& liveFields)
+               std::set<std::string>& liveFields, std::set<std::string>& liveNames)
 {
     liveMethods.insert(snap.methodKeys.begin(), snap.methodKeys.end());
     liveFields.insert(snap.fieldKeys.begin(), snap.fieldKeys.end());
+    liveNames.insert(snap.strings.begin(), snap.strings.end());
 }
 
 /// @brief 类的形状候选收集（SCAN 本体）。
@@ -237,7 +412,8 @@ void mergeSnap(const CpSnap& snap, std::set<std::string>& liveMethods,
 /// CP 里零引用；findStatic 跨类又要求 public，private 候选不在此列。
 ClassCand scanClass(ir::ClassSession& s, const std::string& uri,
                     const std::set<std::pair<std::string, std::string>>& indyTargets,
-                    bool bsmUnresolved)
+                    const std::set<ca::u32>& indyUnresolvedSlots, bool bsmUnresolved,
+                    const std::set<std::string>& containerClasses)
 {
     ClassCand              cand;
     cand.uri   = uri;
@@ -246,13 +422,49 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri,
     jbc::core::ClassFile&      cf   = s.backing();
     const ir::ClassUnit&       unit = s.unit();
 
+    // 活 BSM 条目（CP InvokeDynamic 引用的下标集）与它们指向的 BSM 方法名。
+    //indy 面收链后死条目同轮被属性剪除（rewrite 压缩段），孤儿 BSM 方法的
+    // gateE 与盲区收窄都以「活条目」为准。
+    std::set<ca::u32>       liveBsmIdx;
+    std::set<std::string>   liveBsmTargetNames;
+    bool                    liveInternalEntry = false;   // 活条目指向容器内 BSM
+    {
+        const jbc::core::ConstantPool& cp = cf.cp;
+        for (ca::usize i = 1; i < cp.size(); ++i) {
+            if (!cp.valid(i)) continue;
+            const jbc::core::ConstantPool::Entry& e = cp.at(i);
+            if (e.tag == jbc::core::CpTag::InvokeDynamic && e.a < 0x10000) {
+                liveBsmIdx.insert(e.a);
+            }
+        }
+        const auto* bsms = scan_tools::bsmEntries(s);
+        if (bsms != nullptr) {
+            for (ca::u32 idx : liveBsmIdx) {
+                if (idx >= bsms->size()) continue;
+                jbc::core::HandleSem hsem;
+                if (!cp.valid((*bsms)[idx].methodRef)) continue;
+                if (!jbc::core::resolveHandleCp(cp, (*bsms)[idx].methodRef, hsem)) continue;
+                liveBsmTargetNames.insert(std::string(hsem.name));
+                if (containerClasses.count(std::string(hsem.owner)) != 0) {
+                    liveInternalEntry = true;
+                }
+            }
+        } else if (!liveBsmIdx.empty()) {
+            liveInternalEntry = true;   // 条目表解不开：宁按盲区处理
+        }
+    }
+
     // 运行时引用面（CP 普查的三类盲区，命中即跳过成员删除）：
     // 1. BootstrapMethods，BSM 可在运行时经解密字符串 findStatic/findVirtual
-    //    本类任意成员（Grunt 形态：目标名是密文，字节码里没有明文引用）；
+    //    本类任意成员（Grunt 形态：目标名是密文，字节码里没有明文引用）——
+    //    盲区以**活条目指向容器内 BSM** 为准：indy 面收链后活条目只剩 JDK
+    //    metafactory 族（目标静态可见、已入 indyTargets），死条目同轮剪除，
+    //    两者都不构成盲区（2026-11-17 收窄，q8/t3 孤儿 BSM 回收实证）；
     // 2. 注解字符串，mixin 框架按注解值里的方法名反射定位（@Redirect）；
     // 3. 跨类 indy 目标，别类 BSM 运行时 findStatic 本类成员（indyTargets）。
     // <clinit> 不受此限：它不可被反射句柄定位，只由 JVM 初始化触发。
-    const bool hasBsm = cf.findClassAttr("BootstrapMethods") != nullptr;
+    const bool hasBsm   = cf.findClassAttr("BootstrapMethods") != nullptr;
+    const bool bsmBlind = hasBsm && liveInternalEntry;
     const std::set<std::string> annoNames = annotationStrings(s);
 
     for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
@@ -279,9 +491,46 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri,
             continue;
         }
         if (name == "main") continue;
+        // 构造器反射可达（getDeclaredConstructor + setAccessible，按类型定位，
+        // 无名字证据可用）：整档不删，宁误留。
+        if (name == "<init>") continue;
         if ((mu.access & (kAccNative | kAccAbstract)) != 0) continue;
         if (!ir::hasCode(s, mi)) continue;
-        if (hasBsm) continue;                                // BSM 盲区：整类方法不删
+        // gateE 前置判定：BSM 签名孤儿（Grunt simple/heavy 签名 + 无活条目指
+        // 向）。JVM 对 BSM 方法的唯一回调通道是 BootstrapMethods 条目；死条目
+        // 同轮被 rewrite 压缩段剪除，活条目没指向 = 永不可达，静态普查零引用
+        // 即死（indy 面收链后的 BSM 方法与专属 helper 回收，2026-11-17 收）。
+        const bool bsmOrphan =
+            (desc == knowledge::kGruntSimpleBsmDesc || desc == knowledge::kGruntHeavyBsmDesc)
+            && liveBsmTargetNames.count(name) == 0;
+        // 解密器第二形体形（描述符预滤 + 体形五件套 + 同类零调用点走查），
+        // bsmBlind 例外与 decTail 普查豁免共用一份证据。
+        const bool strDecTail =
+            stringXorDecryptorDesc(mu.access, desc)
+            && [&] {
+                   auto promoted = ir::promoteMethod(s, mi);
+                   if (promoted.is_err()) return false;
+                   ir::CodeUnit* cu = promoted.unwrap().get();
+                   return cu != nullptr && stringXorDecryptorShape(s, *cu);
+               }();
+        if (bsmBlind) {
+            // BSM 盲区（活条目指向容器内 BSM，运行时经解密字符串 findStatic
+            // 本类成员，静态引用普查看不见）：整类方法不删。例外三支——解密
+            // 器族收尾门：特征描述符 `([CJI)Ljava/lang/String;` + private +
+            // static 是 ConstantCall 解密器族的专用件（全部填充点已折成明文
+            // ldc，零明文引用）；盲区风险被三重证据压住：private 不可跨类直
+            // 调、indy 池条目直指它的情形由 indyTargets 普查拦（下一条）、
+            // 反射按名命中由 liveNames 普查拦。BSM 运行时反射解密器没有混淆
+            // 价值——解密器本身是混淆器生成的池填充内部件，反射调它不构成
+            // 保护面。第二形（(String;)String 逐码元 XOR）同口径入例外：
+            // 描述符不专有，但体形证据（stringXorDecryptorShape）加 decOrphan
+            // 同类零调用点走查双证压住。private+static 落出本块后照常被
+            // gateC 收进候选。BSM 签名孤儿同例外：回调通道（条目指向）已
+            // 不存在。
+            if (!decryptorTailShape(mu.access, desc) && !strDecTail && !bsmOrphan) {
+                continue;
+            }
+        }
         if (annoNames.count(name) != 0) continue;            // 注解按名引用：不删
         if (indyTargets.count({cand.owner, name}) != 0) continue;  // 跨类 BSM 目标：不删
 
@@ -293,15 +542,77 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri,
                    ir::CodeUnit* cu = promoted.unwrap().get();
                    return cu != nullptr && pureArithShape(s, *cu);
                }();
-        const bool gateB = (mu.access & (kAccSynthetic | kAccBridge)) != 0;
+        // gateB 只认 static 上的 bridge/synthetic 位：Grunteon 260705 给全部
+        // 成员撒位（语料实证 t3_plain C/m 实例方法 acc=0x1041，Test 2.1 计数
+        // 反射实证破行），实例成员的位在该家族零信息量——javac 的实例
+        // synthetic 不是桥（有真调用点，census 保）就是外类引用件（不可
+        // 删）；两代混淆器与 javac 的可删静态合成转发器（access$000 /
+        // lambda$ / 内联后零引用的 forwarder）全落 static 面。
+        const bool gateB = (mu.access & (kAccSynthetic | kAccBridge)) != 0
+                           && (mu.access & kAccStatic) != 0;
         const bool gateC = (mu.access & kAccPrivate) != 0;
-        if (!gateA && !gateB && !gateC) continue;
-        if (bsmUnresolved && gateB && !gateC && !gateA) continue;  // indy 目标形状：宁留
+        const bool gateD =
+            (mu.access & kAccStatic) != 0 && desc.size() >= 2 && desc[0] == '('
+            && desc[1] == ')'
+            && [&] {
+                   auto promoted = ir::promoteMethod(s, mi);
+                   if (promoted.is_err()) return false;
+                   ir::CodeUnit* cu = promoted.unwrap().get();
+                   return cu != nullptr && pureGetterShape(*cu);
+               }();
+        const bool gateE = bsmOrphan;
+        if (!gateA && !gateB && !gateC && !gateD && !gateE) continue;
+        // bsmUnresolved（存在未收敛 BSM）时所有 static 门整档豁免：Grunteon
+        // ReferenceObfuscate 的 indy 目标名是密文（运行时 findStatic 才解出
+        // 来），CP 普查看不见引用；被隐藏的目标不限于 synthetic/bridge——
+        // RuntimeMaterial 的 processor / GateProcessorFold 的转发体都是
+        // public static 纯算术形（gateA），常量 getter 也是 findStatic 命中
+        // 面。验收阵 t3_full 实证：豁免只盖 gateB 时 DeadMember 单跑删 219
+        // 法，Test 1.1 起 NoSuchMethodError；扩到 gateA/gateD 后整链行为回
+        // 稳（2026-11-16 修）。private（gateC）不受影响：findStatic 跨类
+        // 不可达，同类 BSM 由 hasBsm 整类豁免覆盖。
+        if (bsmUnresolved && !gateC) continue;
+        // getter 门按未收敛站点的实参槽形豁免：槽数不吻合的 lambda 站点
+        // asType 同 arity 硬规则下不可能命中，不整档宁留。（bsmUnresolved
+        // 已整档宁留，本条仅剩无未收敛 BSM 时的余量面。）
+        if (bsmUnresolved && gateD && !gateC
+            && indyUnresolvedSlots.count(const_args::argSlots(desc)) != 0) {
+            continue;
+        }
+
+        // 解密器收尾件的普查豁免前提：同类零调用点。ConstantCall 已把常量
+        // 形态填充点折净，此处逐方法普查 INVOKESTATIC 复核——非零说明还有
+        // 折不动的真调用（t/u 族：key 是 parseUnsignedLong 表达式形态），
+        // 普查保护是唯一防线，不豁免。
+        const bool decTail  = decryptorTailShape(mu.access, desc) || strDecTail;
+        bool      decOrphan = decTail;
+        if (decTail) {
+            for (ca::usize wi = 0; wi < unit.methods.size() && decOrphan; ++wi) {
+                if (!ir::hasCode(s, wi)) continue;
+                auto walked = ir::promoteMethod(s, wi);
+                if (walked.is_err()) continue;
+                ir::CodeUnit* wcu = walked.unwrap().get();
+                if (wcu == nullptr) continue;
+                for (const ir::InsnId id : wcu->dom.order()) {
+                    const ir::Insn* in = wcu->dom.peek(id);
+                    if (in == nullptr || in->op != jbc::core::Op::INVOKESTATIC) continue;
+                    ir::ClassSession::MemberSem sem;
+                    if (!s.memberOf(*in, sem)) continue;
+                    if (sem.owner == cand.owner && sem.name == name && sem.desc == desc) {
+                        decOrphan = false;
+                        break;
+                    }
+                }
+            }
+        }
 
         cand.methods.push_back(MethodCand{mu.backingIndex, name, desc,
-                                          gateA ? MethodGate::PureArith
-                                                : gateB ? MethodGate::SyntheticBridge
-                                                        : MethodGate::Private});
+                                          gateA   ? MethodGate::PureArith
+                                          : gateB ? MethodGate::SyntheticBridge
+                                          : gateC ? MethodGate::Private
+                                          : gateD ? MethodGate::Getter
+                                                  : MethodGate::BsmOrphan,
+                                          decTail, decOrphan});
     }
 
     for (ca::usize fi = 0; fi < cf.fields.size(); ++fi) {
@@ -310,7 +621,7 @@ ClassCand scanClass(ir::ClassSession& s, const std::string& uri,
         const std::string            fdesc = cpUtf8(cf, fld.descCp);
         if (fname == "serialVersionUID" || fname == "serialPersistentFields") continue;
         if (fieldHasConstantValue(s, fld)) continue;
-        if (hasBsm) continue;                               // BSM 盲区：整类字段不删
+        if (bsmBlind) continue;                             // BSM 盲区：整类字段不删
         if (annoNames.count(fname) != 0) continue;          // 注解按名引用：不删
         const bool privateGate = (fld.access & kAccPrivate) != 0;
         const bool orphanArray = (fld.access & kAccStatic) != 0 && fdesc == "[I";
@@ -334,17 +645,34 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
     // 方法按 owner+name 保护。BSM 在 A 类、目标在 B 类的引用静态普查看不见，
     // 不保护就会删掉 BSM 运行时才解出的目标（NoSuchMethodError at findStatic）。
     // BSM 未收敛的站点目标未知，计数进统计（链上 IndyFold 在前会先折掉大半）。
+    // 未收敛站点仍约束目标的形状：BSM 的 findStatic(...).asType(调用点类型)
+    // 要求同实参槽数（MethodHandle.asType 同 arity 硬规则），所以只有实参槽
+    // 数与未收敛站点调用点描述符吻合的公开候选需要宁留；无参 getter 与
+    // `(Ln;)Runnable` 形 lambda 站点（1 槽）形状不可能命中，不必整档豁免。
     {
         const indy_fold::ScanResult indyScan = indy_fold::scan(container);
         std::set<std::pair<std::string, std::string>> indyTargets;
+        std::set<ca::u32> indyUnresolvedSlots;
         for (const indy_fold::Site& site : indyScan.sites) {
             if (!site.target.owner.empty() && !site.target.name.empty()) {
                 indyTargets.insert({site.target.owner, site.target.name});
+                continue;
+            }
+            if (!site.indyDesc.empty()) {
+                indyUnresolvedSlots.insert(const_args::argSlots(site.indyDesc));
             }
         }
         result.indyTargets   = indyTargets.size();
         result.indyBsmFailed = indyScan.bsmFailed;
         const bool bsmUnresolved = indyScan.bsmFailed != 0;
+        // 容器类名集（活条目 owner 判内/外用；metafactory 族在外 = 非盲区）。
+        std::set<std::string> containerClasses;
+        forEachClass(container, [&](const ClassEntry& ce) {
+            std::string u(ce.uri);
+            if (u.size() > 6 && u.compare(u.size() - 6, 6, ".class") == 0) {
+                containerClasses.insert(u.substr(0, u.size() - 6));
+            }
+        });
         static const bool dmTrace = std::getenv("GRUNT_DM_TRACE") != nullptr;
         forEachClass(container, [&](const ClassEntry& entry) {
             if (dmTrace) {
@@ -360,7 +688,8 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
             // 只跳过该类，其余类照常出候选。
             try {
                 result.classes.push_back(
-                    scanClass(*session, std::string(entry.uri), indyTargets, bsmUnresolved));
+                    scanClass(*session, std::string(entry.uri), indyTargets,
+                              indyUnresolvedSlots, bsmUnresolved, containerClasses));
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "[grunt.DeadMember] scan 类跳过：%s（异常穿透：%s）\n",
                              std::string(entry.uri).c_str(), e.what());
@@ -375,14 +704,281 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
     return result;
 }
 
+/// @brief 池明文名字普查：模拟执行持有 static String[] 字段的类的 <clinit>，
+///        把会话静态区里池数组的元素明文并入 liveNames。
+///
+/// fork 池形的字符串池数组（clinit 前导 + junk 填充方法）元素是运行期解密
+/// 产物：反射按名定位（getDeclaredMethod("add") 一族）的目标名字不在任何
+/// CP 字符串常量里，CP 字符串普查看不见。主链 indy 折叠后 clinit 已无
+/// indy，模拟器可整段跑通（常量假谓词具体求值、junk 调用走编排层接力、
+/// 解密器走 str 扩展）。失败即失败：Bail 的类不入集（少了它的名字，成员
+/// 删除多一分风险，但证据面不造假）；含 indy/athrow 的 clinit 在桥面整方法
+/// 拒绝，同此口径。
+///
+/// 死池豁免：池数组的 GETSTATIC 读点全部落在删除候选方法里的池是死池——
+/// 名字没有任何候选之外的代码能读出去，反射面够不着，明文不进证据面
+/// （junk 池类形态：池 + getter 全零引用，明文是诱饵；样本取证 B.a 只被
+/// 候选 B.c/B.e 读）。候选读点存活（ref-hit 被引用拦下）时名字实际可能被
+/// 引用方带出去——本判定不做存活推演，与 eval-bail 池同一不造假口径记账；
+/// 存活读点把名字带到反射面的形态靠整链重复跑不收敛暴露。
+/// 读点普查只在 CP 含该池 Fieldref 的类里做 promote 级走查（池类 CP 预滤，
+/// 万类 jar 上不为普查全量 promote）。
+void collectPoolNames(const mjbase::model::ResourceContainer& container,
+                      const std::map<std::string, const ClassCand*>& candByUri,
+                      std::set<std::string>& liveNames)
+{
+    static const bool dmTrace = std::getenv("GRUNT_DM_TRACE") != nullptr;
+    SimExecutor exec(container);
+    jsim::str::install(exec.session());
+    jsim::str::installStringAlloc(exec.session());   // 池解密器体 `new String(char[])`
+    jsim::num::install(exec.session());
+
+    // 池求值 mock（parseUnsignedLong / toCharArray）单源安装（scan_toolbox）。
+    scan_tools::installPoolEvalMocks(exec.session());
+
+    static constexpr ca::u32 kAccStatic = 0x0008;
+
+    // 候选类清单：持有 static String[] 字段的类（池数组形态）。
+    struct PoolClass
+    {
+        std::string owner;
+        /// 池数组的 (name, desc) 与会话静态区键 owner::name::desc。
+        std::vector<std::pair<std::string, std::string>> arrays;
+        std::vector<std::string> staticKeys;
+        bool live      = false;   ///< 有候选之外的 GETSTATIC 读点
+        bool extracted = false;
+    };
+    std::vector<PoolClass> pools;
+    forEachClass(container, [&](const ClassEntry& entry) {
+        auto session = openSession(*entry.bytes);
+        if (!session) return;
+        jbc::core::ClassFile& cf = session->backing();
+        PoolClass             pc;
+        pc.owner = std::string(cf.thisName());
+        for (const jbc::core::MemberInfo& f : cf.fields) {
+            if ((f.access & kAccStatic) == 0) continue;
+            const std::string desc(cf.utf8(f.descCp));
+            if (desc != "[Ljava/lang/String;") continue;
+            const std::string name(cf.utf8(f.nameCp));
+            pc.arrays.emplace_back(name, desc);
+            pc.staticKeys.push_back(pc.owner + "::" + name + "::" + desc);
+        }
+        if (!pc.arrays.empty()) pools.push_back(std::move(pc));
+    });
+    if (pools.empty()) return;
+
+    // 死池判定：全容器找池数组的 GETSTATIC 读点（CP 预滤出引用池字段的类，
+    // promote 级归属到方法），读点方法不是删除候选 → 活池。候选归属按
+    // 名字+描述复核（scan 之后池已重排，backing 下标漂移，与删除循环同一
+    // 定位口径）。
+    {
+        std::set<std::string> poolFieldRefs;   // "owner::name::desc"（GETSTATIC 面）
+        for (const PoolClass& pc : pools) {
+            for (ca::usize i = 0; i < pc.arrays.size(); ++i) {
+                poolFieldRefs.insert(pc.staticKeys[i]);
+            }
+        }
+        const auto isCandidate = [&](const std::string& uri, std::string_view name,
+                                     std::string_view desc) {
+            const auto it = candByUri.find(uri);
+            if (it == candByUri.end()) return false;
+            for (const MethodCand& mc : it->second->methods) {
+                if (mc.name == name && mc.desc == desc) return true;
+            }
+            return false;
+        };
+        forEachClass(container, [&](const ClassEntry& entry) {
+            auto session = openSession(*entry.bytes);
+            if (!session) return;   // 会话打不开：读点不可知，宁当活池（不豁免）
+            const std::string      uri(entry.uri);
+            jbc::core::ClassFile&  cf    = session->backing();
+            const ir::ClassUnit&   unit = session->unit();
+
+            // CP 预滤：本类没有引用任何池数组字段就整类跳过。
+            bool refsPool = false;
+            for (ca::u32 i = 1; i < cf.cp.size(); ++i) {
+                if (!cf.cp.valid(i)) continue;
+                const auto& e = cf.cp.at(i);
+                if (e.tag != jbc::core::CpTag::Fieldref) continue;
+                const jbc::core::ConstantPool::Entry& nat = cf.cp.at(e.b);
+                if (nat.tag != jbc::core::CpTag::NameAndType) continue;
+                const std::string owner(cf.utf8(cf.cp.at(e.a).a));
+                const std::string name(cf.utf8(nat.a));
+                const std::string desc(cf.utf8(nat.b));
+                if (poolFieldRefs.count(owner + "::" + name + "::" + desc) != 0) {
+                    refsPool = true;
+                    break;
+                }
+            }
+            if (!refsPool) return;
+
+            for (ca::usize mi = 0; mi < unit.methods.size(); ++mi) {
+                if (!ir::hasCode(*session, mi)) continue;
+                auto promoted = ir::promoteMethod(*session, mi);
+                if (promoted.is_err() || promoted.unwrap().get() == nullptr) {
+                    // 读点不可知（promote 拒绝）：宁当活池，明文照进证据面
+                    // （与 eval-bail 同一不造假口径；上游写回链缺陷留下的
+                    // 坏帧方法在这里 fail-open 会把真反射名弄丢）。
+                    for (PoolClass& pc : pools) pc.live = true;
+                    return;
+                }
+                ir::CodeUnit* cu = promoted.unwrap().get();
+                const std::string_view mname = unit.symbols().str(unit.methods[mi].name);
+                const std::string_view mdesc = unit.symbols().str(unit.methods[mi].desc);
+                if (isCandidate(uri, mname, mdesc)) continue;   // 候选读点不算活读点
+
+                for (const ir::InsnId id : cu->dom.order()) {
+                    const ir::Insn* in = cu->dom.peek(id);
+                    if (in == nullptr || in->op != jbc::core::Op::GETSTATIC) continue;
+                    ir::ClassSession::MemberSem sem;
+                    if (!session->memberOf(*in, sem)
+                        || sem.kind != ir::ClassSession::MemberSem::Kind::Field) {
+                        continue;
+                    }
+                    const std::string key(std::string(sem.owner) + "::" + std::string(sem.name)
+                                          + "::" + std::string(sem.desc));
+                    if (poolFieldRefs.count(key) == 0) continue;
+                    for (PoolClass& pc : pools) {
+                        if (pc.owner == sem.owner) pc.live = true;
+                    }
+                }
+            }
+        });
+        if (dmTrace) {
+            for (const PoolClass& pc : pools) {
+                if (!pc.live) {
+                    std::fprintf(stderr, "[grunt.DeadMember]   dead-pool: %s（%zu 数组）\n",
+                                 pc.owner.c_str(), pc.arrays.size());
+                }
+            }
+        }
+    }
+
+    // 多轮求值：会话静态区跨类累积（PUTSTATIC 接力棒），依赖别的类 clinit
+    // 产物的填充器第一轮读 Unknown 会 Bail，上游类跑完后下一轮收敛。
+    // 轮数封顶防环；单类成功即提取，不成功的类不入集（不猜）。
+    const std::vector<jsim::SimValue> noArgs;
+    for (ca::u32 round = 0; round < 3; ++round) {
+        bool progressed = false;
+        for (PoolClass& pc : pools) {
+            if (pc.extracted || !pc.live) continue;
+            const SimOutcome out = exec.invoke(pc.owner, "<clinit>()V", noArgs);
+            if (out.kind != SimOutcome::Kind::Void
+                && out.kind != SimOutcome::Kind::Returned) {
+                continue;   /// 求值未收敛：等下一轮（上游 clinit 可能还没跑）。
+            }
+            ca::usize got = 0;
+            for (const std::string& key : pc.staticKeys) {
+                const auto it = exec.session().statics.find(key);
+                if (it == exec.session().statics.end()) continue;
+                const jsim::SimValue& v = it->second;
+                if (!v.known || v.type != jsim::ValType::Ref
+                    || v.ref.kind != jsim::RefPayload::Kind::Obj) {
+                    continue;
+                }
+                const auto hit = exec.session().heap.find(v.ref.objId);
+                if (hit == exec.session().heap.end()) continue;
+                for (const jsim::SimValue& elem : hit->second.refs) {
+                    if (!elem.known || elem.type != jsim::ValType::Ref) continue;
+                    if (elem.ref.kind == jsim::RefPayload::Kind::Str) {
+                        if (dmTrace && elem.ref.str.size() <= 2) {
+                            std::fprintf(stderr,
+                                         "[grunt.DeadMember]   pool-name(%s): %s\n",
+                                         pc.owner.c_str(), elem.ref.str.c_str());
+                        }
+                        liveNames.insert(elem.ref.str);
+                        ++got;
+                        continue;
+                    }
+                    // `new String(char[])` 产物是 Obj 载荷（data 槽装明文），
+                    // 与 knownStr 的 Str 载荷是同一语义的两种落地形态。
+                    if (elem.ref.kind == jsim::RefPayload::Kind::Obj) {
+                        const auto objIt = exec.session().heap.find(elem.ref.objId);
+                        if (objIt == exec.session().heap.end()) continue;
+                        if (objIt->second.className != "java/lang/String") continue;
+                        if (dmTrace && objIt->second.data.size() <= 2) {
+                            std::fprintf(stderr,
+                                         "[grunt.DeadMember]   pool-name(%s): %s\n",
+                                         pc.owner.c_str(), objIt->second.data.c_str());
+                        }
+                        liveNames.insert(objIt->second.data);
+                        ++got;
+                    }
+                }
+            }
+            pc.extracted = true;
+            progressed   = true;
+        }
+        if (!progressed) break;
+    }
+}
+
+
 // ============================================================================
 // ==== REWRITE ===============================================================
 // ============================================================================
+
+/// @brief 死 BSM 条目剪除（单类，纯写）：活条目 = CP InvokeDynamic 引用的
+///        下标；死条目 = indy 面收链后无引用的遗留（JVM 只从条目回调 BSM，
+///        剪除不可观察）。剪除后 InvokeDynamic 条目的 bootstrap 下标重映射，
+///        全空则整属性摘除（hasBsm 盲区随之解除，孤儿 BSM 方法由 gateE
+///        收走）。条目表解不开 / 属性不在场 = 原样返回（宁留勿删）。
+void pruneDeadBsmEntries(ir::ClassSession& s)
+{
+    jbc::core::ClassFile& cf = s.backing();
+    jbc::core::AttrSlot*  slot = cf.findClassAttr("BootstrapMethods");
+    if (slot == nullptr) return;
+    auto decoded = cf.decodeAttr(*slot);
+    if (decoded.is_err()) return;
+    auto* body = decoded.unwrap();
+    if (!ca::core::tag_cast::isa<jbc::core::BootstrapMethodsAttr>(body)) return;
+    auto* attr = ca::core::tag_cast::cast<jbc::core::BootstrapMethodsAttr>(body);
+    jbc::core::ConstantPool& cp = cf.cp;
+    std::set<ca::u32> liveIdx;
+    for (ca::usize i = 1; i < cp.size(); ++i) {
+        if (!cp.valid(i)) continue;
+        const jbc::core::ConstantPool::Entry& e = cp.at(i);
+        if (e.tag == jbc::core::CpTag::InvokeDynamic && e.a < attr->entries.size()) {
+            liveIdx.insert(e.a);
+        }
+    }
+    if (liveIdx.size() >= attr->entries.size()) return;
+    std::map<ca::u32, ca::u32> remap;
+    auto*                      bsm = ca::core::tag_cast::cast<jbc::core::BootstrapMethodsAttr>(
+        slot->mutate());
+    if (bsm == nullptr) return;
+    std::vector<jbc::core::BootstrapMethodsAttr::Entry> kept;
+    for (ca::u32 k = 0; k < bsm->entries.size(); ++k) {
+        if (liveIdx.count(k) != 0) {
+            remap.emplace(k, static_cast<ca::u32>(kept.size()));
+            kept.push_back(std::move(bsm->entries[k]));
+        }
+    }
+    bsm->entries = std::move(kept);
+    for (ca::usize i = 1; i < cp.size(); ++i) {
+        if (!cp.valid(i)) continue;
+        jbc::core::ConstantPool::Entry& e = cp.at(i);
+        if (e.tag == jbc::core::CpTag::InvokeDynamic) {
+            const auto hit = remap.find(e.a);
+            if (hit != remap.end()) e.a = hit->second;
+        }
+    }
+    if (bsm->entries.empty()) {
+        auto it = std::find_if(cf.attrs.begin(), cf.attrs.end(),
+                               [slot](const jbc::core::AttrSlot& a) { return &a == slot; });
+        if (it != cf.attrs.end()) cf.attrs.erase(it);
+    }
+}
 
 DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result)
 {
     DirtySet dirty;
     static const bool dmTrace = std::getenv("GRUNT_DM_TRACE") != nullptr;
+
+    // 候选索引（死池判定要用，先建）：候选定位按名字+描述复核（scan 之后池
+    // 已重排，backing 下标漂移）。
+    std::map<std::string, const ClassCand*> candByUri;
+    for (const ClassCand& cand : result.classes) candByUri[cand.uri] = &cand;
 
     // (1) 全容器 CP 压缩：引用闭包前提（死条目会污染零引用判定）。压缩失败
     // 的类不做成员删除，也不作为引用方计入，两边都宁留勿删。
@@ -399,11 +995,34 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             // Result 错误通道），预检拒绝按压缩失败同一通道原样保真。
             try {
                 auto session = openSession(bytes);
-                if (!session || !classAnnoDepthSafe(session->backing())
-                    || ir::compactConstantPool(*session).is_err()) {
+                if (!session) {
+                    if (dmTrace) std::fprintf(stderr, "[compact-fail] %s 会话打不开\n", uri.c_str());
                     compactFailed.insert(uri);
                     continue;
                 }
+                if (!classAnnoDepthSafe(session->backing())) {
+                    if (dmTrace) std::fprintf(stderr, "[compact-fail] %s 注解深度预检拒\n", uri.c_str());
+                    compactFailed.insert(uri);
+                    continue;
+                }
+                const auto compacted = ir::compactConstantPool(*session);
+                if (compacted.is_err()) {
+                    if (dmTrace) {
+                        std::fprintf(stderr, "[compact-fail] %s 压缩错误=%s attr=%.*s\n",
+                                     uri.c_str(),
+                                     jbc::ir::to_string(compacted.unwrap_err().code),
+                                     static_cast<int>(compacted.unwrap_err().attrName.size()),
+                                     compacted.unwrap_err().attrName.data());
+                    }
+                    compactFailed.insert(uri);
+                    continue;
+                }
+                // 死 BSM 条目剪除：活条目 = 压缩后 CP 里 InvokeDynamic 引用的
+                // 下标（indy 面收链后死条目 = 无 indy 引用的遗留；JVM 只从条
+                // 目回调 BSM，剪除不可观察）。剪除后 InvokeDynamic 条目的
+                // bootstrap 下标重映射；全空则整属性摘除（hasBsm 盲区随之解
+                // 除，孤儿 BSM 方法下一轮由 gateE 收走）。
+                pruneDeadBsmEntries(*session);
                 auto encoded = jbc::core::writeClass(session->backing());
                 if (encoded.is_err()) {
                     compactFailed.insert(uri);
@@ -450,6 +1069,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     // 截短出晚到的类不在普查里的漏计。
     std::set<std::string> liveMethods;
     std::set<std::string> liveFields;
+    std::set<std::string> liveNames;   // 字符串常量全集（反射按名定位的证据面）
     {
         ca::usize censusRawSources = 0;
         ca::usize censusBlind      = 0;
@@ -458,7 +1078,8 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
             auto session = openSession(*entry.bytes);
             if (session) {
                 try {
-                    mergeSnap(collectCpSnap(session->backing()), liveMethods, liveFields);
+                    mergeSnap(collectCpSnap(session->backing()), liveMethods, liveFields,
+                              liveNames);
                     return;
                 } catch (...) {
                     std::fprintf(stderr,
@@ -484,16 +1105,21 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                              std::string(entry.uri).c_str());
                 return;
             }
-            mergeSnap(collectCpSnap(*parsed.file), liveMethods, liveFields);
+            mergeSnap(collectCpSnap(*parsed.file), liveMethods, liveFields, liveNames);
         });
         dirty.censusRawSources = censusRawSources;
         dirty.censusBlind      = censusBlind;
+        // 池明文名字普查：模拟执行持有 String[] 池数组的类的 <clinit>，把
+        // 运行期解密产物（反射按名定位的目标）并入 liveNames。CP 字符串
+        // 常量普查看不见这类名字（fork 池形：名字是运行期解密产物）。死池
+        // （读点全落删除候选）的明文不进证据面。
+        collectPoolNames(container, candByUri, liveNames);
         if (dmTrace) {
             std::fprintf(stderr,
                          "[grunt.DeadMember] 普查：methodKeys=%zu fieldKeys=%zu"
-                         " raw-sources=%zu blind=%zu\n",
-                         liveMethods.size(), liveFields.size(), censusRawSources,
-                         censusBlind);
+                         " nameStrings=%zu raw-sources=%zu blind=%zu\n",
+                         liveMethods.size(), liveFields.size(), liveNames.size(),
+                         censusRawSources, censusBlind);
         }
     }
 
@@ -507,11 +1133,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         return dirty;
     }
 
-    // (3) 逐类删成员。候选定位按名字+描述复核（scan 之后池已重排，backing
-    // 下标漂移）。
-    std::map<std::string, const ClassCand*> candByUri;
-    for (const ClassCand& cand : result.classes) candByUri[cand.uri] = &cand;
-
+    // (3) 逐类删成员（候选索引 candByUri 已在压缩前建好）。
     std::vector<std::pair<std::string, std::vector<ca::u8>>> pending;
     forEachClass(container, [&](const ClassEntry& entry) {
         const std::string uri(entry.uri);
@@ -542,10 +1164,34 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 
         for (const MethodCand& mc : cand.methods) {
             dirty.attempted += 1;
-            const std::string key = owner + "::" + mc.name + "::" + mc.desc;
-            if (liveMethods.count(key) != 0) {
+            // 反射按名定位（getDeclaredMethod("name") 一族）：引用只存在于
+            // 运行期字符串里，静态引用普查看不见。名字命中容器内任何字符串
+            // 常量的成员宁误留。解密器孤儿件（shape + 同类零调用点双证）
+            // 豁免：单字符名（如 "a"）撞上 junk 载荷字符串的概率极高，而反
+            // 射调一个需要 (char[], long, int) 密钥材料的混淆器内部件不构成
+            // 保护面（全量论证见 scan hasBsm 块）。
+            if (liveNames.count(mc.name) != 0 && !mc.decryptorOrphan) {
+                if (dmTrace) {
+                    std::fprintf(stderr, "[grunt.DeadMember]   name-hit: %s.%s %s\n",
+                                 owner.c_str(), mc.name.c_str(), mc.desc.c_str());
+                }
                 ++dirty.rejectedByRef;
                 continue;
+            }
+            const std::string key = owner + "::" + mc.name + "::" + mc.desc;
+            if (liveMethods.count(key) != 0 && !mc.decryptorOrphan) {
+                if (dmTrace) {
+                    std::fprintf(stderr, "[grunt.DeadMember]   ref-hit: %s\n", key.c_str());
+                }
+                ++dirty.rejectedByRef;
+                continue;
+            }
+            if (mc.decryptorOrphan
+                && (liveNames.count(mc.name) != 0 || liveMethods.count(key) != 0)) {
+                if (dmTrace) {
+                    std::fprintf(stderr, "[grunt.DeadMember]   orphan-exempt: %s %s\n",
+                                 owner.c_str(), mc.name.c_str());
+                }
             }
             // 复核定位（backing 序 + 名字 + 描述三者一致才算同一成员）。
             bool found = false;
@@ -567,6 +1213,11 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
 
         for (const FieldCand& fc : cand.fields) {
             dirty.attempted += 1;
+            // 反射按名定位（getDeclaredField("name") 一族）：宁误留。
+            if (liveNames.count(fc.name) != 0) {
+                ++dirty.rejectedByRef;
+                continue;
+            }
             const std::string key = owner + "::" + fc.name;
             if (liveFields.count(key) != 0) {
                 ++dirty.rejectedByRef;
@@ -652,7 +1303,14 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                 return;
             }
             const std::string name(cf.thisName());
-            if (name == "module-info" || name == "package-info") return;
+            // thisName 是全限定内部名（org/demo/package-info 形），裸名精确
+            // 比对永不命中——按简单名判。4e16046 语料实测：jsoup 7 个
+            // package-info 全被空壳回收误摘，jspecify 注解类（仅被
+            // package-info 注解 CP 引用）随后失引用被 converge 传递性摘除。
+            const ca::usize slash     = name.rfind('/');
+            const std::string simpleName
+                = (slash == std::string::npos) ? name : name.substr(slash + 1);
+            if (simpleName == "module-info" || simpleName == "package-info") return;
             shellUris.emplace_back(entry.uri);
             shellNames.push_back(name);
         });

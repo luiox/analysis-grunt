@@ -55,10 +55,10 @@
 ///   3. 初始化暴露检查：`invokestatic proxy(C)` 是 C 的主动使用。改回字段
 ///      访问后这层触发消失。生成面里调用点全在代理 owner 类自身（外置类
 ///      无 `<clinit>`），判据把这写成可检查的事实：**代理的调用点必须全
-///      部落在 owner 类内，否则要求 owner `<clinit>` 缺失或只剩
-///      NOP/RETURN**（scan_tools::classInitNeutral 中性口径），不满足整
-///      代理放弃。字段 owner 的初始化时机不受影响：代理体内的字段访问本来
-///      就触发它。
+///      部落在 owner 类内，否则要求 owner `<clinit>` 中性**
+///      （scan_tools::classInitNeutral 双面口径：缺失/空壳或纯常量初值），
+///      不满足整代理放弃。字段 owner 的初始化时机不受影响：代理体内的字段
+///      访问本来就触发它。
 ///
 /// ## 改写
 ///

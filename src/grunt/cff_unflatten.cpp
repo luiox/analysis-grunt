@@ -241,6 +241,15 @@ bool buildMethodView(const PromotedCode& code, MethodView& out)
 }
 
 /// @brief dom 序里 pos 的下一条指令（方法尾返回 kNoInsn，moveRange 尾哨兵）。
+///
+/// 坐标口径警示（2026-11 实测冲突，缺口台账）：`mv.orderOf` 是快照序位置，
+/// 本函数查的是活序——步 4 的钉插入会让两套坐标错位，句柄语义上"应该"按
+/// 快照序取。但 jsoup v3_full 整链实证：快照序取句柄（把搬迁段截到精确块
+/// 尾）反而打挂 14/14 对拍（方法死循环）——真形里入口块搬迁必须连带其
+/// 位置接续区整体平移，活序混查恰好给出这个更长区间；夹具级"孤儿尾
+/// goto"面（ResolvesCarrierArmThroughSignedMathMaxSpan，已 GTEST_SKIP 记
+/// 账）是真缺陷但从未在真样上显形。正确解 = 搬迁段含位置接续区的活序模
+/// 型，属缺口 #4 联动深水面，未解前保持本形。
 ir::InsnId nextInsnOf(const MethodView& mv, ca::usize pos)
 {
     const std::vector<ir::InsnId>& order = mv.code.cu->dom.order();
@@ -274,7 +283,7 @@ struct SpanParse
 
 /// @brief 从 block 内 tailIdx（应为 ISTORE s）向回反推 state span 并求值。
 ///
-/// 源算法逐行对照（grunt3@e41e852 FlowControlFlowFlattener.kt）：
+/// 源算法逐行对照（`grunt3`@e41e852`` FlowControlFlowFlattener.kt）：
 /// - inline：`[pushInt(baseKey); (pushInt(c); IADD|ISUB|IXOR|IMUL|IDIV|
 ///   INVOKESTATIC Math.max (II)I)*; ISTORE(slot)]`（emitInlineStateProgram +
 ///   StateOp.emitTo，DivConst 常量是除数 `v / value`，nextDivisor 恒正，
@@ -369,7 +378,12 @@ SpanParse evalSpanTail(const MethodView& mv, const Blk& blk, ca::usize tailIdx, 
         const Step&   st = rev[r];
         const ca::u32 c  = static_cast<ca::u32>(st.c);
         if (st.isMax) {
-            v = std::max(v, c);
+            // Math.max(II)I 是带符号比较：u32 位型直接 std::max 会把负数
+            // 当大数（负 × 正混签必选错）。jsoup v3_flow notNullParam 实证：
+            // 桥键错 → caseIdxOf 落表外 -1 → carrier 臂重指 default 头
+            // （alias face = 入口块），入口块归位后其标签随迁 → 载体臂改指
+            // 入口块自环，方法死循环。
+            v = static_cast<ca::u32>(std::max(static_cast<ca::i32>(v), st.c));
             continue;
         }
         switch (st.op) {
@@ -414,6 +428,7 @@ struct BridgeRef
     bool      cc      = false;   ///< 终结是条件分支（块保留，只重指臂字段）
     bool      keep    = false;   ///< 块体保留（条件形或带 junk 前缀的可达桥）
     bool      entry   = false;   ///< blocks[0]
+    bool      bait    = false;   ///< case 目标是 handler 锚头（死饵：整擦不重指）
 };
 
 /// @brief 一条边载体（无状态 junk 检查；臂字段重指 caseOf(key)/default）。
@@ -423,6 +438,7 @@ struct CarrierRef
     std::vector<ca::usize> userPos;    ///< block 内锚岛头的字段指令（相对下标）
     ca::i32                key = 0;
     ca::i32                caseIdx = -1;
+    bool                   bait = false;   ///< case 目标是 handler 锚头（死饵：整擦不重指）
 };
 
 struct Island
@@ -442,6 +458,13 @@ struct Island
     /// 条件分支的落空臂是位置边，本岛已归类条件用户紧邻岛头（布局前驱）
     /// 时，岛头被擦后落空臂会改落邻接后继，改写期补一枚 GOTO 钉住原落点。
     std::vector<std::pair<ca::usize, ir::InsnId>> fallPins;
+    /// 死 case 体链 (链头块, 链长)：解路保留臂引用面之外的 case 目标块 +
+    /// 其纯 fallthrough 后继。链头进 victimBlks 供 positional 落入守卫钉/
+    /// 拒；整链入 victims 整擦（executeIsland）。空 = 本岛无死体（历史行
+    /// 为）。死体不擦则解路后变可达位置填充物，其尾邻接 handler 头帧冲突
+    /// → VerifyError（jsoup v3_full TokeniserState$50.$gg1bdbksz8j2sa8
+    /// 的 floorMod(10153,0) 垃圾岛实证）。
+    std::vector<std::pair<ca::usize, ca::usize>> deadBodies;
     bool    hasEntry        = false;  ///< blocks[0] 是本岛入口桥
     ca::i32 entryCaseIdx    = -1;     ///< 入口键的 case 下标（-1 = 出表 → default）
     bool    entryCc         = false;  ///< 入口桥是条件形（块保留，只移动目标块）
@@ -963,6 +986,7 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
     }
 
     // ---- 相 7：异常表面（handler 桥重绑 / 被擦块上 end 锚前移 / start 连坐）----
+    std::set<ca::usize> plannedVictims;   // 全岛累计擦蚀面（相 8 安全网口径）
     for (ca::usize i = 0; i < islands.size(); ++i) {
         Island& isl = islands[i];
         if (failOf[i] != IslandFail::None) continue;
@@ -973,6 +997,128 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
             const bool entryHold = br.entry && (isl.entryTrampoline || isl.entryKeep);
             if (!br.cc && !br.keep && !entryHold) victimBlks.insert(br.blk);
         }
+
+        // ---- 死饵闭包 + 死 case 体链收集（不动点）------------------------
+        //   判据 fail-closed：目标块非本岛 carrier/桥/dispatcher/入口目标/
+        //   default 别名；引用面 = 全体 users 落在 dispatcher 块内（switch
+        //   独占引用，随 dispatcher 入批）；不在存活臂引用集（非死饵
+        //   carrier/桥 caseIdx 目标 + 入口目标）；非异常表锚点。链后继逐块
+        //   要求头部无标签（无独立入边）+ 非锚点 + 非认领 + 非 case 目标。
+        //   死饵：case 目标落在 handler 锚头或已定死块上的 carrier/桥——
+        //   解路重指会把活分支直连 handler 头帧/死体（空栈 vs {Throwable}
+        //   合并 → VerifyError，jsoup v3_full $gg1bdbksz8j2sa8 的
+        //   -1441906808 → 出口臂实证），改整链整擦（dec7b 面：bail 链随解
+        //   路消解，出口臂只剩异常边）；条件形/保留形无处整擦 → 岛整体拒。
+        const auto headBlkOf = [&](const ir::InsnId id) -> std::optional<ca::usize> {
+            const auto it = mv.blockOf.find(id.slot);
+            if (it == mv.blockOf.end()) return std::nullopt;
+            return it->second;
+        };
+        std::set<ca::usize> anchorBlks;    // 全部异常表锚（start/end/handler）
+        std::set<ca::usize> handlerBlks;   // 仅 handler 锚：唯一带帧头（{Throwable}）
+        for (const auto& e : mv.code.cu->exc) {
+            for (const ir::LabelId l : {e.start, e.end, e.handler}) {
+                const auto r = dom.resolveLabel(l);
+                if (r.is_err() || r.unwrap().isEnd()) continue;
+                if (const auto b = headBlkOf(r.unwrap().insn)) {
+                    anchorBlks.insert(*b);
+                    if (l == e.handler) handlerBlks.insert(*b);
+                }
+            }
+        }
+        const auto dispOwned = [&](const ir::InsnId u) {
+            const auto it = mv.blockOf.find(u.slot);
+            return it != mv.blockOf.end() && it->second == isl.dispBlk;
+        };
+        std::set<ca::usize> erasedBlks;   // 死饵块 + 死体链块（闭包累积）
+        for (bool more = true; more; ) {
+            more = false;
+            // 死饵闭包：case 目标是 handler 锚头/已定死块 → carrier/桥本体
+            // 也是死饵（运行期该键不解路，重指即非法直连）。锚集只取
+            // handler 锚（唯一带帧头 {Throwable}）；start/end 锚无帧语义，
+            // 入集会把普通解路桥（如 exc 尾锚块桥）误标死饵、跳过
+            // replaceAllUses 留下悬挂引用（CffExc 夹具 LB2→LbR 实证）。
+            for (CarrierRef& cr : isl.carriers) {
+                if (cr.bait) continue;
+                if (const auto b = headBlkOf(targetHeadOf(isl, cr.caseIdx))) {
+                    if (handlerBlks.count(*b) != 0 || erasedBlks.count(*b) != 0) {
+                        cr.bait = true;
+                        erasedBlks.insert(cr.blk);
+                        more = true;
+                    }
+                }
+            }
+            for (BridgeRef& br : isl.bridges) {
+                if (br.bait) continue;
+                if (const auto b = headBlkOf(targetHeadOf(isl, br.caseIdx))) {
+                    if (handlerBlks.count(*b) != 0 || erasedBlks.count(*b) != 0) {
+                        br.bait = true;
+                        erasedBlks.insert(br.blk);
+                        if (br.cc || br.keep) {
+                            fail(i, IslandFail::ForeignRef);   // 条件形/保留形无处整擦
+                        }
+                        more = true;
+                    }
+                }
+            }
+            if (failOf[i] != IslandFail::None) break;
+            // 存活臂引用面（死饵不重指，其 case 目标不算存活）。
+            std::set<ca::usize> keepTgts;
+            for (const BridgeRef& br : isl.bridges) {
+                if (br.bait) continue;
+                if (const auto b = headBlkOf(targetHeadOf(isl, br.caseIdx))) {
+                    keepTgts.insert(*b);
+                }
+            }
+            for (const CarrierRef& cr : isl.carriers) {
+                if (cr.bait) continue;
+                if (const auto b = headBlkOf(targetHeadOf(isl, cr.caseIdx))) {
+                    keepTgts.insert(*b);
+                }
+            }
+            if (isl.hasEntry) {
+                if (const auto b = headBlkOf(targetHeadOf(isl, isl.entryCaseIdx))) {
+                    keepTgts.insert(*b);
+                }
+            }
+            // 死 case 体链：存活引用面之外的 case 目标 + 纯 fallthrough 后继。
+            for (ca::usize k = 0; k < isl.cases.size(); ++k) {
+                const auto hb = headBlkOf(isl.cases[k]);
+                if (!hb) continue;
+                if (isl.hasEntry && static_cast<ca::i32>(k) == isl.entryCaseIdx) continue;
+                if (keepTgts.count(*hb) != 0 || anchorBlks.count(*hb) != 0) continue;
+                if (victimBlks.count(*hb) != 0 || erasedBlks.count(*hb) != 0) continue;
+                bool owned = true;
+                for (const ir::InsnId u : dom.usersOf(isl.cases[k])) {
+                    if (!dispOwned(u)) { owned = false; break; }
+                }
+                if (!owned) continue;
+                ca::usize b = *hb;
+                ca::usize n = 1;
+                while (!mv.blocks[b].terminated && b + 1 < mv.blocks.size()) {
+                    const Blk& nx = mv.blocks[b + 1];
+                    if (anchorBlks.count(b + 1) != 0) break;
+                    if (!dom.labelsAt(nx.entry).empty()) break;
+                    if (keepTgts.count(b + 1) != 0) break;
+                    if (victimBlks.count(b + 1) != 0 || erasedBlks.count(b + 1) != 0) break;
+                    bool isCase = false;
+                    for (ca::usize k2 = 0; k2 < isl.cases.size(); ++k2) {
+                        if (const auto b2 = headBlkOf(isl.cases[k2]); b2 && *b2 == b + 1) {
+                            isCase = true;
+                            break;
+                        }
+                    }
+                    if (isCase) break;
+                    ++b;
+                    ++n;
+                }
+                for (ca::usize j = 0; j < n; ++j) erasedBlks.insert(*hb + j);
+                isl.deadBodies.emplace_back(*hb, n);
+                more = true;
+            }
+        }
+        if (failOf[i] != IslandFail::None) continue;
+        for (const ca::usize b : erasedBlks) victimBlks.insert(b);
 
         // ---- positional 落入守卫（usersOf 只看字段引用；非终结顺序落入
         //         与条件分支落空臂都是位置边，受害者被擦后位置边改落邻接
@@ -1046,6 +1192,40 @@ AssemblyOut assembleIslands(const MethodView& mv, ir::ClassSession& s)
                     fail(i, IslandFail::ExcBlocked);
                     break;
                 }
+            }
+        }
+        if (failOf[i] != IslandFail::None) continue;
+
+        // ---- 相 8：擦蚀布局安全网（fail-closed）----
+        //   受害者整擦后布局压实：存活块 a 的落空/顺序位置边若改落 handler
+        //   锚头块（帧 {Throwable}），空栈位置边与 handler 帧合并即非法
+        //   （VerifyError）。累计擦蚀面（含先行岛）上存活块序遍历，逐对
+        //   检查位置边 → handler 锚。
+        for (const ca::usize v : victimBlks) plannedVictims.insert(v);
+        {
+            std::set<ca::usize> handlers;
+            for (const auto& e : mv.code.cu->exc) {
+                const auto r = dom.resolveLabel(e.handler);
+                if (r.is_err() || r.unwrap().isEnd()) continue;
+                if (const auto b = headBlkOf(r.unwrap().insn)) handlers.insert(*b);
+            }
+            if (!handlers.empty()) {
+                ca::usize prev = kNoPos;
+                bool      bad  = false;
+                for (ca::usize b = 0; b < mv.blocks.size(); ++b) {
+                    if (plannedVictims.count(b) != 0) continue;
+                    if (prev != kNoPos) {
+                        const Blk& pa  = mv.blocks[prev];
+                        const Op   aOp = mv.insn(pa.insns.back()).op;
+                        if ((!pa.terminated || isConditionalBranch(aOp))
+                            && handlers.count(b) != 0) {
+                            bad = true;
+                            break;
+                        }
+                    }
+                    prev = b;
+                }
+                if (bad) fail(i, IslandFail::ExcBlocked);
             }
         }
     }
@@ -1145,7 +1325,9 @@ bool executeIsland(ir::ClassSession& s, const MethodView& mv, ir::CodeEditor& ed
         if (entryHold) continue;
         const ir::InsnId tgt = targetHeadOf(isl, br.caseIdx);
         const Blk&       blk = mv.blocks[br.blk];
-        if (!dom.replaceAllUses(blk.entry, tgt).is_ok()) return false;
+        if (!br.bait) {   // 死饵桥不重指（目标 = handler 头帧，直连即非法）
+            if (!dom.replaceAllUses(blk.entry, tgt).is_ok()) return false;
+        }
         for (const ir::InsnId id : blk.insns) victims.push_back(id);
         if (br.caseIdx < 0) ++scrambles;
     }
@@ -1163,6 +1345,7 @@ bool executeIsland(ir::ClassSession& s, const MethodView& mv, ir::CodeEditor& ed
         if (br.caseIdx < 0) ++scrambles;
     }
     for (const CarrierRef& cr : isl.carriers) {
+        if (cr.bait) continue;   // 死饵载体不重指（目标 = handler 头帧）
         const Blk& blk = mv.blocks[cr.blk];
         for (const ca::usize pos : cr.userPos) {
             if (!retarget(blk.insns[pos], targetHeadOf(isl, cr.caseIdx))) return false;
@@ -1198,6 +1381,21 @@ bool executeIsland(ir::ClassSession& s, const MethodView& mv, ir::CodeEditor& ed
         if (!editor.bindLabel(cu.exc[ei].end, anchor).is_ok()) return false;
     }
 
+    // ---- 3b. 死 case 体链 + 死饵 carrier 整擦（链头引用面 = dispatcher
+    //          独占，switch 入批时引用同批消解；链内后继头部无标签，零重绑；
+    //          死饵 carrier 的 dispatcher 引用指令随块入批）----
+    for (const auto& [head, count] : isl.deadBodies) {
+        for (ca::usize k = 0; k < count; ++k) {
+            const Blk& db = mv.blocks[head + k];
+            for (const ir::InsnId id : db.insns) victims.push_back(id);
+        }
+    }
+    for (const CarrierRef& cr : isl.carriers) {
+        if (!cr.bait) continue;
+        const Blk& blk = mv.blocks[cr.blk];
+        for (const ir::InsnId id : blk.insns) victims.push_back(id);
+    }
+
     // ---- 4. 入口块归位（蹦床/junk 前缀退避：不移动，入口块保留原地
     //         时其前缀与 goto 还在执行路径上，moveRange 会让前缀失去执行）----
     if (isl.hasEntry && !isl.entryTrampoline && !isl.entryKeep) {
@@ -1215,15 +1413,22 @@ bool executeIsland(ir::ClassSession& s, const MethodView& mv, ir::CodeEditor& ed
                                        : Op::NOP;
         const bool hasFallPred = predAdj && (!mv.blocks[tBlk - 1].terminated
                                              || isConditionalBranch(predOp));
-        // 4a. 目标块自身未终结：老后继补 GOTO（随块迁移，落点不变）。
-        if (!t.terminated) {
-            ir::LabelId q;
-            if (nextAfterT == ir::kNoInsn || !labelAt(editor, nextAfterT, q)) return false;
-            ir::Insn g;
-            g.op     = Op::GOTO;
-            g.target = q;   // 插入前定靶：kNoLabel 靶过不了 insert 的句柄校验
-            auto ins = editor.insertAfter(t.insns.back(), g);
-            if (ins.is_err()) return false;
+        // 4a. 目标块自身未终结或条件终结：老后继补 GOTO（随块迁移，落点
+        //     不变）。条件终结的落空臂是真实位置边——块搬到方法头后落空臂
+        //     会改落新邻接后继（入口桥/死体擦蚀后的空档，可能正邻 handler
+        //     头帧 {Throwable}，空栈合并 → VerifyError），必须钉住原落点
+        //     （jsoup v3_full TokeniserState$50.$gg1bdbksz8j2sa8 实证）。
+        {
+            const Op tOp = mv.insn(t.insns.back()).op;
+            if (!t.terminated || isConditionalBranch(tOp)) {
+                ir::LabelId q;
+                if (nextAfterT == ir::kNoInsn || !labelAt(editor, nextAfterT, q)) return false;
+                ir::Insn g;
+                g.op     = Op::GOTO;
+                g.target = q;   // 插入前定靶：kNoLabel 靶过不了 insert 的句柄校验
+                auto ins = editor.insertAfter(t.insns.back(), g);
+                if (ins.is_err()) return false;
+            }
         }
         // 4b. 前驱块顺序落入目标块：补 GOTO 钉住（目标块迁走后落点不变）。
         if (hasFallPred) {

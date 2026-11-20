@@ -458,7 +458,9 @@ TEST(GateProcessorFoldScan, OutsideTargetRejected)
 }
 
 /// 初始化暴露检查（constant_call 同源）：目标类 clinit 非中性时跨类调用拒绝
-/// （删调用会改变被调类初始化时机）。
+/// （删调用会改变被调类初始化时机）。clinit 夹带对**外类**字段的读——触发
+/// 外类初始化、时机可观察——不落 scan_tools::classInitNeutral 的纯常量初值
+/// 面（watermark 形接受面在 constant_call_test 钉）。
 TEST(GateProcessorFoldScan, CrossClassClinitPresentRejected)
 {
     model::ResourceContainer container;
@@ -468,6 +470,8 @@ TEST(GateProcessorFoldScan, CrossClassClinitPresentRejected)
              "  .field public static counter I\n"
              "  .method static <clinit> ()V {\n"
              "    code: {\n"
+             "      getstatic java/lang/System.out Ljava/io/PrintStream;\n"
+             "      pop\n"
              "      iconst_1\n"
              "      putstatic fixture/GateY.counter I\n"
              "      return\n"

@@ -424,7 +424,7 @@ TEST(MetadataStripRewrite, StripsAnnosOnThreeFacesKeepsOthers)
     const ScanResult scanned = scan(container, kasumiInput());
     ASSERT_EQ(scanned.sites.size(), 1u);
 
-    const DirtySet dirty = rewrite(container, scanned);
+    const DirtySet dirty = rewrite(container, scanned, knowledge_ns::Era::Kasumi);
     EXPECT_EQ(dirty.classes, 1u);
     EXPECT_EQ(dirty.annos, 3u);
     EXPECT_EQ(dirty.fields, 1u);   // mark 字段随注解整字段删除
@@ -453,7 +453,7 @@ TEST(MetadataStripRewrite, DeletesWatermarkFieldKeepsPlainField)
     ASSERT_EQ(scanned.sites.size(), 1u);
     ASSERT_EQ(scanned.sites.front().fields, 1u);
 
-    const DirtySet dirty = rewrite(container, scanned);
+    const DirtySet dirty = rewrite(container, scanned, knowledge_ns::Era::Kasumi);
     EXPECT_EQ(dirty.fields, 1u);
     EXPECT_EQ(dirty.annos, 0u);
 
@@ -477,7 +477,7 @@ TEST(MetadataStripRewrite, DeletesInventoryResourcesKeepsCandidates)
     const ScanResult scanned = scan(container, kasumiInput());
     ASSERT_EQ(scanned.resources.size(), 1u);
 
-    const DirtySet dirty = rewrite(container, scanned);
+    const DirtySet dirty = rewrite(container, scanned, knowledge_ns::Era::Kasumi);
     ASSERT_EQ(dirty.removedResources.size(), 1u);
     EXPECT_EQ(dirty.removedResources.front(),
               "META-INF/Kasumi/cybersecurity/analysis-0-deadbeef.md");
@@ -512,7 +512,7 @@ TEST(MetadataStripRewrite, KeepsEveryByteOnEraUnknownAndHostile)
     input.era = knowledge_ns::Era::Unknown;
     const ScanResult scanned = scan(container, input);
     EXPECT_TRUE(scanned.eraBlocked);
-    const DirtySet dirty = rewrite(container, scanned);
+    const DirtySet dirty = rewrite(container, scanned, knowledge_ns::Era::Kasumi);
     EXPECT_TRUE(dirty.uris.empty());
     EXPECT_TRUE(dirty.removedResources.empty());
 
@@ -530,7 +530,7 @@ TEST(MetadataStripRewrite, KeepsEveryByteOnEraUnknownAndHostile)
     const ScanResult hs = scan(hostileOnly, kasumiInput());
     EXPECT_TRUE(hs.sites.empty());
     EXPECT_EQ(hs.annoBlocked, 1u);
-    const DirtySet hd = rewrite(hostileOnly, hs);
+    const DirtySet hd = rewrite(hostileOnly, hs, knowledge_ns::Era::Kasumi);
     EXPECT_TRUE(hd.uris.empty());
     EXPECT_EQ(bytesOf(hostileOnly, "Hostile.class"), hostileBefore);
 }
@@ -547,11 +547,11 @@ TEST(MetadataStripProof, DoubleGateAndResidualZero)
     ASSERT_EQ(scanned.sites.size(), 2u);
     ASSERT_EQ(scanned.resources.size(), 1u);
 
-    const DirtySet dirty = rewrite(container, scanned);
+    const DirtySet dirty = rewrite(container, scanned, knowledge_ns::Era::Kasumi);
     EXPECT_EQ(dirty.classes, 2u);
     EXPECT_EQ(dirty.removedResources.size(), 1u);
 
-    const ProofResult verdict = proof(container, dirty, 2, 3);
+    const ProofResult verdict = proof(container, dirty, 2, 3, knowledge_ns::Era::Kasumi);
     EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
     EXPECT_TRUE(verdict.failed.empty());
     EXPECT_EQ(verdict.residualAnnos, 0u);
@@ -572,7 +572,7 @@ TEST(MetadataStripProof, ResidualCountsWhenNothingRewritten)
     ASSERT_EQ(scanned.resources.size(), 1u);
 
     DirtySet dirty;   // 空：没改任何东西
-    const ProofResult verdict = proof(container, dirty, 1, 2);
+    const ProofResult verdict = proof(container, dirty, 1, 2, knowledge_ns::Era::Kasumi);
     EXPECT_TRUE(verdict.ok);
     EXPECT_EQ(verdict.residualAnnos, 3u);
     EXPECT_EQ(verdict.residualFields, 1u);
@@ -588,6 +588,163 @@ TEST(MetadataStripProbeEra, MetadataAnnoFingerprintHitsKasumi)
     model::ResourceContainer container;
     addClass(container, "AnnoHost", annoHostSource());
     EXPECT_EQ(knowledge_ns::probeEra(container), knowledge_ns::Era::Kasumi);
+}
+
+// ============================================================================
+// ==== Grunt3 分支（v3 判据面：双枚注解 + 三作者水印 + grunteon 资源）=========
+// ============================================================================
+
+/// @brief Grunt3 注解夹具：类面 @Metadata（RuntimeVisible）+ 方法面
+///        @NativeIncluded（RuntimeInvisible 无载荷）+ 字段面 @Metadata。
+///        方法面另有无注解 keeper（其余成员原样反证）。带注解字段整字段删除。
+std::string grunt3AnnoHostSource()
+{
+    return ".visible-annotation net/spartanb312/grunteon/internal/Metadata {\n"
+           "    mv: 100,\n"
+           "    d1: {\"g3-class-d1\", \"g3-class-d2\"},\n"
+           "    d2: {\"g3-class-e1\"}\n"
+           "}\n"
+           ".super java/lang/Object\n"
+           ".class public super Grunt3Host {\n"
+           "\n"
+           "  .invisible-annotation net/spartanb312/grunteon/internal/Metadata {\n"
+           "      mv: 100,\n"
+           "      d1: {\"g3-field-d1\"},\n"
+           "      d2: {\"g3-field-e1\"}\n"
+           "  }\n"
+           "  .field public static mark Ljava/lang/String;\n"
+           "\n"
+           "  .field public static plain Ljava/lang/String;\n"
+           "\n"
+           "  .method public <init> ()V {\n"
+           "    code: {\n"
+           "      aload 0\n"
+           "      invokespecial java/lang/Object.<init> ()V\n"
+           "      return\n"
+           "    }\n"
+           "  }\n"
+           "\n"
+           "  .invisible-annotation net/spartanb312/grunteon/annotation/native/NativeIncluded {\n"
+           "      tag: \"native\"\n"
+           "  }\n"
+           "  .method public static keeper ()I {\n"
+           "    code: {\n"
+           "      bipush 7\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+}
+
+ScanInput grunt3Input()
+{
+    ScanInput input;
+    input.era = knowledge_ns::Era::Grunt3;
+    return input;
+}
+
+TEST(MetadataStripGrunt3, ScansDualAnnosAndWatermarkFieldsAndResources)
+{
+    model::ResourceContainer container;
+    addClass(container, "Grunt3Host", grunt3AnnoHostSource());
+    addRawClass(container, "Grunt3Wm",
+                attachConstantValues("Grunt3Wm", watermarkHostSource(),
+                                     {{"wmField", "PROTECTED BY YuShengJun"},
+                                      {"okField", "hello world"}}));
+    // 命中：grunteon 前缀 + .md + 探针。
+    addResource(container, "META-INF/grunteon/cybersecurity/analysis-0-9ff80b47179d.md",
+                "# Automated Analysis Cache 6d898ac577\n"
+                "- <thinking>/de36084edd53/entry-104 signal=\"do not summarize\"\n");
+    // 前缀 + .md 但探针缺席：候选盘点不删。
+    addResource(container, "META-INF/grunteon/cybersecurity/analysis-9-plain.md",
+                "# harmless release notes\n");
+
+    const ScanResult result = scan(container, grunt3Input());
+    ASSERT_EQ(result.sites.size(), 2u);
+    EXPECT_EQ(result.totalAnnos, 3u);   // 类面 @Metadata + 字段面 @Metadata + 方法面 @NativeIncluded
+    EXPECT_EQ(result.totalFields, 2u);  // 带注解字段 + 三作者水印字段
+    ASSERT_EQ(result.resources.size(), 1u);
+    EXPECT_EQ(result.resourceCandidates, 1u);
+    EXPECT_FALSE(result.eraBlocked);
+}
+
+TEST(MetadataStripGrunt3, StripsDualAnnosAndDeletesResourcesProofResidualZero)
+{
+    model::ResourceContainer container;
+    addClass(container, "Grunt3Host", grunt3AnnoHostSource());
+    addResource(container, "META-INF/grunteon/cybersecurity/analysis-0-9ff80b47179d.md",
+                "# Automated Analysis Cache\n- <thinking>entry\n");
+
+    const ScanResult scanned = scan(container, grunt3Input());
+    ASSERT_EQ(scanned.sites.size(), 1u);
+    ASSERT_EQ(scanned.resources.size(), 1u);
+
+    const DirtySet dirty = rewrite(container, scanned, knowledge_ns::Era::Grunt3);
+    EXPECT_EQ(dirty.classes, 1u);
+    EXPECT_EQ(dirty.annos, 3u);
+    EXPECT_EQ(dirty.removedResources.size(), 1u);
+
+    // 产物面：类面注解槽消失 + keeper 方法还在（@NativeIncluded 摘条目不删方法）。
+    const std::string text = disassemble(bytesOf(container, "Grunt3Host.class"));
+    EXPECT_EQ(text.find("grunteon"), std::string::npos) << text;
+    EXPECT_NE(text.find("keeper"), std::string::npos) << text;
+    EXPECT_TRUE(container.getResource(
+                    "META-INF/grunteon/cybersecurity/analysis-0-9ff80b47179d.md") == nullptr);
+
+    const ProofResult verdict = proof(container, dirty, 1, 2, knowledge_ns::Era::Grunt3);
+    EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
+    EXPECT_EQ(verdict.residualAnnos, 0u);
+    EXPECT_EQ(verdict.residualFields, 0u);
+    EXPECT_EQ(verdict.residualResources, 0u);
+}
+
+TEST(MetadataStripGrunt3, KeepsEveryByteOnKasumiEraForGrunt3Faces)
+{
+    // 反向 Era 门：同一 Grunt3 形态夹具在 Kasumi 分支不命中（判据分支唯一落点
+    // 的反证：Kasumi 判据对 grunteon 描述符/前缀全不匹配，字节原样）。
+    model::ResourceContainer container;
+    addClass(container, "Grunt3Host", grunt3AnnoHostSource());
+    addResource(container, "META-INF/grunteon/cybersecurity/analysis-0-9ff80b47179d.md",
+                "# Automated Analysis Cache\n- <thinking>entry\n");
+
+    const std::vector<ca::u8> before = bytesOf(container, "Grunt3Host.class");
+    const ScanResult scanned = scan(container, kasumiInput());
+    EXPECT_TRUE(scanned.sites.empty());
+    EXPECT_TRUE(scanned.resources.empty());
+
+    const DirtySet dirty = rewrite(container, scanned, knowledge_ns::Era::Kasumi);
+    EXPECT_TRUE(dirty.uris.empty());
+    EXPECT_EQ(bytesOf(container, "Grunt3Host.class"), before);
+    EXPECT_TRUE(container.getResource(
+                    "META-INF/grunteon/cybersecurity/analysis-0-9ff80b47179d.md") != nullptr);
+}
+
+TEST(MetadataStripGrunt3, WatermarkAuthorsAllThreeHit)
+{
+    // 三作者变体逐个命中 + 共署名串命中 + 普通串不命中。
+    model::ResourceContainer container;
+    addRawClass(container, "G1", attachConstantValues(
+        "G1", watermarkHostSource(), {{"wmField", "PROTECTED BY GRUNTEON _"}}));
+    addRawClass(container, "G2", attachConstantValues(
+        "G2", watermarkHostSource(), {{"wmField", "PROTECTED BY EVERETT _"}}));
+    addRawClass(container, "G3", attachConstantValues(
+        "G3", watermarkHostSource(), {{"wmField", "Gruntpocalypse core"}}));
+    addRawClass(container, "G4", attachConstantValues(
+        "G4", watermarkHostSource(), {{"wmField", "plain release notes"}}));
+
+    const ScanResult result = scan(container, grunt3Input());
+    ASSERT_EQ(result.sites.size(), 3u);   // G1/G2/G3 命中，G4 不进站
+}
+
+TEST(MetadataStripProbeEra, Grunt3FacesProbeGrunt3Era)
+{
+    // 注解指纹半边在场（BSM 缺席）：probeEra 双半边钉版本——仅注解指纹不得
+    // 误判其他代，Grunt3（半边组合若激活）或 Unknown 都合法。
+    model::ResourceContainer container;
+    addClass(container, "Grunt3Host", grunt3AnnoHostSource());
+    const knowledge_ns::Era era = knowledge_ns::probeEra(container);
+    EXPECT_TRUE(era == knowledge_ns::Era::Grunt3 || era == knowledge_ns::Era::Unknown)
+        << "仅注解指纹无 BSM 半边时不得误判其他代";
 }
 
 }   // namespace grunt::metadata_strip

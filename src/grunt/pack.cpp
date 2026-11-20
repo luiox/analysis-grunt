@@ -98,6 +98,36 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         return Err(std::string("grunt.DeadMember"));
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.NoiseAttrStrip",
+            [] { return makeFailClosed<NoiseAttrStripPass>("grunt.NoiseAttrStrip"); },
+            "Strip Crasher massive-Signature attributes whose string fails the"
+            " JVMS 4.7.9.1 grammar (CFR 0.152 hard-fails on them at class load)"
+            " and AntiLLM SourceDebugExtension payloads (debug-only, no runtime"
+            " semantics); valid generic signatures are kept verbatim.");
+        r.is_err()) {
+        return Err(std::string("grunt.NoiseAttrStrip"));
+    }
+    Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.ConcatRestore",
+            [] { return makeFailClosed<ConcatRestorePass>("grunt.ConcatRestore"); },
+            "Collapse Grunt v2/v3 string-concat bootstrap wrappers into the"
+            " standard JDK single form: the obfuscator splits the recipe into a"
+            " tag-only string at the indy site plus an Object[] of constant"
+            " segments baked inside a self-owned wrapper BSM that forwards to"
+            " StringConcatFactory.makeConcatWithConstants (5-arg). CFR 0.152"
+            " cannot reassemble the two halves and renders the indy as an"
+            " opaque static call. Restore = refill each backslash-u0002 slot"
+            " with the wrapper constants in order, retarget the BSM handle to"
+            " the standard 4-arg makeConcatWithConstants with the merged"
+            " recipe; call sites are untouched (they only reference the BSM"
+            " index). Semantics are provably identical (makeConcatWithConstants"
+            " resolves backslash-u0002 by consuming the varargs in order)."
+            " Structural self-certification (byte-exact wrapper shape), no Era"
+            " gate. jsoup v3_full: 28 classes, 35 wrappers.");
+    if (r.is_err()) {
+        return Err(std::string("grunt.ConcatRestore"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.BoogerAnnoStrip",
             [] { return makeFailClosed<BoogerAnnoStripPass>("grunt.BoogerAnnoStrip"); },
             "Strip @Booger runtime annotation entries once no class in the"
@@ -228,6 +258,26 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         return Err(std::string("grunt.DispatcherRestore"));
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.KeyProcEval",
+            [] { return makeFailClosed<KeyProcEvalPass>("grunt.KeyProcEval"); },
+            "Statically evaluate Grunt v3 ControlflowFlattening key-processor"
+            " sandwiches (emitProcessorStateProgram form: [int inputKey; ISTORE"
+            " slot; ILOAD slot; int salt; invokestatic proc (II)I; ISTORE slot]):"
+            " resolve the container-resident pure-arithmetic processor body,"
+            " evaluate it cross-method through the jsim orchestration layer with"
+            " an Integer.rotateLeft mock for the salt-rotate steps, then rewrite"
+            " the sandwich in place to [int result; ISTORE slot] so the bridge"
+            " degrades to a plain inline span that grunt.CffUnflatten already"
+            " folds. This is the documented unlock path for the processor-bridge"
+            " fail-closed face (obf-behaviors gap #4): jsoup v3_full measured"
+            " 295 CFR decompilation-fallback methods caused by the leftover"
+            " dispatcher islands. Heap/string/indy surfaces fail closed at the"
+            " evaluator (per-bucket counters); the processor method itself stays"
+            " for DeadMember to collect once its supply chain dries up.");
+        r.is_err()) {
+        return Err(std::string("grunt.KeyProcEval"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.CffUnflatten",
             [] { return makeFailClosed<CffUnflattenPass>("grunt.CffUnflatten"); },
             "Statically un-flatten Grunt v3 ControlflowFlattening (Flow IR"
@@ -354,6 +404,34 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         r.is_err()) {
         return Err(std::string("grunt.StringEqualsRestore"));
     }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.JunkRegionStrip",
+            [] { return makeFailClosed<JunkRegionStripPass>("grunt.JunkRegionStrip"); },
+            "NOP out unreachable byte regions (invalid opcodes planted in dead"
+            " code by DecompilerCrasher-style junk) via a byte-level"
+            " reachability walk identical to the JVM verifier: worklist from"
+            " entry plus exception handlers, exact opcode length table, all"
+            " branch targets followed. Length-preserving in-place writes keep"
+            " code_length, offsets, StackMapTable frames and LVT/LNT rows"
+            " intact. Methods whose reachable path fails to decode are left"
+            " unchanged (fail-closed).");
+        r.is_err()) {
+        return Err(std::string("grunt.JunkRegionStrip"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.PoolArrayFold",
+            [] { return makeFailClosed<PoolArrayFoldPass>("grunt.PoolArrayFold"); },
+            "Fold string-pool array reads back to ldc constants via an"
+            " evaluation channel: simulate the pool class <clinit> with the"
+            " cross-method executor, read the final array state from the"
+            " session statics, and rewrite each GETSTATIC; idx; AALOAD triple"
+            " in place to an ldc of the evaluated plaintext (anchor srcPc"
+            " kept, frame chain recomputed). Pool groups with a bail, step"
+            " budget exhaustion, non-clinit writes or escape-suspect stores"
+            " stay untouched (fail-closed).");
+        r.is_err()) {
+        return Err(std::string("grunt.PoolArrayFold"));
+    }
     return Ok();
 }
 
@@ -392,6 +470,50 @@ GruntPack& packInstance()
 mjbase::plugin::IPassPack& grunt_pack()
 {
     return packInstance();
+}
+
+std::string defaultMainLine()
+{
+    // 通用主线（--converge 每轮程序，pack.hpp 契约）：README 15-pass 主线
+    // 扩 v3 供给链面与折叠尾轮。排序只保同轮效率约束（squeeze 先于实参收
+    // 集、ConstantCall 先于折叠/清死、ExcBridge/GateProcessor 先于
+    // CffUnflatten、DeadMember 晚于供给链），跨轮约束由驱动器轮维度吸收。
+    // NumberFold 在 CffUnflatten 之后（验收阵 t3_full 实证：NumberFold 先
+    // 行让 CFF span 形被判 state-polluted 370、岛还原 58→0，见
+    // obf-behaviors §驱动器契约对照表）；实参收集缺的 NumberFold 折叠由
+    // 下一轮 ConstantCall 补齐。
+    return "grunt.TrampolineSqueeze,"
+           "grunt.DispatcherRestore,"
+           "grunt.IndyRestore,"
+           "grunt.StringPoolFold,"
+           "grunt.MaterialKeyRestore,"
+           "grunt.IndyFold,"
+           "grunt.ConstMethod,"
+           "grunt.ProxyInline,"
+           "grunt.FieldAccessProxy,"
+           "grunt.ConstantCall,"
+           "grunt.ExcBridgeRestore,"
+           "grunt.GateProcessorFold,"
+           "grunt.KeyProcEval,"
+           "grunt.CffUnflatten,"
+           "grunt.NumberFold,"
+           "grunt.ArithFold,"
+           "grunt.ConstValuePromote,"
+           "grunt.ConstPoolRestore,"
+           "grunt.ArithFold,"
+           "grunt.StringEqualsRestore,"
+           "grunt.SeedStrip,"
+           "grunt.PoolArrayFold,"
+           "grunt.PredicateFold,"
+           "grunt.JunkRegionStrip,"
+           "grunt.DeadCode,"
+           "grunt.ArithFold,"
+           "grunt.ConstantCall,"
+           "grunt.DeadMember,"
+           "grunt.FlagsStrip,grunt.NoiseAttrStrip,"
+           "grunt.BoogerAnnoStrip,"
+           "grunt.ConcatRestore,"
+           "grunt.MetadataStrip";
 }
 
 }   // namespace grunt

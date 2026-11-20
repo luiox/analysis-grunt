@@ -49,5 +49,5 @@ proxy_inline：代理方法
 
 
 - **const_method** （单常量方法）：转发的是 ** 常量生产 ** ，调用点落成常量装载；proxy_inline 转发的是 ** 真实调用** ，调用点落成 invoke。两者判据同构（体形 + 保守检查），产物不同、互不重叠。
-- **constant_call** （常量实参折叠）：对纯算术目标求值取值。代理体不是求值面（有转发 invoke），但被代理的真实目标若有常量实参， ``ProxyInline → ConstantCall`` 链序下两跳合并成一条常量。
+- **constant_call** （常量实参折叠）：对纯算术目标求值取值。代理体不是求值面（有转发 invoke），但被代理的真实目标若有常量实参， ``ProxyInline → ConstantCall`` 链序下两跳合并成一条常量；不同轮时的合并由驱动器下一轮 ConstantCall 重扫承担（见 :ref:`obf-behaviors-contract`）。
 - **field 访问代理** （getfield/putfield 过手体）：转发的是字段访问而非invoke，形状与内联方式都不同，是独立残留面。

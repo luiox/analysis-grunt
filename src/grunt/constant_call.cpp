@@ -20,11 +20,12 @@
 ///
 /// ## 类初始化检查与同类豁免
 ///
-/// 被调类的 <clinit> 必须缺失或只剩 NOP/RETURN 且无异常表：invokestatic 是
-/// 类的主动使用，删掉调用会改变类初始化时机。同类调用豁免（JVMS 5.5）：本
-/// 类方法开始执行时类已在初始化中/已完成，同类 INVOKESTATIC 不触发初始化，
-/// 删调用不移时机。豁免只作用于初始化时机这一个检查，纯性、常量实参、求值
-/// 三条判据对同类站点照收不误。
+/// 被调类的 <clinit> 必须中性（scan_tools::classInitNeutral 双面口径：缺失
+/// 或空壳；或纯常量初值面——只写本类字段的确定值，初始化时机不可观察）：
+/// invokestatic 是类的主动使用，删掉调用会改变类初始化时机。同类调用豁免
+/// （JVMS 5.5）：本类方法开始执行时类已在初始化中/已完成，同类 INVOKESTATIC
+/// 不触发初始化，删调用不移时机。豁免只作用于初始化时机这一个检查，纯性、
+/// 常量实参、求值三条判据对同类站点照收不误。
 ///
 /// ## 求值环境接管：java/lang/Math.max(II)I
 ///
@@ -87,8 +88,10 @@
 ///
 /// 不做跨方法常量传播：目标读字段或调别的纯方法时求值器 Unsupported，站
 /// 点被拒。不做 <clinit> 常量传播：getstatic + iaload 的字段池化数字不在
-/// 面内。不折引用结果：返回 String/对象的方法即使纯也不折，引用身份不
-/// 可静态构造。processor 键解锁链是静态天花板：CFF 桥 key processor 形
+/// 面内。引用结果只折解密器族：通用站点的返回 String/对象不折（引用身份
+/// 不可静态构造）；解密器族是例外——产物 String 由封闭求值从堆提取回
+/// 码元后 intern 进池，身份无关紧要，值才是语义（形态判据见解密器族段）。
+/// processor 键解锁链是静态天花板：CFF 桥 key processor 形
 /// （五条窗口 [INT; ISTORE; ILOAD; INT; INVOKESTATIC proc]）的 proc 恢复目
 /// 标全部落在 native 摘除的 action 壳上（算术已随 native pipeline 出
 /// jar），实参又是 ILOAD 夹心形非紧邻常量，两道静态墙叠加，这部分永远
@@ -172,6 +175,128 @@ char returnChar(std::string_view desc)
     return desc[rp + 1];
 }
 
+// ============================================================================
+// ==== 解密器族（string decryptor family）===================================
+// ============================================================================
+
+// Grunt 家族把字符串池的密文/密钥/种子固化在每个池填充点的实参里：
+//
+//     getstatic a ; iconst_0                    ← aastore 的目标与下标（非实参）
+//     ldc_w "密文"                              ← 栈最深
+//     invokevirtual String.toCharArray:()[C
+//     ldc2_w <key:long>
+//     ldc <seed:int>                            ← 离调用最近
+//     invokestatic a:([CJI)Ljava/lang/String;
+//     aastore
+//
+// 目标方法是同类 private static 的 junk 状态机（lookupswitch 分派 +
+// char[] 逐元异或 + new String(char[])），对常量实参返回值唯一确定。
+// 回收集序（NOP 跳过）固定为 seed·key·toCharArray·cipher——cipher 在栈
+// 最深、seed 最近。族判据三面：
+//
+//   1. **形态**：回收集 4 条正好是 I32 装载·I64 装载·String.toCharArray·
+//      ldc String（decodeValueLoad 校验），密文经 MUTF-8 解回码元；
+//   2. **同类**（JVMS 5.5）：解密器与调用点同 owner——同类 INVOKESTATIC
+//      不触发类初始化，删调用不移时机；跨类调用一律不折（Grunt 家族池
+//      填充与解密器恒同类，此限制不损失面）；
+//   3. **求值**：jsim 执行器带堆实参（char[] 从码元落 heap）实跑解密器体，
+//      返回的 String 从堆提取回码元。求值成功 = 这条执行路径可静态重放。
+//
+// 桥面注记：解密器体是 junk 状态机，死陷阱走廊里必有一颗 athrow，libjsim
+// v1 桥对 athrow 整方法拒——jsim_executor 的桥前可达性剥离（根 = 入口 +
+// 异常表 handler，不可达指令擦零）让真实解密器可桥（b/B 族实证，明文
+// "PASS" 363 步收敛）。剥离只作用于 executor 临时会话，容器字节不动。
+
+/// 形态匹配产出（scan 证据 + rewrite 复核共用）。
+struct DecryptorShape
+{
+    std::vector<ir::InsnId> producers;   ///< 收集序：seed·key·toCharArray·cipher
+    ca::i32                 seed = 0;
+    ca::i64                 key  = 0;
+    std::vector<ca::u16>    cipherUnits;
+};
+
+/// 解密器形态匹配：从 callPos 向前 NOP 跳过回收集 4 条并逐条判据。
+bool matchDecryptorShape(ir::ClassSession& s, ir::CodeDom& dom,
+                         const std::vector<ir::InsnId>& order, ca::usize callPos,
+                         DecryptorShape& out)
+{
+    std::vector<const ir::Insn*> ins;
+    std::vector<ir::InsnId>      ids;
+    for (ca::usize q = callPos; q-- > 0 && ins.size() < 4;) {
+        const ir::Insn* cur = dom.peek(order[q]);
+        if (cur == nullptr || cur->op == Op::NOP) continue;
+        ins.push_back(cur);
+        ids.push_back(order[q]);
+    }
+    if (ins.size() < 4) return false;
+
+    // ins[2] 必须是 String.toCharArray ()[C（INVOKEVIRTUAL）。
+    if (ins[2]->op != Op::INVOKEVIRTUAL) return false;
+    ir::ClassSession::MemberSem cm;
+    if (!s.memberOf(*ins[2], cm)) return false;
+    if (cm.owner != "java/lang/String" || cm.name != "toCharArray" || cm.desc != "()[C") {
+        return false;
+    }
+
+    // 实参装载判据：seed(I32)·key(I64)·cipher(Str)。
+    const_args::ValueLoad seedV;
+    const_args::ValueLoad keyV;
+    const_args::ValueLoad cipherV;
+    if (!const_args::decodeValueLoad(s, *ins[0], seedV)
+        || seedV.kind != const_args::ValueLoad::Kind::I32) {
+        return false;
+    }
+    if (!const_args::decodeValueLoad(s, *ins[1], keyV)
+        || keyV.kind != const_args::ValueLoad::Kind::I64) {
+        return false;
+    }
+    if (!const_args::decodeValueLoad(s, *ins[3], cipherV)
+        || cipherV.kind != const_args::ValueLoad::Kind::Str) {
+        return false;
+    }
+    std::vector<ca::u16> units;
+    if (!scan_tools::mutf8ToUnits(cipherV.str, units)) return false;
+
+    out.producers   = std::move(ids);
+    out.seed        = seedV.i32();
+    out.key         = keyV.i64();
+    out.cipherUnits = std::move(units);
+    return true;
+}
+
+/// 解密器族第二形（260705 / grunt2-fork 逐码元 XOR）形态匹配：紧邻前驱
+/// （NOP 跳过）恰一条 LDC String。目标体形不钉——junk 状态机 / while 循环
+/// XOR 都在族内，纯性由 jsim 实跑证明（求值成功 = 可静态重放）；这里只
+/// 钉「实参是常量密文串」这一收集面。producers 仅密文一条（改写的锚）。
+bool matchStringDecryptorShape(ir::ClassSession& s, ir::CodeDom& dom,
+                               const std::vector<ir::InsnId>& order, ca::usize callPos,
+                               DecryptorShape& out)
+{
+    ca::usize       cipherPos = 0;
+    const ir::Insn* cipher    = nullptr;
+    for (ca::usize k = callPos; k-- > 0;) {
+        const ir::Insn* p = dom.peek(order[k]);
+        if (p == nullptr || p->op == Op::NOP) continue;
+        cipher    = p;
+        cipherPos = k;
+        break;
+    }
+    if (cipher == nullptr) return false;
+    if (cipher->op != Op::LDC && cipher->op != Op::LDC_W) return false;
+    ir::ClassSession::ConstSem sem;
+    if (!s.constOf(*cipher, sem) || sem.kind != ir::ClassSession::ConstSem::Kind::String) {
+        return false;
+    }
+    std::vector<ca::u16> units;
+    if (!scan_tools::mutf8ToUnits(sem.str, units)) return false;
+    out.producers.assign(1, order[cipherPos]);
+    out.cipherUnits = std::move(units);
+    out.key         = 0;
+    out.seed        = 0;
+    return true;
+}
+
 /// 容器方法索引构建：scan_tools::buildMethodIndex 收口，本 pass 只钉两件
 /// 口径，重名类撞键取先到（emplace 原形 = KeepFirst）、stderr 前缀走本
 /// pass 的 scanGuard。
@@ -182,6 +307,59 @@ void buildIndex(const mjbase::model::ResourceContainer& container,
         return scanGuard(stage, uri, fn);
     };
     scan_tools::buildMethodIndex(container, index, scan_tools::IndexDup::KeepFirst, guard);
+}
+
+/// parseUnsignedLong 纯函数核（(字符串, 进制) 定值，全序无副作用）：radix
+/// 越族（<2 / >36）拒；数字位超进制拒；累进按 u64 回绕口径折返（Grunt 键
+/// 面构造恒在 u64 域内，回绕分支只是防御面）。jsim callMock 与容器外内建
+/// 站点求值共用同一语义源，两边不许各写一份。
+/// @return false = radix/数字位非法（JDK 侧 NumberFormatException 语义）
+bool parseULPure(std::string_view text, ca::i32 radix, ca::i64& out)
+{
+    if (radix < 2 || radix > 36) return false;
+    ca::u64 acc = 0;
+    for (const char c : text) {
+        ca::u32 digit = 0;
+        if (c >= '0' && c <= '9') {
+            digit = static_cast<ca::u32>(c - '0');
+        } else if (c >= 'a' && c <= 'z') {
+            digit = static_cast<ca::u32>(c - 'a') + 10;
+        } else if (c >= 'A' && c <= 'Z') {
+            digit = static_cast<ca::u32>(c - 'A') + 10;
+        } else {
+            return false;
+        }
+        if (digit >= static_cast<ca::u32>(radix)) return false;
+        acc = acc * static_cast<ca::u64>(radix) + static_cast<ca::u64>(digit);
+    }
+    out = static_cast<ca::i64>(acc);
+    return true;
+}
+
+/// 容器外 JDK 全序纯内建白名单（对外站点的唯一入表面）：每个成员必须有
+/// (a) 纯函数核（定值、无副作用、全序——parseULPure 一型）(b) 专用实参收
+/// 集器（collectBuiltinArgsParseUl 一型）(c) jsim callMock 三件套在位，
+/// 扩面按此登记；bootstrap 类初始化时机由 JVM 托管，删调用无可观测变化。
+/// 成员登记同步：evaluateSites 头部的 callMock 注册与本表一成员一注册。
+struct ExternalBuiltin
+{
+    std::string_view owner;
+    std::string_view name;
+    std::string_view desc;
+};
+constexpr ExternalBuiltin kExternalPureBuiltins[] = {
+    {"java/lang/Long", "parseUnsignedLong", "(Ljava/lang/String;I)J"},
+};
+
+/// 白名单查询走 keyOf 本尊（'\n' 复合键；手拼 '.' 键会静默 miss，本轮实测
+/// 踩坑留痕）。
+bool isExternalPureBuiltin(std::string_view owner, std::string_view name, std::string_view desc)
+{
+    const std::string key = scan_tools::keyOf(owner, name, desc);
+    for (const ExternalBuiltin& b : kExternalPureBuiltins) {
+        if (key == scan_tools::keyOf(b.owner, b.name, b.desc)) return true;
+    }
+    return false;
 }
 
 /// 求值段：装好扩展包的 jsim 执行器逐站点跑目标方法；通过者写回 `value`，
@@ -196,6 +374,10 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
 
     SimExecutor exec(container);
     jsim::str::install(exec.session());
+    // `new String(char[])` 接管：解密器族的产出提取链最后一环（解密器体
+    // 尾部 new String(char[]) → 堆 String → 明文码元）。对通用站点无影响
+    // （纯算术目标触不到构造器）。
+    jsim::str::installStringAlloc(exec.session());
     jsim::num::install(exec.session());
     // 折叠不需要注解/类元数据：目标按判据是纯算术，反射元数据无人读。
     jsim::reflect::install(exec.session(), [](const std::string&)
@@ -225,6 +407,72 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
                 jsim::SimValue::knownI32(va > vb ? va : vb));
         };
 
+    // Long.parseUnsignedLong (Ljava/lang/String;I)J 接管（t 族实证：解密器体
+    // 内部经 parseUL 反推密钥分量，缺接管整条面在 Bail 拒）。全序纯函数，
+    // 语义核在 parseULPure（与容器外内建站点求值共用）。unknown 按未知口径
+    // 传播；radix 越族 / 数字位非法按 NumberFormatException 语义 Bail。
+    // mock 键从 kExternalPureBuiltins 派生（一成员一注册，结构性同步）。
+    const std::string parseUlMockKey = std::string(kExternalPureBuiltins[0].owner) + "."
+                                       + std::string(kExternalPureBuiltins[0].name)
+                                       + std::string(kExternalPureBuiltins[0].desc);
+    exec.session().callMocks[parseUlMockKey] =
+        [&exec](jsim::Frame& frame) -> jsim::Result<jsim::SimValue, jsim::Bail> {
+            jsim::Result<jsim::SimValue, jsim::Bail> radixV = frame.popChecked();
+            if (!radixV.isOk()) return radixV;
+            jsim::Result<jsim::SimValue, jsim::Bail> strV = frame.popChecked();
+            if (!strV.isOk()) return strV;
+            if (!radixV.value().known || !strV.value().known) {
+                return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
+                    jsim::SimValue::unknownOf(jsim::ValType::I64));
+            }
+            std::string text;
+            if (strV.value().ref.kind == jsim::RefPayload::Kind::Str) {
+                text = strV.value().ref.str;
+            } else if (strV.value().ref.kind == jsim::RefPayload::Kind::Obj) {
+                const auto hit = exec.session().heap.find(strV.value().ref.objId);
+                if (hit == exec.session().heap.end()
+                    || hit->second.className != "java/lang/String") {
+                    return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                        {jsim::Bail::Reason::BadOperand, frame.pc(), "parseUL 接收者非 String"});
+                }
+                text = hit->second.data;
+            } else {
+                return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                    {jsim::Bail::Reason::BadOperand, frame.pc(), "parseUL 接收者为 null"});
+            }
+            ca::i64 v = 0;
+            if (!parseULPure(text, static_cast<ca::i32>(radixV.value().intBits), v)) {
+                return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                    {jsim::Bail::Reason::BadOperand, frame.pc(), "parseUL 数字位/进制非法"});
+            }
+            return jsim::Result<jsim::SimValue, jsim::Bail>::ok(jsim::SimValue::knownI64(v));
+        };
+
+    // 容器外内建站点：目标无容器方法体，不经 jsim 方法执行，直接走白名单
+    // 内建的纯函数核。parseUL 是池读点下标键面的解锁器（b/u 族实证：读点
+    // 下标 = (int)(parseUL(str, radix) ^ const)，此站不折则 NF 铺不开算术、
+    // PAF 终态表查不到下标，池读点永远残留）。
+    for (ca::usize si = 0; si < sites.size(); ++si) {
+        Site& site = sites[si];
+        if (!site.isExternalBuiltin) continue;
+        const bool argShapeOk = site.args.size() == 2 && site.args[0].known
+                                && site.args[0].type == jsim::ValType::Ref
+                                && site.args[0].ref.kind == jsim::RefPayload::Kind::Str
+                                && site.args[1].known
+                                && site.args[1].type == jsim::ValType::I32;
+        ca::i64 v = 0;
+        if (!argShapeOk
+            || !parseULPure(site.args[0].ref.str,
+                            static_cast<ca::i32>(site.args[1].intBits), v)) {
+            rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod,
+                                           site.callSrcPc, RejectReason::EvalBadState});
+            ok[si] = 2;
+            continue;
+        }
+        site.value = jsim::SimValue::knownI64(v);
+        ok[si]     = 1;
+    }
+
     forEachClass(container, [&](const ClassEntry& entry) {
         scanGuard("evaluate", entry.uri, [&] {
             auto session = openSession(*entry.bytes);
@@ -235,13 +483,14 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
             if (group == byOwner.end()) return;
 
             if (!scan_tools::classInitNeutral(*session)) {
-                // 类初始化检查：跨类调用删掉会改变被调类的初始化时机，照旧
-                // 整组拒绝。同类调用（boar proc 转发形态：NativePreProcessor
-                // 的桥与转发同类）豁免，JVMS 5.5：本类方法开始执行时类已经
-                // 在初始化中/已完成，同类 INVOKESTATIC 不触发初始化，删调用
-                // 不移时机；豁免站点的纯性由下面的封闭环境求值独立证明
-                // （boar 取证：全部 3262 个可折转发站点都落在非中性 clinit
-                // 类里，检查不豁免则整条 processor 键解锁链空转）。
+                // 类初始化检查（双面中性口径见 scan_toolbox）：非中性时跨类
+                // 调用删掉会改变被调类的初始化时机，照旧整组拒绝。同类调用
+                // （boar proc 转发形态：NativePreProcessor 的桥与转发同类）
+                // 豁免，JVMS 5.5：本类方法开始执行时类已经在初始化中/已完成，
+                // 同类 INVOKESTATIC 不触发初始化，删调用不移时机；豁免站点的
+                // 纯性由下面的封闭环境求值独立证明（boar 取证：全部 3262 个
+                // 可折转发站点都落在非中性 clinit 类里，检查不豁免则整条
+                // processor 键解锁链空转）。
                 bool anyKept = false;
                 for (const ca::usize si : group->second) {
                     const Site& site = sites[si];
@@ -261,6 +510,92 @@ void evaluateSites(const mjbase::model::ResourceContainer& container,
                 Site& site = sites[si];
 
                 if (ok[si] == 2) continue;   // 检查组拒绝已计数
+
+                if (site.isDecryptor) {
+                    // 解密器求值：jsim 实跑解密器体。([CJI) 形密文码元落堆
+                    // 成 char[]（installStringAlloc 的 `new String(char[])`
+                    // 接管是提取链最后一环）；(String;)String 第二形实参走
+                    // knownStr——charAt/length 接管只认 Str 接收者，toString
+                    // 接管产出也是 Str。
+                    std::vector<jsim::SimValue> dargs;
+                    const bool stringFamily =
+                        site.targetDesc == "(Ljava/lang/String;)Ljava/lang/String;";
+                    if (stringFamily) {
+                        std::string cipherText;
+                        rewrite_tools::u16ToMutf8(site.cipherUnits, cipherText);
+                        dargs.push_back(jsim::SimValue::knownStr(std::move(cipherText)));
+                    } else {
+                        const jsim::u64 arrId = exec.session().nextAllocId++;
+                        jsim::HeapObj         arr;
+                        arr.className = "[C";
+                        arr.elems.reserve(site.cipherUnits.size());
+                        for (const ca::u16 u : site.cipherUnits) {
+                            arr.elems.push_back(static_cast<jsim::i64>(u));
+                        }
+                        exec.session().heap[arrId] = std::move(arr);
+                        dargs = std::vector<jsim::SimValue>{jsim::SimValue::knownObj(arrId),
+                                                            jsim::SimValue::knownI64(site.key),
+                                                            jsim::SimValue::knownI32(site.seed)};
+                    }
+                    const SimOutcome out =
+                        exec.invoke(site.targetOwner, site.targetName + site.targetDesc, dargs);
+                    if (!out.ok() && std::getenv("GRUNT_DEBUG_FOLD") != nullptr) {
+                        std::fprintf(stderr,
+                                     "[dec-eval-fail] %s.%s pc=%u kind=%d detail=%s\n",
+                                     site.callerOwner.c_str(), site.callerMethod.c_str(),
+                                     site.callSrcPc, static_cast<int>(out.kind),
+                                     out.detail.c_str());
+                    }
+                    if (!out.ok()) {
+                        rejects.push_back(RejectedSite{
+                            site.callerOwner, site.callerMethod, site.callSrcPc,
+                            out.kind == SimOutcome::Kind::LimitHit ? RejectReason::EvalStepLimit
+                                                                   : RejectReason::EvalBadState});
+                        ok[si] = 2;
+                        continue;
+                    }
+                    bool plainOk = false;
+                    if (out.value.known && out.value.type == jsim::ValType::Ref) {
+                        std::string mutf8;
+                        bool        found = false;
+                        if (out.value.ref.kind == jsim::RefPayload::Kind::Obj) {
+                            const auto hit = exec.session().heap.find(out.value.ref.objId);
+                            if (hit != exec.session().heap.end()
+                                && hit->second.className == "java/lang/String") {
+                                mutf8 = hit->second.data;
+                                found = true;
+                            }
+                        } else if (out.value.ref.kind == jsim::RefPayload::Kind::Str) {
+                            mutf8 = out.value.ref.str;
+                            found = true;
+                        }
+                        std::vector<ca::u16> plain;
+                        std::string          plainText;
+                        if (found && scan_tools::mutf8ToUnits(mutf8, plain)
+                            && rewrite_tools::u16ToUtf8Record(plain, plainText)) {
+                            site.plainUnits = std::move(plain);
+                            site.plaintext  = std::move(plainText);
+                            plainOk         = true;
+                        }
+                    }
+                    if (!plainOk && std::getenv("GRUNT_DEBUG_FOLD") != nullptr) {
+                        std::fprintf(stderr,
+                                     "[dec-plain-fail] %s.%s pc=%u known=%d type=%d refkind=%d\n",
+                                     site.callerOwner.c_str(), site.callerMethod.c_str(),
+                                     site.callSrcPc, static_cast<int>(out.value.known),
+                                     static_cast<int>(out.value.type),
+                                     out.value.known ? static_cast<int>(out.value.ref.kind) : -1);
+                    }
+                    if (!plainOk) {
+                        rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod,
+                                                       site.callSrcPc,
+                                                       RejectReason::ValueKindUnsupported});
+                        ok[si] = 2;
+                        continue;
+                    }
+                    ok[si] = 1;
+                    continue;
+                }
 
                 if (!ir::hasCode(*session, site.targetMethodIndex)) {
                     rejects.push_back(RejectedSite{site.callerOwner, site.callerMethod,
@@ -415,9 +750,174 @@ void dumpPcRefs(ir::ClassSession& session, ca::usize methodIndex,
     }
 }
 
+/// 解密器族站点改写：锚 = 密文 ldc（栈最深 producer）原地改成明文 ldc，
+/// 其余 producer（seed·key·toCharArray）+ 调用指令擦除。
+///
+/// 与通用站点的锚位相反（通用 = 首条实参装载原地改写）：解密器栈形是
+/// `ldc cipher(1) · toCharArray(弹压持平) · ldc2_w key(2) · ldc seed(1) ·
+/// call(弹 5 压 1)`，cipher 是唯一能原地保留 srcPc 的 producer——它也是
+/// 栈最深的，锚在它上面的行/标签随原地改写全部保住。新序列 `ldc 明文`
+/// 压 1 槽，调用前后栈深不变，maxStack 沿用（新峰值 base+1 ≤ 原 base+4）。
+///
+/// 六步：callSrcPc 重定位 → 成员一致性 → 形态 re-match（rewrite 会话重新
+/// 收集，防 scan 与 rewrite 间 DOM 语义漂移）→ seed/key/cipher 逐值复核 →
+/// internPlainString + loadConst 选形 → 标签守门（victims 上无标签）+
+/// prunePcAttrs（擦除路径 LNT/LVT 配套，行面调试无损）→ anchor 原地写 +
+/// eraseBatch（失败回滚 anchor）。
+RwResult rewriteDecryptorSite(ir::ClassSession& session, ir::CodeUnit& cu, const Site& site)
+{
+    ir::CodeDom&                   dom   = cu.dom;
+    const std::vector<ir::InsnId>& order = dom.order();
+
+    ca::usize callPos = kNoIndex;
+    for (ca::usize i = 0; i < order.size(); ++i) {
+        const ir::Insn* in = dom.peek(order[i]);
+        if (in != nullptr && in->op == Op::INVOKESTATIC && in->srcPc == site.callSrcPc) {
+            callPos = i;
+            break;
+        }
+    }
+    if (callPos == kNoIndex) return RwResult::CallNotFound;
+
+    const ir::Insn* call = dom.peek(order[callPos]);
+    ir::ClassSession::MemberSem enc;
+    if (!session.memberOf(*call, enc)) return RwResult::MemberMismatch;
+    if (enc.owner != site.targetOwner || enc.name != site.targetName
+        || enc.desc != site.targetDesc) {
+        return RwResult::MemberMismatch;
+    }
+
+    // 改写会话重新收集（防 scan 与 rewrite 间 DOM 语义漂移）；第二形只有
+    // 密文一个载荷（key/seed 恒 0，不参与复核）。
+    const bool stringFamily = site.targetDesc == "(Ljava/lang/String;)Ljava/lang/String;";
+    DecryptorShape shape;
+    if (stringFamily) {
+        if (!matchStringDecryptorShape(session, dom, order, callPos, shape)) {
+            return RwResult::ArgsMismatch;
+        }
+        if (shape.cipherUnits != site.cipherUnits) {
+            return RwResult::ArgsMismatch;
+        }
+    } else {
+        if (!matchDecryptorShape(session, dom, order, callPos, shape)) {
+            return RwResult::ArgsMismatch;
+        }
+        if (shape.seed != site.seed || shape.key != site.key
+            || shape.cipherUnits != site.cipherUnits) {
+            return RwResult::ArgsMismatch;
+        }
+        if (shape.producers.size() != 4) return RwResult::ArgsMismatch;
+    }
+    // 空明文照常落折（internPlainString 内部处理 findUtf8 占位槽陷阱）。
+
+    const ca::u32 strIdx = rewrite_tools::internPlainString(session.backing().cp,
+                                                            site.plainUnits);
+    if (strIdx == 0 || strIdx > 0xFFFF) return RwResult::LoadFail;
+    ir::Insn load = ir::CodeEditor::loadConst(strIdx);
+    load.srcPc = jbc::ir::kNoPc;   ///< 原地写时被 keepPc 覆盖
+
+    // order 是 DOM 的活视图：先把句柄取出来。([CJI) 形 anchor = cipher
+    // （收集序最末，栈最深），victims = seed·key·toCharArray + 调用；
+    // 第二形 anchor = 密文 LDC（原地换 plain LDC），victims = 调用一条。
+    const ir::InsnId callId = order[callPos];
+    std::vector<ir::InsnId> victims;
+    ir::InsnId anchorId;
+    if (stringFamily) {
+        anchorId = shape.producers.front();
+        victims.push_back(callId);
+    } else {
+        anchorId = shape.producers.back();
+        victims.assign(shape.producers.begin(), shape.producers.end() - 1);
+        victims.push_back(callId);
+    }
+
+    for (const ir::InsnId id : victims) {
+        if (!dom.labelsAt(id).empty()) return RwResult::LabelBlocked;
+    }
+
+    // 擦除路径配套：victim pc 从 pcmap 蒸发，锚行先剪（调试面删行无损）。
+    std::vector<ca::u32> victimPcs;
+    victimPcs.reserve(victims.size());
+    for (const ir::InsnId id : victims) {
+        const ir::Insn* v = dom.peek(id);
+        if (v != nullptr && v->srcPc != jbc::ir::kNoPc) victimPcs.push_back(v->srcPc);
+    }
+    const ir::ClassUnit& unit = session.unit();
+    if (site.callerMethodIndex >= unit.methods.size()) return RwResult::InsertFail;
+    const ca::usize backingIdx = unit.methods[site.callerMethodIndex].backingIndex;
+    if (backingIdx >= session.backing().methods.size()) return RwResult::InsertFail;
+    if (!rewrite_tools::prunePcAttrs(session.backing(),
+                                     session.backing().methods[backingIdx], victimPcs)) {
+        return RwResult::EraseFail;
+    }
+
+    auto slotR = dom.get(anchorId);
+    if (slotR.is_err()) return RwResult::InsertFail;
+    ir::Insn*      anchor   = slotR.unwrap();
+    const ir::Insn original = *anchor;
+    const ca::u32  keepPc   = anchor->srcPc;
+    *anchor                 = load;
+    anchor->srcPc           = keepPc;
+
+    if (dom.eraseBatch(victims).is_err()) {
+        *anchor = original;   // 回滚：DOM 保持原样（已剪的 LNT 行面无损）
+        return RwResult::EraseFail;
+    }
+    return RwResult::Ok;
+}
+
+/// 外部内建站点（parseUL）的实参收集：(String, int) 键形定死，压栈序
+/// str·radix。String 实参 CP 直读——decodePush 栈值面对引用形保守拒（通用
+/// 折叠的产物只有数值），内建站点把字符串当纯函数入参、产物仍是数值，
+/// 不在该保守面内。producers 按压栈序（str 深、radix 浅），改写面直接用。
+bool collectBuiltinArgsParseUl(ir::ClassSession& s, const ir::CodeDom& dom,
+                               const std::vector<ir::InsnId>& order, ca::usize callPos,
+                               std::vector<ir::InsnId>& producers,
+                               std::vector<jsim::SimValue>& args)
+{
+    // 非NOP前驱定位（squeeze 遗留落点不驻栈，跳过）。
+    const auto prevReal = [&](ca::usize from, ca::usize& out) {
+        ca::usize k = from;
+        while (k > 0) {
+            --k;
+            const ir::Insn* p = dom.peek(order[k]);
+            if (p != nullptr && p->op != Op::NOP) {
+                out = k;
+                return p;
+            }
+        }
+        return static_cast<const ir::Insn*>(nullptr);
+    };
+
+    // radix：紧邻 call 的 int 常量装载。
+    ca::usize radixPos = 0;
+    const ir::Insn* radix = prevReal(callPos, radixPos);
+    if (radix == nullptr) return false;
+    ca::i32 radixV = 0;
+    if (!const_args::decodeConstInt(s, *radix, radixV)) return false;
+
+    // str：再往前一条 LDC String。
+    ca::usize strPos = 0;
+    const ir::Insn* str = prevReal(radixPos, strPos);
+    if (str == nullptr) return false;
+    if (str->op != Op::LDC && str->op != Op::LDC_W) return false;
+    ir::ClassSession::ConstSem sem;
+    if (!s.constOf(*str, sem) || sem.kind != ir::ClassSession::ConstSem::Kind::String) {
+        return false;
+    }
+
+    args.push_back(jsim::SimValue::knownStr(std::string(sem.str)));
+    args.push_back(jsim::SimValue::knownI32(radixV));
+    producers.push_back(order[strPos]);    // str：栈最深 → 折后原地锚
+    producers.push_back(order[radixPos]);  // radix：受害面
+    return true;
+}
+
 /// 在已 promote 的调用者方法里改写一个站点；失败不改动 DOM。
 RwResult rewriteSite(ir::ClassSession& session, ir::CodeUnit& cu, const Site& site)
 {
+    if (site.isDecryptor) return rewriteDecryptorSite(session, cu, site);
+
     ir::CodeDom&                   dom   = cu.dom;
     const std::vector<ir::InsnId>& order = dom.order();
 
@@ -441,8 +941,14 @@ RwResult rewriteSite(ir::ClassSession& session, ir::CodeUnit& cu, const Site& si
 
     std::vector<ir::InsnId>     producers;
     std::vector<jsim::SimValue> args;
-    if (!const_args::collectArgs(session, dom, order, callPos, const_args::argSlots(enc.desc),
-                                 producers, args)) {
+    if (site.isExternalBuiltin) {
+        // 内建站点：键形 (String, int)，String 实参 CP 直读（通用栈值面
+        // 保守拒引用形，这里不走）。
+        if (!collectBuiltinArgsParseUl(session, dom, order, callPos, producers, args)) {
+            return RwResult::ArgsMismatch;
+        }
+    } else if (!const_args::collectArgs(session, dom, order, callPos,
+                                        const_args::argSlots(enc.desc), producers, args)) {
         return RwResult::ArgsMismatch;
     }
     if (args.size() != site.args.size()) return RwResult::ArgsMismatch;
@@ -540,14 +1046,42 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
                     if (!s.memberOf(*in, enc)) continue;
                     if (enc.kind != ir::ClassSession::MemberSem::Kind::Method) continue;
 
-                    const auto it = index.find(scan_tools::keyOf(enc.owner, enc.name, enc.desc));
-                    if (it == index.end()) continue;   // 容器外目标：不构成候选
-                    const scan_tools::MethodLoc& loc = it->second;
-
                     const auto reject = [&](RejectReason r) {
                         result.rejects.push_back(RejectedSite{
                             std::string(self), std::string(name), in->srcPc, r});
                     };
+
+                    const auto it = index.find(scan_tools::keyOf(enc.owner, enc.name, enc.desc));
+                    if (it == index.end()) {
+                        // 容器外目标：唯一入表面 = JDK 全序纯内建白名单
+                        // （kExternalPureBuiltins，登记规则见表注）。求值在
+                        // evaluateSites 头部按成员直折。
+                        if (!isExternalPureBuiltin(enc.owner, enc.name, enc.desc)) {
+                            continue;
+                        }
+                        std::vector<ir::InsnId>     producers;
+                        std::vector<jsim::SimValue> args;
+                        if (!collectBuiltinArgsParseUl(s, cu->dom, order, pos,
+                                                       producers, args)) {
+                            reject(RejectReason::ArgsNotConstant);
+                            continue;
+                        }
+                        Site site;
+                        site.callerUri         = std::string(entry.uri);
+                        site.callerOwner       = std::string(self);
+                        site.callerMethod      = std::string(name);
+                        site.callerDesc        = std::string(desc);
+                        site.callerMethodIndex = mi;
+                        site.callSrcPc         = in->srcPc;
+                        site.targetOwner       = std::string(enc.owner);
+                        site.targetName        = std::string(enc.name);
+                        site.targetDesc        = std::string(enc.desc);
+                        site.args              = std::move(args);
+                        site.isExternalBuiltin = true;
+                        result.sites.push_back(std::move(site));
+                        continue;
+                    }
+                    const scan_tools::MethodLoc& loc = it->second;
 
                     if ((loc.access & kAccStatic) == 0) {
                         reject(RejectReason::TargetNotStatic);
@@ -564,6 +1098,58 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
                     if (returnChar(enc.desc) == 'V') {
                         reject(RejectReason::TargetVoid);
                         continue;
+                    }
+
+                    // 解密器族分派：形态 + 同类（JVMS 5.5）双门，命中即自成
+                    // 站点（不走通用实参收集——toCharArray 前缀必然拒）。
+                    if (enc.desc == "([CJI)Ljava/lang/String;" && enc.owner == self) {
+                        DecryptorShape shape;
+                        if (matchDecryptorShape(s, cu->dom, order, pos, shape)) {
+                            Site site;
+                            site.callerUri         = std::string(entry.uri);
+                            site.callerOwner       = std::string(self);
+                            site.callerMethod      = std::string(name);
+                            site.callerDesc        = std::string(desc);
+                            site.callerMethodIndex = mi;
+                            site.callSrcPc         = in->srcPc;
+                            site.targetOwner       = std::string(enc.owner);
+                            site.targetName        = std::string(enc.name);
+                            site.targetDesc        = std::string(enc.desc);
+                            site.targetMethodIndex = loc.index;
+                            site.isDecryptor       = true;
+                            site.cipherUnits       = std::move(shape.cipherUnits);
+                            site.key               = shape.key;
+                            site.seed              = shape.seed;
+                            result.sites.push_back(std::move(site));
+                            continue;
+                        }
+                    }
+
+                    // 解密器族第二形（260705 / grunt2-fork 逐码元 XOR）：
+                    // `ldc 密文; invokestatic <self>.dec:(String;)String`。
+                    // 体形不钉（while 循环 XOR / junk 尾巴都在族内），纯性
+                    // 由求值段 jsim 实跑证明；不命中不拒——落回通用收集按
+                    // String 实参拒（ArgsKindUnsupported，trace 可见）。
+                    if (enc.desc == "(Ljava/lang/String;)Ljava/lang/String;"
+                        && enc.owner == self) {
+                        DecryptorShape shape;
+                        if (matchStringDecryptorShape(s, cu->dom, order, pos, shape)) {
+                            Site site;
+                            site.callerUri         = std::string(entry.uri);
+                            site.callerOwner       = std::string(self);
+                            site.callerMethod      = std::string(name);
+                            site.callerDesc        = std::string(desc);
+                            site.callerMethodIndex = mi;
+                            site.callSrcPc         = in->srcPc;
+                            site.targetOwner       = std::string(enc.owner);
+                            site.targetName        = std::string(enc.name);
+                            site.targetDesc        = std::string(enc.desc);
+                            site.targetMethodIndex = loc.index;
+                            site.isDecryptor       = true;
+                            site.cipherUnits       = std::move(shape.cipherUnits);
+                            result.sites.push_back(std::move(site));
+                            continue;
+                        }
                     }
 
                     std::vector<ir::InsnId>     producers;
@@ -649,7 +1235,17 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                 if (r == RwResult::Ok) {
                     ++dirty.applied;
                     methodChanged = true;
-                    if (std::getenv("GRUNT_DEBUG_FOLD") != nullptr) {
+                    if (site->isDecryptor && std::getenv("GRUNT_DEBUG_FOLD") != nullptr) {
+                        // 解密器逐条落折：cipher/key/seed → 明文，与 JVM 反射
+                        // 求值对照。
+                        std::fprintf(stderr, "[fold] %s.%s pc=%u -> %s cipher=%zu key=%lld seed=%d => \"%s\"\n",
+                                     site->callerOwner.c_str(), site->callerMethod.c_str(),
+                                     site->callSrcPc, site->targetName.c_str(),
+                                     site->cipherUnits.size(),
+                                     static_cast<long long>(site->key), site->seed,
+                                     site->plaintext.c_str());
+                    }
+                    if (std::getenv("GRUNT_DEBUG_FOLD") != nullptr && !site->isDecryptor) {
                         // 逐条落折成了什么：用来和 JVM 反射求值对照。
                         std::fprintf(stderr, "[fold] %s.%s pc=%u -> %s  = ", site->callerOwner.c_str(),
                                      site->callerMethod.c_str(), site->callSrcPc,
@@ -710,6 +1306,16 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                 std::fprintf(stderr, "[write-fail] %s err=%s\n",
                              std::string(s.backing().thisName()).c_str(),
                              jbc::core::to_string(encoded.unwrap_err()));
+                // 池面诊断：区分 CP 引用失效 vs 属性层编码失败。
+                jbc::core::Diagnostics diag;
+                if (s.backing().cp.validateReferences(diag).is_err()) {
+                    for (const jbc::core::Diagnostic& d : diag.items()) {
+                        std::fprintf(stderr, "[write-diag] cp-ref %s off=%u\n",
+                                     jbc::core::to_string(d.code), d.offset);
+                    }
+                } else {
+                    std::fprintf(stderr, "[write-diag] cp refs OK — 失败在属性编码层\n");
+                }
             }
             return;
         }

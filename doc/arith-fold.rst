@@ -49,7 +49,7 @@ MutateJumps 直线形（ ``INT(v±k); INT(k); IADD/ISUB`` / ``INT(v^k); INT(k); 
 
 按 ``srcPc+op`` 重定位锚点后全量复核（同方法前站改写后不盲改）。替换形状锚点原地改单条目标指令（保 ``srcPc`` ），常量窗口锚点原地改结果常量装载；窗口其余非 NOP 指令擦除（eraseBatch kRejectIfUsed 拒收即整站还原放弃）。帧链走 mutateMethodWithFrames 正统写回，前置 roundTripSafe。替换形状还原后暴露的新常量窗口（如 ``LDC a; LDC b;`` + 还原出的 IAND）本轮不展开，链上重复 ``grunt.ArithFold`` 收敛（与 IndyRestore 第二轮同一口径）。
 
-链序：排在 ``grunt.NumberFold`` 与 ``grunt.ConstPoolRestore`` 之后。NumberFold 的六式跨度先吃自己的面（旧式站点数不受本 pass 影响，加性恒等），ConstPoolRestore 回填的常量是本 pass 常量窗口的主要燃料。
+链序：排在 ``grunt.NumberFold`` 与 ``grunt.ConstPoolRestore`` 之后。NumberFold 的六式跨度先吃自己的面（旧式站点数不受本 pass 影响，加性恒等），ConstPoolRestore 回填的常量是本 pass 常量窗口的主要燃料。 ``--converge`` 驱动下重复轮自动重扫至无窗口（轮维度吸收，见 :ref:`obf-behaviors-contract`）。
 
 
 已知边界

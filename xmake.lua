@@ -43,8 +43,10 @@ option_end()
 
 add_repositories("luiox-repo https://github.com/luiox/luiox-repo.git")
 
--- mjbase 包消费（0.0.5 = libarchive 死面摘除；0.0.18 = jar 导入 Dup 名末现
--- 保留对齐 JVM 类加载口径 #160 + 注解递归畸形输入边界守卫 #158）。包面
+-- mjbase 包消费（0.0.18 = jar 导入 Dup 名末现；0.0.18-hotfix1 = frame_rewire 链基
+-- 热修：expandChain 链基补初始帧，栅栏增强路径 chop 掉参数致 VerifyError
+-- （mjbase #223；cff 反摊平擦残块死 goto 即触发栅栏位；版本名用 semver
+-- 预发布形式——xmake semver 不吃四段版本号，0.0.18.1 在 require 解析期即崩））。包面
 -- 依赖已与源仓根 require 清单对齐（libjbc >=0.4.22 / libjstd / libjhasm
 -- >=0.3.3 / libjstr / libjzip / libgarena / libjclassfile / zlib）。grunt 源码
 -- 直接 include 的四面各按消费面显式声明：mjbase/* → mjbase 包；jbc/* →
@@ -53,8 +55,8 @@ add_repositories("luiox-repo https://github.com/luiox/luiox-repo.git")
 -- 全图归并单实例，家族各包定义的嵌套 libca 已统一为同一超集 modules，
 -- 版本经顶层钉定收敛）；jsim/* → libjsim 包（jbc 桥 config 开，桥迁官方
 -- jsim/jbc.hpp，libjbc 随桥面进 jsim 消费图，与 grunt 直连面同实例归并）。
-add_requires("mjbase 0.0.18")
-add_requires("libjbc >=0.4.24")
+add_requires("mjbase 0.0.18-hotfix1")
+add_requires("libjbc >=0.4.29")
 add_requires("libjsim 0.0.1", {configs = {jbc = true}})
 add_requires("libca " .. LUIOX_LIBCA_VERSION, {configs = {modules = LUIOX_LIBCA_MODULES}})
 add_requireconfs("mjbase.libca",     {version = LUIOX_LIBCA_VERSION, configs = {modules = LUIOX_LIBCA_MODULES}})

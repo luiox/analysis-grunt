@@ -12,8 +12,8 @@
 /// `INVOKESTATIC` 查定义表，命中即站点。
 ///
 /// 初始化暴露检查：按代理分组后，存在 owner 外调用点的代理，owner
-/// `<clinit>` 必须中性（缺失或只剩 NOP/RETURN，与 constant_call 同口径，
-/// 收口在 `scan_toolbox::classInitNeutral`，owner 级缓存）；非中性**整组
+/// `<clinit>` 必须中性（与 constant_call 同双面口径，收口在
+/// `scan_toolbox::classInitNeutral`，owner 级缓存）；非中性**整组
 /// 放弃**（只放一半调用点会把初始化时机劈成两半），记 `OwnerInitExposed`。
 /// 零引用代理不产站点、不刷拒绝（死码归 DeadMember）。
 ///

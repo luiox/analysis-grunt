@@ -36,6 +36,24 @@
 /// `java/lang/Math.max(II)I` 上；jsim 核心/num 包无 JDK 数学面，缺接管整条
 /// 面在 EvalBadState 拒。max 是全序纯函数，双常量实参下值唯一确定，
 /// unknown 按未知口径传播。
+///
+/// ## 解密器族（`Site::isDecryptor`）
+///
+/// Grunt 家族的字符串解密调用 `a("密文".toCharArray(), key, seed)`（描述符
+/// `([CJI)Ljava/lang/String;`，同类 private static 的 junk 状态机体）是通用
+/// 判据折不了的形态：实参里有 toCharArray 前缀（非紧邻常量）、返回值是
+/// 引用。族判据（形态 + 同类 JVMS 5.5 + jsim 带堆实参实跑）自成一路，
+/// 求值明文 intern 进池后调用点折成一条 `ldc 明文`。判据与改写细节见
+/// constant_call.cpp 解密器族段；桥面前置（junk 死走廊 athrow 的整方法
+/// 拒）由 jsim_executor 的桥前可达性剥离解决。
+///
+/// 第二形（260705 / grunt2-fork 逐码元 XOR，2026-11-17 收口）：`ldc 密文;
+/// invokestatic <self>.dec:(Ljava/lang/String;)Ljava/lang/String;`——
+/// cl.a..g 单串单方法与 IJIoWgQdhJ7vqTpO 共享辅助都是这一形。目标体形
+/// 不钉（while 循环 XOR / junk 尾巴都在族内），纯性由 jsim 实跑证明
+/// （jsim::str 包的 String.charAt/length + StringBuilder 全套接管在位）；
+/// 实参构造 knownStr(MUTF-8 密文)，产物提取 Obj 堆 String 与 Str 引用
+/// 双形态都收。改写锚 = 密文 LDC（原地换 `ldc 明文`），受害面 = 调用一条。
 #pragma once
 
 #include <string>
@@ -54,6 +72,10 @@ namespace grunt::constant_call {
 /// `caller*` 定位调用点，`target*` 是证据，`args`/`value` 是判定结果。
 /// `callSrcPc` 是原始字节布局下的 pc，跨会话稳定，rewrite 用它重新定位
 /// 指令，而不是把 InsnId（会话内句柄）带出去。
+///
+/// 解密器族（`isDecryptor`）不走 `args`/`value` 通道：它的实参形态是
+/// `ldc 密文 · toCharArray · ldc2_w key · ldc seed`，密文/密钥/种子以
+/// `cipherUnits`/`key`/`seed` 承载，求值明文落 `plainUnits`。
 struct Site
 {
     std::string callerUri;
@@ -70,6 +92,17 @@ struct Site
 
     std::vector<jsim::SimValue> args;   ///< 逐实参（含 null 引用）
     jsim::SimValue              value;  ///< 求值结果
+
+    bool                 isDecryptor = false;  ///< 解密器族站点（独立判据，见 cpp 文档）
+    bool isExternalBuiltin = false;  ///< 容器外 JDK 全序纯内建站点（白名单面，
+                                     ///< 池读点下标里 parseUL 键面的解锁器；
+                                     ///< bootstrap 类的初始化时机由 JVM 托管，
+                                     ///< 删调用无可观测变化）
+    std::vector<ca::u16> cipherUnits;          ///< 密文 UTF-16 码元（解密器族）
+    ca::i64              key         = 0;      ///< 密钥（解密器族第 2 实参）
+    ca::i32              seed        = 0;      ///< 种子（解密器族第 3 实参）
+    std::vector<ca::u16> plainUnits;           ///< 求值明文 UTF-16 码元（解密器族）
+    std::string          plaintext;            ///< 明文 UTF-8（trace 用，解密器族）
 };
 
 /// @brief 拒绝原因（站点级证据链的一部分，供 trace 与文档引用）。

@@ -18,9 +18,9 @@
 /// (String;I)String 紧前的 int 常量 generalKey。judgeSite 粗找 =
 /// INVOKEDYNAMIC 全量起锚，细找按 S2 desc 指纹 → 键链 → S1 解密 + desc 互
 /// 证 → S3 heavy Era 检查 + magic 自证 → 接口旁证（容器普查优先 / `--jdk`
-/// 注入的 JDK 接口集双向作证 / 两无 fail-closed）。JDK 接口集由 adapter 在
-/// Era 非 Unknown 时注入（scanJdkInterfaces 与 indy_decode 单源），残留本
-/// 体零文件系统副作用。
+/// 注入的 JDK 接口集双向作证 / 集空时 virtual fail-closed、static 按类落）。
+/// JDK 接口集由 adapter 在 `--jdk` 给出时注入，不挂 Era 门（与
+/// scanJdkInterfaces/indy_decode 单源），残留本体零文件系统副作用。
 ///
 /// ## 族推导只认 c1/c2 两条边
 ///
@@ -51,15 +51,16 @@
 ///
 /// ## 边界与不做
 ///
-/// 材料通道不猜（见头文件）。v2 专面不建：heavy 的 @GruntMetadata 注解名
+/// 材料通道不猜（见头文件）。v2 专面不建：heavy 的 `@GruntMetadata` 注解名
 /// 可配置、heavy 关闭时注解类不生成，不能当版本判据，probeEra 的 Grunt2
 /// 判据因此在 era.hpp 明文挂缺（缺口 #15 口径），v2 现场的 heavy 面不激
-/// 活（simple 面两代同源自证，不挂 Era）。BSM / 解密器 / @Metadata 注解清
+/// 活（simple 面两代同源自证，不挂 Era）。BSM / 解密器 / `@Metadata` 注解清
 /// 理不做：改写只动调用点，指纹条目交 DeadMember 引用普查与 metadata-strip
 /// 类面。
 
 #include "grunt/indy_restore.hpp"
 
+#include <cstdio>
 #include <memory>
 #include <optional>
 #include <set>
@@ -186,53 +187,20 @@ struct ClassKeys
     std::unordered_map<std::string, ca::i32> heavyBsmKey;
 };
 
-/// @brief 解密器窗口提取：定位 `I2C` 回溯两层（对齐 indy_decode 的 key 链
-///        提取形状）。@return 形状 + key；无窗口 nullopt。
+/// @brief 解密器窗口提取：const_args::decryptKeyWindow 单源（pc 布局真值
+///        窗）的形状映射薄壳。@return 形状 + key；无窗口 nullopt。
+///
+/// 本文件原形按 dom.order() 位置回溯，带循环的 260705 解密器（`while` 形，
+/// goto 前跳 + 回边标签）DOM 序错位导致三形全失配——keyMissing=984 的
+/// 根因，2026-11-17 修。
 std::optional<std::pair<DecShape, ca::i32>> scanDecryptKey(ir::ClassSession& s, ir::CodeUnit& cu)
 {
-    const std::vector<ir::InsnId>& order = cu.dom.order();
-    const std::string self = std::string(s.unit().symbols().str(s.unit().thisClass));
-    for (ca::usize p = 0; p < order.size(); ++p) {
-        const ir::Insn* in = cu.dom.peek(order[p]);
-        if (in == nullptr || in->op != Op::I2C) continue;
-        if (p < 1) break;
-        const ir::Insn* outer = cu.dom.peek(order[p - 1]);
-        if (outer == nullptr || outer->op != Op::IXOR) continue;
-
-        // plain 单层：I2C ← IXOR ← LDC K。
-        ca::i32 single = 0;
-        if (p >= 2 && const_args::decodeConstInt(s, cu, order, p - 2, single)) {
-            return std::make_pair(DecShape::Plain, single);
-        }
-        if (p < 4) continue;
-        const ir::Insn* inner = cu.dom.peek(order[p - 2]);
-        if (inner == nullptr || inner->op != Op::IXOR) continue;
-        const ir::Insn* mid = cu.dom.peek(order[p - 3]);
-        if (mid == nullptr) continue;
-
-        // v3 材料通道：I2C ← IXOR ← IXOR ← INVOKESTATIC <self> ()I ← LDC K。
-        if (mid->op == Op::INVOKESTATIC) {
-            ir::ClassSession::MemberSem sem;
-            if (!s.memberOf(*mid, sem) || sem.kind != ir::ClassSession::MemberSem::Kind::Method
-                || sem.desc != "()I" || sem.owner != self) {
-                continue;
-            }
-            ca::i32 raw = 0;
-            if (const_args::decodeConstInt(s, cu, order, p - 4, raw)) {
-                return std::make_pair(DecShape::Material, raw);
-            }
-            continue;
-        }
-
-        // reobf 折叠键（INT(value^K); INT(K); IXOR）：I2C ← IXOR ← IXOR ←
-        // LDC K ← LDC value，key = value ^ K。
-        ca::i32 ka = 0;
-        ca::i32 kb = 0;
-        if (const_args::decodeConstInt(s, cu, order, p - 3, ka) && const_args::decodeConstInt(s, cu, order, p - 4, kb)) {
-            return std::make_pair(DecShape::Plain, ka ^ kb);
-        }
-    }
-    return std::nullopt;
+    const std::optional<const_args::DecryptKeyWindow> win = const_args::decryptKeyWindow(s, cu);
+    if (!win.has_value()) return std::nullopt;
+    const DecShape shape = win->shape == const_args::DecryptKeyWindow::Shape::Material
+                               ? DecShape::Material
+                               : DecShape::Plain;
+    return std::make_pair(shape, win->key);
 }
 
 /// @brief 收集一类的解密器键表与 BSM 体跟随面（纯读；BSM 壳死按缺席计数）。
@@ -272,15 +240,20 @@ void collectClassKeys(ir::ClassSession& s, ClassKeys& out)
             && mdesc != knowledge::kGruntHeavyBsmDesc) {
             continue;
         }
-        // BSM 体跟随面（壳死 = 无 Code，缺席计数）。
+        // BSM 体跟随面（壳死 = 无 Code，缺席计数）。BSM 体是 junk 谓词 +
+        // 多字符串解密的直线段混合，dom 序不保 pc 升序，键窗按 pc 布局真
+        // 值扫（与 decryptKeyWindow 同族；260705 heavy 体里折叠键实参
+        // `LDC K1; LDC K2; IXOR; INVOKESTATIC dec(String;I)` 的单条回溯
+        // 失配，key=984 实证，2026-11-17 修）。
         if (!ir::hasCode(s, mi)) continue;
         auto promoted = ir::promoteMethod(s, mi);
         if (promoted.is_err()) continue;
         ir::CodeUnit* cu = promoted.unwrap().get();
         if (cu == nullptr) continue;
-        const std::vector<ir::InsnId>& order = cu->dom.order();
-        for (ca::usize p = 0; p < order.size(); ++p) {
-            const ir::Insn* in = cu->dom.peek(order[p]);
+        const std::vector<const ir::Insn*> pcIns = rewrite_tools::pcOrderedInsns(*cu);
+        std::unordered_map<std::string, ca::i32> heavyKey;
+        for (ca::usize p = 0; p < pcIns.size(); ++p) {
+            const ir::Insn* in = pcIns[p];
             if (in == nullptr) continue;
             ir::ClassSession::MemberSem sem;
             if (!s.memberOf(*in, sem) || sem.kind != ir::ClassSession::MemberSem::Kind::Method) {
@@ -295,17 +268,28 @@ void collectClassKeys(ir::ClassSession& s, ClassKeys& out)
                 }
                 continue;
             }
-            // heavy：`LDC K; INVOKESTATIC <self> (String;I)String` 窗口的 K。
+            // heavy：解密器实参的 const 键表达式（`LDC K` 单层或 `LDC K1;
+            // LDC K2; IXOR` 折叠；实参来自运行期值的装饰点回溯不过即跳）。
+            // 同键多窗是常态（一 BSM 解多串共用 generalKey）；异键 = 歧义
+            // fail-closed 不定键。
             if (in->op != Op::INVOKESTATIC || sem.owner != self
                 || sem.desc != knowledge::kGruntHeavyDecryptorDesc) {
                 continue;
             }
-            if (p == 0) continue;
-            ca::i32 key = 0;
-            if (const_args::decodeConstInt(s, *cu, order, p - 1, key)) {
-                out.heavyBsmKey[mname] = key;
+            const std::optional<ca::i32> key =
+                const_args::constIntExprBefore(s, self, pcIns, p);
+            if (!key.has_value()) continue;
+            if (const auto hit = heavyKey.find(mname); hit != heavyKey.end()) {
+                if (hit->second != *key) {
+                    heavyKey.clear();
+                    break;
+                }
+                continue;
             }
-            break;
+            heavyKey.emplace(mname, *key);
+        }
+        if (!heavyKey.empty()) {
+            out.heavyBsmKey[mname] = heavyKey[mname];
         }
     }
 }
@@ -432,7 +416,7 @@ bool readStringArray(const jbc::core::AnnotationsAttr::ElemValue& value,
     return true;
 }
 
-/// @brief 从 owner 类字节读 @Metadata 形注解（mv/d1/d2 元素名 + mv 版本检查 +
+/// @brief 从 owner 类字节读 `@Metadata` 形注解（mv/d1/d2 元素名 + mv 版本检查 +
 ///        注解类在容器内的 mv/d1/d2 抽象方法面）。@return 读到填 d1/d2。
 bool readMetadata(const std::unordered_map<std::string, const std::vector<ca::u8>*>& classesBySelf,
                   const std::string& ownerInternal, std::vector<std::string>& d1,
@@ -795,18 +779,29 @@ Verdict judgeSite(const std::string& uri, ca::usize methodIndex,
         }
     }
 
-    // ---- 接口旁证（virtual 落点分派）：容器普查优先（权威）；JDK 侧是
-    //      穷举普查，成员与否双向作证；两处皆无 = fail-closed 拒绝。
-    if (site.form == Form::Virtual) {
-        const auto jit = jarIsInterface.find(site.targetOwner);
-        if (jit != jarIsInterface.end()) {
-            site.ownerIsInterface = jit->second;
-        } else if (!input.jdkInterfaces.empty()) {
-            site.ownerIsInterface = input.jdkInterfaces.count(site.targetOwner) != 0;
-        } else {
-            return reject("JDK 接口集未注入，virtual 落点无旁证（fail-closed）：" + site.targetOwner,
-                          7);
-        }
+    // ---- 接口旁证（static/virtual 落点 ref-kind 分派）：容器普查优先
+    //      （权威）；JDK 侧穷举普查，集非空即双向作证。集空 + 容器外：
+    //      virtual fail-closed（invokevirtual 落接口 owner 是运行期 ICCE，
+    //      jsoup Appendable 实证）；static 按类放行（历史全绿口径；接口
+    //      static 落点需 --jdk 旁证才落 InterfaceMethodref，jsoup Path.of
+    //      实证）。
+    const auto jit = jarIsInterface.find(site.targetOwner);
+    if (jit != jarIsInterface.end()) {
+        site.ownerIsInterface = jit->second;
+    } else if (!input.jdkInterfaces.empty()) {
+        site.ownerIsInterface = input.jdkInterfaces.count(site.targetOwner) != 0;
+    } else if (site.form == Form::Virtual) {
+        return reject("JDK 接口集未注入，virtual 落点无旁证（fail-closed）：" + site.targetOwner,
+                      7);
+    } else {
+        // static 按类放行（历史全绿口径）：owner 真是接口时落 Methodref 是
+        // 运行期 ICCE（jsoup Path.of 实证，产物带 --jdk 才落对）。无旁证不
+        // 静默：计数 + 告警，产物消费方看得到这个面。
+        ++stats.staticOwnerUnattested;
+        std::fprintf(stderr,
+                     "[grunt.IndyRestore] static 落点无 JDK 接口旁证，按类落 Methodref"
+                     "（owner 若为接口 = 运行期 ICCE，建议 --jdk）：%s.%s\n",
+                     site.targetOwner.c_str(), site.targetName.c_str());
     }
 
     outSite = std::move(site);
@@ -921,15 +916,16 @@ std::optional<Form> rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Sit
         return std::nullopt;
     }
 
+    // ref-kind 单一依据 ownerIsInterface：接口 owner 的 static 落点若落
+    // Methodref，invokestatic 解析即 ICCE（jsoup v3_full Path.of 实证——
+    // scan 已按 --jdk 旁证记 ownerIsInterface，rewrite 不得再按 static 丢弃）。
     in->op = site.form == Form::Static
                  ? Op::INVOKESTATIC
                  : (site.ownerIsInterface ? Op::INVOKEINTERFACE : Op::INVOKEVIRTUAL);
     const bool ok = s.setMember(
         *in,
-        site.form == Form::Static
-            ? ir::ClassSession::MemberSem::Kind::Method
-            : (site.ownerIsInterface ? ir::ClassSession::MemberSem::Kind::InterfaceMethod
-                                     : ir::ClassSession::MemberSem::Kind::Method),
+        site.ownerIsInterface ? ir::ClassSession::MemberSem::Kind::InterfaceMethod
+                              : ir::ClassSession::MemberSem::Kind::Method,
         site.targetOwner, site.targetName, site.targetDesc);
     if (!ok) {
         in->op = Op::INVOKEDYNAMIC;   // 换指令失败：还原，不留半截指令

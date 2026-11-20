@@ -16,7 +16,7 @@
 ///             owner 是点分名（java.lang.Math），virtual 时 indy desc 首参
 ///             补 Object receiver；
 ///     heavy:  encOwner 经 BSM 体内 LDC generalKey 解一层；name&lt;&gt;desc 编在
-///             owner 类 @Metadata 注解的 d1/d2 数组里，遍历 d1，第 i 项经
+///             owner 类 `@Metadata` 注解的 d1/d2 数组里，遍历 d1，第 i 项经
 ///             magic2 解出 data1 整数串，`data1 % 59557 == magic2` 命中即取
 ///             d2[i] 经 magic1 解出 `name&lt;&gt;desc`。
 ///
@@ -124,7 +124,7 @@ struct Site
     std::string targetOwner;         ///< 解密结果（slash 内部名）
     std::string targetName;
     std::string targetDesc;
-    bool        ownerIsInterface = false;   ///< virtual 落点分派
+    bool        ownerIsInterface = false;   ///< ref-kind 分派（接口 static 同口径）
 };
 
 /// @brief 拒绝（fail-closed 计数：拒绝原因进 trace，站点逐位不动）。
@@ -151,6 +151,7 @@ struct ScanResult
     ca::usize metadataMissing    = 0;   ///< heavy：owner 类无 mv/d1/d2 形注解（或 Era 未判）
     ca::usize materialLane       = 0;   ///< v3 材料通道解密器（运行期材料字段，静态不可解）
     ca::usize interfaceUnattested = 0;  ///< virtual 目标接口无旁证（fail-closed）
+    ca::usize staticOwnerUnattested = 0; ///< static 落点 owner 无旁证（按类放行 + 告警）
     ca::usize classesSkipped     = 0;   ///< 会话开不了的类
 };
 

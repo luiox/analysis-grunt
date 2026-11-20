@@ -161,36 +161,20 @@ bool parseMethod(std::string_view desc, MethodDesc& out) noexcept
 /// @brief 从解密器方法体提取 XOR key。
 ///
 /// Kasumi 双层形如 `charAt; LDC K1; LDC K2; IXOR; IXOR; i2c`（内层 IXOR 算
-/// `K1^K2`，外层把 charAt 结果与之异或）；兼容单层 `LDC K; IXOR`。定位 `i2c`
-/// （解密循环里把异或结果转回 char 的唯一位点）后按布局回溯：DOM 的 order
-/// 是布局序，`p-1/p-2/…` 即 ASM previousReal 的等价面（无 LABEL/FRAME 夹层）。
+/// `K1^K2`，外层把 charAt 结果与之异或）；兼容单层 `LDC K; IXOR`。判定收编
+/// const_args::decryptKeyWindow 单源（pc 布局真值窗）——本文件原形按
+/// dom.order() 位置回溯并注释「DOM order 是布局序」，循环回边 / handler
+/// 重排下不成立（260705 带 `while` 的解密器三形全失配，IndyRestore 同族
+/// keyMissing=984 实证，2026-11-17 修）；Material 形不在 Kasumi 面，
+/// fail-closed 返回 nullopt。
 std::optional<ca::i32> extractDecryptKey(const ir::ClassSession& s, ir::CodeUnit& cu)
 {
-    const std::vector<ir::InsnId>& order = cu.dom.order();
-    for (ca::usize p = 0; p < order.size(); ++p) {
-        const ir::Insn* in = cu.dom.peek(order[p]);
-        if (in == nullptr || in->op != Op::I2C) continue;
-        if (p < 1) break;
-        const ir::Insn* outer = cu.dom.peek(order[p - 1]);
-        if (outer == nullptr || outer->op != Op::IXOR) continue;
-        if (p < 2) break;
-        const ir::Insn* inner = cu.dom.peek(order[p - 2]);
-        if (inner == nullptr) break;
-        // 双层：innerXor 前驱是 K2，再前驱是 K1，key = K1 ^ K2。
-        if (inner->op == Op::IXOR) {
-            if (p < 4) break;
-            ca::i32 k2 = 0;
-            if (!const_args::decodeConstInt(s, cu, order, p - 3, k2)) break;
-            ca::i32 k1 = 0;
-            if (!const_args::decodeConstInt(s, cu, order, p - 4, k1)) break;
-            return k1 ^ k2;
-        }
-        // 单层：inner 位置直接是 int 常量。
-        ca::i32 single = 0;
-        if (const_args::decodeConstInt(s, cu, order, p - 2, single)) return single;
-        break;
+    const std::optional<const_args::DecryptKeyWindow> win = const_args::decryptKeyWindow(s, cu);
+    if (!win.has_value()
+        || win->shape != const_args::DecryptKeyWindow::Shape::Plain) {
+        return std::nullopt;
     }
-    return std::nullopt;
+    return win->key;
 }
 
 // ============================================================================
@@ -535,19 +519,22 @@ Verdict judgeSite(ir::CodeUnit& cu, const std::string& uri, ca::usize methodInde
         return reject(std::move(why), 4);
     }
 
-    // ---- 接口旁证（virtual 落点分派）：容器普查优先（权威）。JDK 侧是
-    //      穷举普查（scanJdkInterfaces 收全集内全部接口），故**成员与否双向
-    //      作证**：在集 = 接口（invokeinterface），不在集 = 类（invokevirtual
-    //      ，ArrayList 这类 JDK 类目标靠缺席证据落对）。集合为空 = 没有任何
-    //      旁证，fail-closed 拒绝（invokevirtual 误调接口方法在运行时
-    //      IncompatibleClassChangeError）。
-    if (form == knowledge::KasumiIndyForm::Virtual) {
+    // ---- 接口旁证（static/virtual 落点 ref-kind 分派）：容器普查优先
+    //      （权威）。JDK 侧是穷举普查（scanJdkInterfaces 收全集内全部接口），
+    //      故**成员与否双向作证**：在集 = 接口，不在集 = 类（ArrayList 这类
+    //      JDK 类目标靠缺席证据落对）。集合为空 = 没有任何旁证：virtual
+    //      fail-closed 拒绝（invokevirtual 误调接口方法在运行时
+    //      IncompatibleClassChangeError）；static 按类放行（无旁证不猜接口，
+    //      历史全绿口径）。旁证成立时接口 static 落点必须 InterfaceMethodref
+    //      （invokestatic + Methodref 指向接口方法运行期 ICCE，jsoup v3_full
+    //      Path.of 实证），rewrite 按同一位分派。
+    {
         const auto jit = jarIsInterface.find(site.targetOwner);
         if (jit != jarIsInterface.end()) {
             site.ownerIsInterface = jit->second;
         } else if (!input.jdkInterfaces.empty()) {
             site.ownerIsInterface = input.jdkInterfaces.count(site.targetOwner) != 0;
-        } else {
+        } else if (form == knowledge::KasumiIndyForm::Virtual) {
             return reject("JDK 接口集未注入，virtual 落点无旁证（fail-closed）：" + site.targetOwner,
                           5);
         }
@@ -636,7 +623,7 @@ FormHit rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu,
     // ---- 纯原地三态：static / getstatic / putstatic ----
     switch (site.form) {
     case knowledge::KasumiIndyForm::Static:
-        if (!swapInvoke(Op::INVOKESTATIC, false)) {
+        if (!swapInvoke(Op::INVOKESTATIC, site.ownerIsInterface)) {
             ++failed;
             return std::nullopt;
         }

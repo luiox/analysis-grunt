@@ -4,6 +4,7 @@
 /// 各插件仓自组 CLI：mjbase 出框架（注册表/管线/容器 IO/workspace 装配），
 /// 本仓只出 pack 与残留实现。
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -19,6 +20,7 @@
 #include <io.h>
 #endif
 
+#include "grunt/converge.hpp"
 #include "grunt/pack.hpp"
 #include "grunt/pipeline_adapter.hpp"
 
@@ -70,14 +72,18 @@ LONG WINAPI crashFilter(EXCEPTION_POINTERS* ep)
 #endif
 
 constexpr const char* kUsage =
-    "grunt_cli -i in.jar -o out.jar -p grunt.X[,grunt.Y...] [-c pack.json]\n"
+    "grunt_cli -i in.jar -o out.jar -p grunt.X[,grunt.Y...] [-c pack.json] [--converge[=N]]\n"
     "  -i  输入 jar\n"
     "  -o  输出 jar\n"
-    "  -p  逗号分隔 pass 名（grunt. 前缀）\n"
+    "  -p  逗号分隔 pass 名（grunt. 前缀）；--converge 且未给 -p 时用默认主线\n"
     "  -c  pack 配置 JSON 文件（可选，文本整体交给 pack 解析）\n"
-    "  --jdk  JDK 根目录（可选）：grunt.IndyDecode 的接口旁证注入面，扫描\n"
-    "         jmods/lib 收集接口集，Era=Kasumi 才激活；空 = 接口路 fail-closed\n"
-    "  --tsv  明文表路径（可选）：grunt.StringCacheFold 的 TSV 旁证注入面，\n"
+    "  --converge[=N]  不动点驱动：整条 -p 程序重复执行到容器字节面不再变化\n"
+    "         （N = 轮上限，默认 12；达上限未收敛如实报告仍导出）。强制\n"
+    "         GRUNT_SLICE_SEC=0——片钟截断会让整轮空转造成假收敛\n"
+    "  --jdk  JDK 根目录（可选）：indy 三面（IndyDecode/IndyRestore/IndyFold）\n"
+    "         的接口旁证注入面，扫描 jmods/lib 收集接口集；接口 owner 的调用\n"
+    "         站点按它分派 invokeinterface/InterfaceMethodref；空 = 接口落点\n"
+    "         无旁证（virtual 面 fail-closed 留站点，static 面按类落）\n"    "  --tsv  明文表路径（可选）：grunt.StringCacheFold 的 TSV 旁证注入面，\n"
     "         KasumiStringDumper 产出的 owner/key/index/plaintext 四列明文映射，\n"
     "         Era=Kasumi 才激活；缺失/不可读 = 旁证降级 fail-closed\n"
     "  --list  列出本 pack 注册的全部 pass 后退出\n"
@@ -144,11 +150,24 @@ int main(int argc, char** argv)
     bool        simExec = false;
     bool        simDump = false;
     bool        list = false;
+    bool        converge = false;
+    ca::usize   convergeMaxRounds = 12;
 
     for (ca::usize i = 1; i < args.size(); ++i) {
         const std::string& arg = args[i];
         if (arg == "--list") {
             list = true;
+        } else if (arg.rfind("--converge", 0) == 0
+                   && (arg.size() == 10 || arg[10] == '=')) {
+            converge = true;
+            if (arg.size() > 10 && arg[10] == '=') {
+                const long parsed = std::strtol(arg.c_str() + 11, nullptr, 10);
+                if (parsed <= 0) {
+                    std::fprintf(stderr, "--converge 轮上限须为正整数：%s\n", arg.c_str());
+                    return 2;
+                }
+                convergeMaxRounds = static_cast<ca::usize>(parsed);
+            }
         } else if (arg == "--sim" && i + 1 < args.size()) {
             simTarget = args[++i];
         } else if (arg == "--args" && i + 1 < args.size()) {
@@ -178,9 +197,32 @@ int main(int argc, char** argv)
         }
     }
 
+    // 收敛驱动的两个前置（converge.hpp 文件头契约）：时间片强制置 0——片钟
+    // 截断会让整轮空转（墙钟尽后 admit 全拒）→ 指纹不变 → 假收敛；默认主线
+    // ——空 -p 时用 pack 单源（README 主线扩 v3 面）。
+    if (converge) {
+        const char* slice = std::getenv("GRUNT_SLICE_SEC");
+        if (slice != nullptr && *slice != '\0' && std::strtol(slice, nullptr, 10) != 0) {
+            std::fprintf(stderr,
+                         "[grunt.converge] GRUNT_SLICE_SEC=%s 与收敛判据冲突，强制置 0\n",
+                         slice);
+        }
+#if defined(_WIN32)
+        _putenv("GRUNT_SLICE_SEC=0");
+#else
+        setenv("GRUNT_SLICE_SEC", "0", 1);
+#endif
+        if (passList.empty()) {
+            passList = grunt::defaultMainLine();
+            std::fprintf(stderr, "[grunt.converge] 未给 -p，用默认主线（每轮 %zu pass）\n",
+                         splitNames(passList).size());
+        }
+    }
+
     // IndyDecode 的接口旁证注入：文件系统扫描收敛在管线启动前（adapter 在
     // Era=Kasumi 时才消费）。
     grunt::gKasumiJdkPath = jdkPath;
+    grunt::ensureJdkHierarchySeed();   // JDK 骨架种子（帧链 lub + 接口集）
 
     // StringCacheFold 的 TSV 明文旁证注入：文件读取收敛在管线启动前（adapter
     // 在 Era=Kasumi 时才消费；缺失/不可读按旁证降级 fail-closed 计数）。
@@ -257,40 +299,66 @@ int main(int argc, char** argv)
     // jar 级 fail-closed：框架段（层次图装配/管线驱动/导出）的异常与 SEH 硬崩
     // 不许无声穿透，pass 段已由 FailClosedPass 单点收口，这里是最后一道。
     try {
-        mjbase::spi::PassJobContext job;
+        // 单轮执行器：层次图 + 选项 + 管线整体按轮重建（converge.hpp 契约：
+        // 工厂 lambda 每次 build 重新 create，builder 复用；类字节跨轮变化，
+        // 层次图不得跨轮复用陈旧骨架）。
+        const grunt::converge::RoundRunner runOnce =
+            [&container, &builder]() -> ca::core::Result<void, std::string> {
+            mjbase::spi::PassJobContext job;
 
-        // 帧链接线（pass-contract §9：resolver 数据获取是调用方的事）：本 jar 的类
-        // 登记成层次图，Strict resolver 注入管线选项。折叠会改变方法体长度，既有
-        // StackMapTable 必须整体重算，未注入 resolver 时管线只做 relocation。
-        // 层次图流式装配（与 FrameContext 同款解绑）：逐类开会话 → fillSummary 抽骨架 →
-        // addClass 入库 → 会话当场弃置，任何时刻至多一个会话在场。骨架自持于 pool 与
-        // hierarchy（fillSummary 产出仅这两处落点），装配完成后无数据活引用 session；
-        // 遍历序沿用容器资源序，驻留键 intern 序逐位一致。
-        mjbase::KeyPool                   pool;
-        mjbase::hierarchy::ClassHierarchy hierarchy(pool);
-        container.visitResources(
-            [&hierarchy, &pool](std::string_view, const mjbase::model::IResource& resource) {
-                if (resource.getType() != mjbase::model::ResourceType::Class) return;
-                const auto* cls =
-                    ca::core::tag_cast::cast<const mjbase::model::ClassResource>(&resource);
-                if (cls == nullptr || cls->get().empty()) return;
-                auto session = jbc::ir::makeSessionFromBytes(
-                    jbc::core::ByteView{cls->get().data(), cls->get().size()});
-                if (session.is_err()) return;
-                (void)hierarchy.addClass(
-                    mjbase::hierarchy::fillSummary(*session.unwrap(), pool));
-            });
-        mjbase::spi::CommonSuperClassResolver  superResolver(hierarchy);
-        mjbase::spi::StrictTypeResolverAdapter typeResolver(superResolver);
-        mjbase::spi::PassPipelineOptions       options;
-        options.typeResolver = &typeResolver;
+            // 帧链接线（pass-contract §9：resolver 数据获取是调用方的事）：本 jar 的类
+            // 登记成层次图，Strict resolver 注入管线选项。折叠会改变方法体长度，既有
+            // StackMapTable 必须整体重算，未注入 resolver 时管线只做 relocation。
+            // 层次图流式装配（与 FrameContext 同款解绑）：逐类开会话 → fillSummary 抽骨架 →
+            // addClass 入库 → 会话当场弃置，任何时刻至多一个会话在场。骨架自持于 pool 与
+            // hierarchy（fillSummary 产出仅这两处落点），装配完成后无数据活引用 session；
+            // 遍历序沿用容器资源序，驻留键 intern 序逐位一致。
+            mjbase::KeyPool                   pool;
+            mjbase::hierarchy::ClassHierarchy hierarchy(pool);
+            container.visitResources(
+                [&hierarchy, &pool](std::string_view, const mjbase::model::IResource& resource) {
+                    if (resource.getType() != mjbase::model::ResourceType::Class) return;
+                    const auto* cls =
+                        ca::core::tag_cast::cast<const mjbase::model::ClassResource>(&resource);
+                    if (cls == nullptr || cls->get().empty()) return;
+                    auto session = jbc::ir::makeSessionFromBytes(
+                        jbc::core::ByteView{cls->get().data(), cls->get().size()});
+                    if (session.is_err()) return;
+                    (void)hierarchy.addClass(
+                        mjbase::hierarchy::fillSummary(*session.unwrap(), pool));
+                });
+            for (const auto& summary : grunt::rewrite_tools::jdkSeededSummaries(pool)) {
+                (void)hierarchy.addClass(summary);   // JDK 骨架（--jdk 装填）
+            }
+            mjbase::spi::CommonSuperClassResolver  superResolver(hierarchy);
+            mjbase::spi::StrictTypeResolverAdapter typeResolver(superResolver);
+            mjbase::spi::PassPipelineOptions       options;
+            options.typeResolver = &typeResolver;
 
-        auto gpm = builder.buildNestedPipeline(job, nullptr, nullptr, options);
-        if (auto r = mjbase::spi::runContainerPipeline(container, gpm, job); r.is_err()) {
-            std::fprintf(stderr, "管线失败（%s@%s）：%s\n",
-                         mjbase::spi::to_string(r.unwrap_err().stage),
-                         r.unwrap_err().target.c_str(), r.unwrap_err().detail.c_str());
-            return 3;
+            auto gpm = builder.buildNestedPipeline(job, nullptr, nullptr, options);
+            if (auto r = mjbase::spi::runContainerPipeline(container, gpm, job); r.is_err()) {
+                return ca::core::Err(std::string("管线失败（")
+                                     + mjbase::spi::to_string(r.unwrap_err().stage) + "@"
+                                     + r.unwrap_err().target + "）：" + r.unwrap_err().detail);
+            }
+            return ca::core::Ok();
+        };
+
+        if (converge) {
+            const grunt::converge::ConvergeResult verdict = grunt::converge::runToConvergence(
+                runOnce, container, convergeMaxRounds, stderr);
+            if (!verdict.error.empty()) {
+                std::fprintf(stderr, "%s：%s\n", verdict.error.c_str(), input.c_str());
+                return 3;
+            }
+            std::fprintf(stderr, "[grunt.converge] %s（%zu 轮）\n",
+                         verdict.converged ? "已收敛" : "未收敛（达轮上限）", verdict.rounds);
+        }
+        else {
+            if (auto r = runOnce(); r.is_err()) {
+                std::fprintf(stderr, "%s：%s\n", r.unwrap_err().c_str(), input.c_str());
+                return 3;
+            }
         }
 
         if (auto m = mjbase::model::ResourceHelper::exportToJar(container, output); m.is_err()) {

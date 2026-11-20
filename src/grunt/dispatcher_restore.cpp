@@ -5,7 +5,7 @@
 ///
 /// 判据分级与锚保留/槽位面设计见头文件；骨架对齐 string_pool_fold（scan
 /// 只读、rewrite 只写（mutateMethodWithFrames 正统帧链写回）、proof 只判）。
-/// 分发器生成面是知识转写（grunt3@e41e852 `redirect/InvokeDispatcher.kt`
+/// 分发器生成面是知识转写（`grunt3`@e41e852`` `redirect/InvokeDispatcher.kt`
 /// buildStageImpl 逐行，源锚点见各函数头注）；v2 分支（grunt2@36c0eef）
 /// redirect/ 下无此 transformer，v3-only。键表是纯常量直查（tableswitch
 /// 静态编码 + 调用点紧邻 key 常量），不需要 jsim；key 经算术混淆时常量缺
@@ -270,7 +270,7 @@ enum class DispFail : ca::u8 { None, NotCandidate, ShapeMismatch, Ambiguous };
 ///        default 回跳方法头）→ 逐 case 直线转发体（载实参 + 唯一 invoke +
 ///        ret 型 return）。
 ///
-/// 生成面逐字锚（grunt3@e41e852 InvokeDispatcher.kt buildStageImpl）：
+/// 生成面逐字锚（`grunt3`@e41e852`` InvokeDispatcher.kt buildStageImpl）：
 /// `LABEL(startLabel); ILOAD(maxLoadOp); TableSwitchInsnNode(startCase,
 /// endCase, startLabel.node, labels...)`，default 即方法头；case 体
 /// `VarInsnNode(getLoadType, stack); CHECKCAST; INVOKESTATIC|INVOKEVIRTUAL;
