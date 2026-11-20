@@ -1303,7 +1303,14 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                 return;
             }
             const std::string name(cf.thisName());
-            if (name == "module-info" || name == "package-info") return;
+            // thisName 是全限定内部名（org/demo/package-info 形），裸名精确
+            // 比对永不命中——按简单名判。4e16046 语料实测：jsoup 7 个
+            // package-info 全被空壳回收误摘，jspecify 注解类（仅被
+            // package-info 注解 CP 引用）随后失引用被 converge 传递性摘除。
+            const ca::usize slash     = name.rfind('/');
+            const std::string simpleName
+                = (slash == std::string::npos) ? name : name.substr(slash + 1);
+            if (simpleName == "module-info" || simpleName == "package-info") return;
             shellUris.emplace_back(entry.uri);
             shellNames.push_back(name);
         });

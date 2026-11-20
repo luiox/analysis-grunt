@@ -710,6 +710,40 @@ TEST(DeadMemberShell, KeepsClassWithMainMethod)
     EXPECT_EQ(container.hasResource("Main.class"), true);
 }
 
+TEST(DeadMemberShell, KeepsPackageInfoShellAndTransitivelyItsAnnotationTarget)
+{
+    // 4e16046 jsoup 语料回归：空壳回收守卫曾拿裸名精确比对 thisName（全限
+    // 定内部名，org/demo/package-info 形），永不命中——jsoup 7 个
+    // package-info 全被当零引用空壳误摘；jspecify 注解类仅被 package-info
+    // 注解的 CP Classref 引用，converge 后续轮被传递性摘除（实测 dec7p 丢
+    // 7 package-info + NullMarked）。守卫改简单名判后：package-info 免摘，
+    // 其引用链上的注解类两轮都活。
+    model::ResourceContainer container = makeContainer({
+        {"Host", hostPrelude() + hostTail()},
+        {"org/demo/package-info",
+         ".invisible-annotation org/jspecify/annotations/NullMarked {\n"
+         "    tag: \"x\"\n"
+         "}\n"
+         ".super java/lang/Object\n"
+         ".class public super org/demo/package-info {\n"
+         "}\n"},
+        {"org/jspecify/annotations/NullMarked",
+         ".super java/lang/Object\n"
+         ".class public super org/jspecify/annotations/NullMarked {\n"
+         "}\n"},
+    });
+
+    // 两轮扫描回收模拟 converge 轮进：轮 1 守卫拦下 package-info，
+    // NullMarked 因 package-info 注解 CP 引用在册不摘；轮 2 同样成立。
+    for (int round = 0; round < 2; ++round) {
+        const ScanResult scanned = scan(container);
+        const DirtySet   dirty   = rewrite(container, scanned);
+        ASSERT_EQ(dirty.classes, 0u) << "轮 " << round << "：package-info 守卫失效被整类摘除";
+        EXPECT_TRUE(container.hasResource("org/demo/package-info.class"));
+        EXPECT_TRUE(container.hasResource("org/jspecify/annotations/NullMarked.class"));
+    }
+}
+
 TEST(DeadMemberRuntime, ProofHoldsOnRuntimeReferencedClass)
 {
     model::ResourceContainer container = makeContainer({
