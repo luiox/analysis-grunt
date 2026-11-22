@@ -39,7 +39,7 @@ bait_strip：反 LLM 诱饵串审计与 fail-closed 摘除
 1. 站点不可达：字节级可达性走查（opcode 精确长度表 + worklist，
    **含异常 handler 根**——普查第一版曾漏走 handler 路由把 6 个可达站点
    误报成死区，修正后真实语料零死证；junk_region_strip 头注
-   "普查口径伪影" 同族教训已写进 pass 头注）证明 ``LDC`` 在死区段内，
+   "普查口径伪影" 同族教训已写进 bait_strip.hpp 头注）证明 ``LDC`` 在死区段内，
    死段按长度保持 NOP 化；
 2. 诱饵 Utf8 闭包死：直连零引用，或仅被零引用 ``CONSTANT_String`` 包装
    （NOP 化后的必然形态）→ 摘除条目走 ``ir::compactConstantPool``
