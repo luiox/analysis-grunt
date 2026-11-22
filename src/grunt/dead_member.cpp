@@ -961,13 +961,16 @@ void pruneDeadBsmEntries(ir::ClassSession& s)
         }
     }
     bsm->entries = std::move(kept);
+    // bootstrap 下标重映射必须走 mutateAt（置脏）：可变 at() 改字段不置脏，
+    // writeClass 对未脏槽 copy-through 源字节——模型里已映射的 e.a 静默还原
+    // 成旧值（15 样本矩阵实锤：68 个旧值 <78 碰巧合法、10 个 ≥78 触发
+    // ClassFileSanitizeGate 越界；demo_a_v3 round-2 挡死）。
     for (ca::usize i = 1; i < cp.size(); ++i) {
         if (!cp.valid(i)) continue;
-        jbc::core::ConstantPool::Entry& e = cp.at(i);
-        if (e.tag == jbc::core::CpTag::InvokeDynamic) {
-            const auto hit = remap.find(e.a);
-            if (hit != remap.end()) e.a = hit->second;
-        }
+        if (cp.tagOf(i) != jbc::core::CpTag::InvokeDynamic) continue;
+        jbc::core::ConstantPool::Entry& e = cp.mutateAt(i);
+        const auto hit = remap.find(e.a);
+        if (hit != remap.end()) e.a = hit->second;
     }
     if (bsm->entries.empty()) {
         auto it = std::find_if(cf.attrs.begin(), cf.attrs.end(),
