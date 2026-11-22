@@ -27,7 +27,8 @@
 ///
 ///   1. BSM 跑到底并返回 CallSite，且句柄载荷完整；
 ///   2. 句柄描述符 == 调用点描述符（否则 `asType` 做了类型适配，换指令后语义会变）；
-///   3. 句柄是 Static 或 Virtual（Special/Interface 换过去栈语义不同）。
+///   3. 句柄是 Static 或 Virtual（Special/Interface CP 句柄换过去栈语义
+///      不同）；接口 owner 由旁证（容器普查 / --jdk 接口集）按接口形落地。
 ///
 /// ## 改写
 ///
@@ -45,6 +46,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "libca/core/datatype.hpp"
@@ -68,6 +70,7 @@ struct BsmValue
     enum class Kind : ca::u8 {
         Str,
         Int,
+        Long,
         Class,
         MethodType,
         MethodHandle,
@@ -77,6 +80,9 @@ struct BsmValue
     Kind        kind = Kind::Unsupported;
     std::string text;   ///< Str 内容 / Class 内部名 / MethodType 描述符
     ca::i32     i = 0;  ///< Int
+    ca::i64     l = 0;  ///< Long
+    std::string mhOwner;  ///< MethodHandle 实参的目标 owner（JDK 标准 BSM 目标直读用）
+    std::string mhName;   ///< MethodHandle 实参的目标名
 };
 
 /// 一个 invokedynamic 调用点。
@@ -97,8 +103,25 @@ struct Site
     std::string indyName;
     std::string indyDesc;
 
+    /// 改写落地的调用形态（scan 判定，rewrite 照抄）。
+    ///
+    /// owner 接口性由证据链判定：Target.kind 本身是 Interface 时 CP
+    /// InterfaceMethodref 结构性自证（JVMS 4.4.8 kind 9）；Static/Virtual
+    /// 由容器普查（ACC_INTERFACE 原字节）→ JDK 接口集（CLI --jdk 注入，
+    /// jmods/lib 穷举普查）裁定。jsoup v2_indy 实证 Appendable.append、
+    /// v3_full 实证 Path.of：接口 owner 落 class 形（invokevirtual /
+    /// Methodref static）运行期 ICCE。
+    enum class EmitForm : ca::u8
+    {
+        Static,        ///< invokestatic + Methodref（类 owner）
+        StaticIface,   ///< invokestatic + InterfaceMethodref（接口 owner）
+        Virtual,       ///< invokevirtual + Methodref（类 owner）
+        Interface,     ///< invokeinterface + InterfaceMethodref（接口 owner）
+    };
+
     // ---- scan 的结论 ----
     bool              foldable = false;
+    EmitForm          emitForm = EmitForm::Static;
     jsim::indy::Target target;
     std::string       why;           ///< 不可折叠原因（给 trace 用）
 };
@@ -129,9 +152,12 @@ struct ProofResult
 
 /// @brief SCAN：纯读。普查调用点 + 跑 BSM 求目标（模拟不写容器）。
 /// 单类站点数超预算时该类剩余站点保守跳过（BSM 不再跑）。
+/// jdkInterfaces = JDK 接口内部名穷举集（CLI --jdk 注入，空 = 容器外 owner
+/// 按类放行的历史口径）。
 ScanResult scan(const mjbase::model::ResourceContainer& container,
                 const iter_budget::ClassBudget& budget
-                = iter_budget::ClassBudget{kScanClassBudget});
+                = iter_budget::ClassBudget{kScanClassBudget},
+                const std::unordered_set<std::string>& jdkInterfaces = {});
 
 /// @brief REWRITE：纯写。按 scan 的结论就地改指令。
 DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result);

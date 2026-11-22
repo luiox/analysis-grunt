@@ -77,7 +77,7 @@ v3 ``createDecryptMethod`` 在类带 RuntimeMaterial 草稿时生成材料通道
 ----------------------
 
 
-v2/v3 只重定向方法调用，分派只有三态：static → ``INVOKESTATIC`` ；virtual → ``INVOKEVIRTUAL`` / ``INVOKEINTERFACE`` （receiver 槽不插不删，indy desc 的Object 首参就是原 receiver 槽）。原地换指令保 ``srcPc`` ，帧链写回走 ``mutateMethodWithFrames`` 正统帧链（与 indy_decode 同源）。接口落点靠旁证：容器普查优先（权威）；CLI ``--jdk`` 注入的 JDK 接口集是穷举普查， **成员与否双向作证** （在集 = 接口；不在集 = 类）；两处皆无 = fail-closed 拒绝（invokevirtual 误调接口方法运行时 ``IncompatibleClassChangeError`` ）。
+v2/v3 只重定向方法调用：static → INVOKESTATIC ；virtual → INVOKEVIRTUAL / INVOKEINTERFACE （receiver 槽不插不删，indy desc 的Object 首参就是原 receiver 槽）。原地换指令保 srcPc ，帧链写回走 mutateMethodWithFrames 正统帧链（与 indy_decode 同源）。接口落点靠旁证：容器普查优先（权威）；CLI --jdk 注入的 JDK 接口集是穷举普查， **成员与否双向作证** （在集 = 接口；不在集 = 类）；旁证缺席时 virtual fail-closed 拒绝（invokevirtual 误调接口方法运行时 IncompatibleClassChangeError ），static 按类放行（无旁证不猜接口）但 **不静默** ： ``staticOwnerUnattested`` 计数 + stderr 逐站告警（owner 若为接口，落 Methodref 运行期 ICCE——jsoup Path.of 实证，语料批必须带 ``--jdk`` ；IndyFold 同口径告警）。ref-kind 单一依据 ownerIsInterface：接口 owner 的 static 落点落 InterfaceMethodref ——落 Methodref 在 invokestatic 解析即 ICCE（jsoup v3_full Path.of 实证，v3_full 收敛后 14 用例对拍全绿）。
 
 
 统计

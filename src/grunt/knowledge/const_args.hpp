@@ -8,6 +8,7 @@
 #pragma once
 
 #include <algorithm>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -321,7 +322,8 @@ inline bool decodeValueLoad(ir::ClassSession& session, const ir::Insn& in, Value
 /// @brief 求值值的同一性（同类别按位相同；null 引用互相等同）。
 ///
 /// SimValue 的位型纪律：I32/I64/F32 都走 intBits（F32 存 floatToBits 位形），
-/// F64 走 realValue 真值，Ref 只认 null。
+/// F64 走 realValue 真值，Ref 认 null 与 Str（Str 按内容比，外部内建站点的
+/// (String, int) 键形复验用；通用栈值面带不到 Str 实参，行为不变）。
 inline bool sameValue(const jsim::SimValue& a, const jsim::SimValue& b)
 {
     if (a.known != b.known || a.type != b.type) return false;
@@ -332,10 +334,160 @@ inline bool sameValue(const jsim::SimValue& a, const jsim::SimValue& b)
     case jsim::ValType::F32: return a.intBits == b.intBits;
     case jsim::ValType::F64: return a.realValue == b.realValue;
     case jsim::ValType::Ref:
-        return a.ref.kind == jsim::RefPayload::Kind::Null
-               && b.ref.kind == jsim::RefPayload::Kind::Null;
+        if (a.ref.kind != b.ref.kind) return false;
+        if (a.ref.kind == jsim::RefPayload::Kind::Null) return true;
+        if (a.ref.kind == jsim::RefPayload::Kind::Str) return a.ref.str == b.ref.str;
+        return false;   // 堆对象身份不可比（objId 是会话内单调序号）
     }
     return false;
+}
+
+/// @brief 解密器 XOR key 表达式（**pc 布局真值**，单源三消费方）。
+///
+/// Grunt 家族字符串解密器的 key 是 `I2C`/解密器调用位点回溯出的一个 XOR
+/// 常量表达式（栈语义 reverse-polish：栈顶操作数是键，栈底是 char 喂入，
+/// 不解析）。叶只有两种：`LDC` int 常量、`INVOKESTATIC <self>()I` 材料通
+/// 道。已知形状全部是本表达式的特例：
+///   - 单层 `charAt; LDC K; IXOR; I2C`              → key = K；
+///   - 折叠键 / 260705 双常量 `LDC K1; LDC K2; IXOR; IXOR; I2C` → key = K1^K2；
+///   - v3 材料通道 `LDC K; INVOKESTATIC <self>()I; IXOR; IXOR; I2C`
+///     （有效 key = K ^ materialKey()，运行期材料字段，静态不可解）；
+///   - 260705 组合形 `LDC C1; LDC C2; IXOR; INVOKESTATIC <self>()I; IXOR;
+///     IXOR; I2C`（折叠常量 C1^C2 叠材料通道）。
+///
+/// 按 **pc 布局真值**（srcPc 升序的紧邻窗）判，不按 dom.order() 位置回溯
+/// ——order 不保证 pc 升序（循环回边 / 异常 handler 等重排），带循环的
+/// 解密器（260705 `while` 形）DOM 回溯窗整体错位，三形全失配，IndyRestore
+/// key=984 实证（2026-11-17 修）。循环体内的 key 窗是直线段，pc 紧邻窗
+/// 即真值；表达式叶只有 LDC 与 `<self>()I` 直调，夹任何其他指令即解析
+/// 失败——fail-closed 不猜。
+struct DecryptKeyWindow
+{
+    enum class Shape : ca::u8
+    {
+        Plain,     ///< 纯常量表达式（key 已含折叠结果）
+        Material,  ///< 表达式含材料通道叶（key 是常量叶折叠值，异或前）
+    };
+    Shape  shape = Shape::Plain;
+    ca::i32 key  = 0;
+};
+
+/// @brief 一个回溯解析出的 XOR 键表达式：常量叶折叠值 + 材料叶位置（无则
+///        XorKeyExpr::kNoPos）+ 叶数。XOR 可交换可结合，折叠与叶序无关。
+struct XorKeyExpr
+{
+    static constexpr ca::usize kNoPos = static_cast<ca::usize>(-1);
+    ca::i32   folded      = 0;
+    ca::usize materialPos = kNoPos;
+    ca::usize leaves      = 0;
+};
+
+/// @brief 解析器叶数上限（防 junk 长链递归；已知最深层是 260705 组合形的
+///        3 叶，放一倍余量）。
+constexpr ca::usize kMaxKeyExprLeaves = 6;
+
+/// @brief 回溯解析以 `ins[end]` 结尾的栈顶 XOR 表达式（reverse-polish 线性
+///        段）：IXOR 递归拆栈顶（右）与其次（左）两个操作数，叶是 LDC int
+///        或 `INVOKESTATIC <self>()I`。NOP 是栈中性指令，回溯时跳过——
+///        主线折叠轮（如 ArithFold 的 `LDC 0; IXOR` 恒等消元）在窗内留
+///        NOP 缝是链产状态，跨轮重入必须可解析（t3_full 收敛实证）。解析
+///        越过 `start==0` / 叶预算耗尽 / 中段遇其他非叶即失败——
+///        fail-closed。`start` 回填表达式起点（含），栈底 char 喂入天然
+///        停在该非叶上。
+inline bool parseXorKeyExpr(const ir::ClassSession& s, const std::string& self,
+                            const std::vector<const ir::Insn*>& ins, ca::usize end,
+                            ca::usize leafBudget, XorKeyExpr& out, ca::usize& start)
+{
+    while (end < ins.size() && ins[end] != nullptr && ins[end]->op == Op::NOP) {
+        if (end == 0) return false;
+        --end;
+    }
+    if (end >= ins.size() || ins[end] == nullptr) return false;
+    const Op op = ins[end]->op;
+    if (op == Op::IXOR) {
+        if (end == 0 || leafBudget < 2) return false;
+        XorKeyExpr right;
+        ca::usize rStart = 0;
+        if (!parseXorKeyExpr(s, self, ins, end - 1, leafBudget, right, rStart)) return false;
+        if (rStart == 0) return false;
+        XorKeyExpr left;
+        ca::usize lStart = 0;
+        if (!parseXorKeyExpr(s, self, ins, rStart - 1, leafBudget - right.leaves, left, lStart)) {
+            return false;
+        }
+        out              = XorKeyExpr{};
+        out.folded       = left.folded ^ right.folded;
+        out.leaves       = left.leaves + right.leaves;
+        out.materialPos = left.materialPos != XorKeyExpr::kNoPos ? left.materialPos
+                        : right.materialPos;
+        start            = lStart;
+        return true;
+    }
+    ca::i32 k = 0;
+    if (decodeConstInt(s, *ins[end], k)) {
+        out       = XorKeyExpr{};
+        out.folded = k;
+        out.leaves = 1;
+        start      = end;
+        return true;
+    }
+    if (op == Op::INVOKESTATIC) {
+        ir::ClassSession::MemberSem sem;
+        if (s.memberOf(*ins[end], sem) && sem.kind == ir::ClassSession::MemberSem::Kind::Method
+            && sem.desc == "()I" && sem.owner == self) {
+            out              = XorKeyExpr{};
+            out.materialPos  = end;
+            out.leaves       = 1;
+            start            = end;
+            return true;
+        }
+    }
+    return false;
+}
+
+/// @brief 解密器体 `i2c` 位点的键窗：`KEYEXPR; IXOR; I2C`（栈底 char 喂入
+///        不解析），首个 pc 序成功位点即真值（junk 分支无可解析窗）。
+inline std::optional<DecryptKeyWindow> decryptKeyWindow(const ir::ClassSession& s,
+                                                        const ir::CodeUnit& cu)
+{
+    const std::string self = std::string(s.unit().symbols().str(s.unit().thisClass));
+    // pc 升序视图：srcPc 布局真值（单源 rewrite_tools::pcOrderedInsns）。
+    const std::vector<const ir::Insn*> ins = rewrite_tools::pcOrderedInsns(cu);
+
+    for (ca::usize p = 2; p < ins.size(); ++p) {
+        if (ins[p]->op != Op::I2C) continue;
+        ca::usize q = p - 1;   // I2C 与 IXOR 之间允许 NOP 缝（链产折叠残迹）
+        while (q > 0 && ins[q] != nullptr && ins[q]->op == Op::NOP) --q;
+        if (ins[q] == nullptr || ins[q]->op != Op::IXOR) continue;
+        XorKeyExpr expr;
+        ca::usize  start = 0;
+        if (!parseXorKeyExpr(s, self, ins, q - 1, kMaxKeyExprLeaves, expr, start)) {
+            continue;
+        }
+        const DecryptKeyWindow::Shape shape = expr.materialPos != XorKeyExpr::kNoPos
+                                                  ? DecryptKeyWindow::Shape::Material
+                                                  : DecryptKeyWindow::Shape::Plain;
+        return DecryptKeyWindow{shape, expr.folded};
+    }
+    return std::nullopt;
+}
+
+/// @brief 调用位点前的栈顶 const 键表达式（heavy BSM 给 `(String;I)` 解密器
+///        喳 K 实参：`KEYEXPR; INVOKESTATIC dec(String;I)`）。含材料叶 =
+///        失败（heavy 实参必须静态），调用装饰点（键来自运行期值）解析不
+///        过即跳过由调用方继续扫。
+inline std::optional<ca::i32> constIntExprBefore(
+    const ir::ClassSession& s, const std::string& self,
+    const std::vector<const ir::Insn*>& ins, ca::usize callPos)
+{
+    if (callPos == 0 || callPos >= ins.size()) return std::nullopt;
+    XorKeyExpr expr;
+    ca::usize  start = 0;
+    if (!parseXorKeyExpr(s, self, ins, callPos - 1, kMaxKeyExprLeaves, expr, start)) {
+        return std::nullopt;
+    }
+    if (expr.materialPos != XorKeyExpr::kNoPos) return std::nullopt;
+    return expr.folded;
 }
 
 }   // namespace grunt::const_args

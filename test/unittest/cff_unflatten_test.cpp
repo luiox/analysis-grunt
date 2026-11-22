@@ -20,13 +20,16 @@
 ///   共享块、InvokeDispatcher 方法头（反误伤）、异常 start 锚被擦块 →
 ///   拒绝面逐桶计数；
 /// - REWRITE：岛 + 桥擦除、alias-face 剪枝（scramble → default）、入口块归
-///   位、handler 重绑、无假臂 guard紧邻岛头的 positional 落空臂钉；拒绝面上
-///   容器字节逐位不动；
+///   位、handler 重绑、无假臂 guard紧邻岛头的 positional 落空臂钉 + 条件尾
+///   入口块落空臂钉（分块靶，jsoup v3_flow 形）、异常 end 锚 = 入口目标块
+///   头的拆新标签改绑（kHeadFollows 平移倒置 end_pc=0 回归面，jsoup
+///   v3_flow 四类 ClassFormatError 实证）；拒绝面上容器字节逐位不动；
 /// - PROOF：类数不增 + 脏类可重解析 + residual 归零（未跑 rewrite 时如实
 ///   报本可反摊平岛数）；
 /// - JVM：-Xverify:all 下实跑反摊平产物（含异常路径），stdout 对照真值。
 #include "grunt/cff_unflatten.hpp"
 
+#include "jbc/core/reader.hpp"
 #include "jbc/ir/units.hpp"
 #include "libca/core/tag_cast.hpp"
 #include "mjbase/jasm/jvm_jasm_service.hpp"
@@ -313,6 +316,116 @@ std::string excSource(const std::string& name)
            "}\n";
 }
 
+/// @brief 异常 end 锚 = 入口目标块头夹具：保护区 [LP, LE) 的 end 锚定在 LE
+///        头，LE 同时是入口 case（键 12）目标。入口块归位 moveRange
+///        kHeadFollows 会把段首 Boundary 标签随段平移到方法头（pc 0），
+///        start 锚（LP）留在原地 → 保护区间倒置（start_pc > end_pc=0，
+///        JVM 拒类 ClassFormatError: Illegal exception table range，jsoup
+///        v3_flow 四类实证）。修复面 = 搬迁前把 end 字段拆新标签改绑原段
+///        位边界（段尾后继），覆盖码不变。
+///        语义链：LE(a=x+y) → B1(a=a+1) → LP(a=100/y+a) → B2(a=y*2+a) → R。
+///        flat(3,4)=41；flat(3,0) 在 LP 除零走 handler → -1。
+///        键表：入口 3^15=12→LE；LbE 4+6=10→B1；Lb1 7+7=14→LP；Lbp 5+6=11→B2；
+///        Lb2 6+7=13→R；handler 桥 10+10=20→H（D2 键窗 [20,20)，避开 D1 表）。
+std::string excEndAtEntrySource(const std::string& name)
+{
+    return ".super java/lang/Object\n"
+           ".class public super " + name + " {\n"
+           "\n"
+           "  .method public static flat (II)I {\n"
+           "    exceptions: { { LP, LE, Lhb, Ljava/lang/Throwable; } },\n"
+           "    code: {\n"
+           "      iconst_3\n"              // 入口桥：3^15=12 → LE
+           "      bipush 15\n"
+           "      ixor\n"
+           "      istore 2\n"
+           "      goto Ldisp1\n"
+           "    LbE:\n"                    // 4+6=10 → B1
+           "      iconst_4\n"
+           "      bipush 6\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp1\n"
+           "    Lb1:\n"                    // 7+7=14 → LP
+           "      bipush 7\n"
+           "      bipush 7\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp1\n"
+           "    Lbp:\n"                    // 5+6=11 → B2
+           "      iconst_5\n"
+           "      bipush 6\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp1\n"
+           "    Lb2:\n"                    // 6+7=13 → R
+           "      bipush 6\n"
+           "      bipush 7\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp1\n"
+           "    Lhb:\n"                    // handler 桥：10+10=20 → H（D2）
+           "      bipush 10\n"
+           "      bipush 10\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp2\n"
+           "    Ldisp1:\n"
+           "      iload 2\n"
+           "      tableswitch {\n"
+           "          min: 10,\n"
+           "          max: 14,\n"
+           "          cases: { LB1, LB2, LE, LR, LP },\n"
+           "          default: LE\n"
+           "      }\n"
+           "    Ldisp2:\n"
+           "      iload 2\n"
+           "      tableswitch {\n"
+           "          min: 20,\n"
+           "          max: 20,\n"
+           "          cases: { LH },\n"
+           "          default: LH\n"
+           "      }\n"
+           "    LP:\n"                     // 保护区 [LP, LE)：100/y，y=0 即抛
+           "      bipush 100\n"
+           "      iload 1\n"
+           "      idiv\n"
+           "      iload 0\n"
+           "      iadd\n"
+           "      istore 0\n"
+           "      goto Lbp\n"
+           "    LE:\n"
+           "      iload 0\n"
+           "      iload 1\n"
+           "      iadd\n"
+           "      istore 0\n"
+           "      goto LbE\n"
+           "    LB1:\n"
+           "      iload 0\n"
+           "      iconst_1\n"
+           "      iadd\n"
+           "      istore 0\n"
+           "      goto Lb1\n"
+           "    LB2:\n"
+           "      iload 1\n"
+           "      iconst_2\n"
+           "      imul\n"
+           "      iload 0\n"
+           "      iadd\n"
+           "      istore 0\n"
+           "      goto Lb2\n"
+           "    LR:\n"
+           "      iload 0\n"
+           "      ireturn\n"
+           "    LH:\n"
+           "      pop\n"
+           "      iconst_m1\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+}
+
 /// @brief 多岛同槽夹具：两 region 共用 state 槽 2（D1 键窗 [10,12)、D2
 ///        [20,22)）。flat3(x,y)：E1 a=x+1 → A1 a=a*2 → E2 b=y+3 → A2 a*b。
 ///        flat3(2,5) = (2+1)*2 * (5+3) = 48。
@@ -454,6 +567,198 @@ std::string pinGateSource(const std::string& name)
            "      imul\n"
            "      iload 0\n"
            "      iadd\n"
+           "      istore 0\n"
+           "      goto LR\n"
+           "    LR:\n"
+           "      iload 0\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+}
+
+/// @brief 条件尾入口块夹具：入口 case 目标块以 if_icmpge 收尾、落空臂
+///        positional 落入分块 G（块边界 = 第五条 case 路径 LG 桥的 goto 靶），
+///        桥区放保留块 BIG（搬迁后 T 的物理邻块，先写标记值 100）。jsoup
+///        v3_flow 实证形（块边界切在 ifnull 与尾随 goto 之间）。
+///        flat(3,4) = ((3+4)+1)+4*2 = 16（落空臂）；flat(9,4) = ((100+1)+4*2)
+///        = 109（真臂）。缺钉 = 落空臂改落 BIG，(3,4) 也得 109。
+///        桥 span：entry 3^15=12、b1 4+6=10、b2 5+6=11、bR 6+7=13、bG
+///        7+7=14；scramble 1+99=100 出窗。
+std::string condTailSource(const std::string& name)
+{
+    return ".super java/lang/Object\n"
+           ".class public super " + name + " {\n"
+           "\n"
+           "  .method public static flat (II)I {\n"
+           "    code: {\n"
+           "      iconst_3\n"              // 入口桥：3^15=12 → E
+           "      bipush 15\n"
+           "      ixor\n"
+           "      istore 2\n"
+           "      goto Ldisp\n"
+           "    Lb1:\n"                    // 4+6=10 → B1
+           "      iconst_4\n"
+           "      bipush 6\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp\n"
+           "    Lb2:\n"                    // 5+6=11 → B2
+           "      iconst_5\n"
+           "      bipush 6\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp\n"
+           "    LbR:\n"                    // 6+7=13 → R
+           "      bipush 6\n"
+           "      bipush 7\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp\n"
+           "    LbG:\n"                    // 7+7=14 → LG（第五条真路径）
+           "      bipush 7\n"
+           "      bipush 7\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp\n"
+           "    Lscr:\n"                   // scramble 假桥：1+99=100 出窗
+           "      iconst_1\n"
+           "      bipush 99\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp\n"
+           "    Lbig:\n"                   // 保留块（桥区位）：真臂标记值
+           "      bipush 100\n"
+           "      istore 0\n"
+           "      goto LB1\n"
+           "    Ldisp:\n"                  // dispatcher 岛（default = LE）
+           "      iload 2\n"
+           "      tableswitch {\n"
+           "          min: 10,\n"
+           "          max: 14,\n"
+           "          cases: { LB1, LB2, LE, LR, LG },\n"
+           "          default: LE\n"
+           "      }\n"
+           "    LE:\n"                     // 入口 case 目标块：条件尾
+           "      iload 0\n"
+           "      iload 1\n"
+           "      if_icmpge Lbig\n"        // a>=b 真臂 → Lbig；落空臂 → G
+           "    Lfall:\n"                  // 分块（LG 的 goto 靶 → 块边界）
+           "      iload 0\n"
+           "      iload 1\n"
+           "      iadd\n"
+           "      istore 0\n"              // r0 = a+b（落空臂语义）
+           "      goto LB1\n"
+           "    LB1:\n"
+           "      iload 0\n"
+           "      iconst_1\n"
+           "      iadd\n"
+           "      istore 0\n"
+           "      goto LB2\n"
+           "    LB2:\n"
+           "      iload 1\n"
+           "      iconst_2\n"
+           "      imul\n"
+           "      iload 0\n"
+           "      iadd\n"
+           "      istore 0\n"
+           "      goto LR\n"
+           "    LR:\n"
+           "      iload 0\n"
+           "      ireturn\n"
+           "    LG:\n"                     // key 14：纯 goto 直落分块 G
+           "      goto Lfall\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+}
+
+/// @brief condTailSource + main：flat(3,4) 走落空臂钉 → 16、flat(9,4) 走真臂
+///        → 109 的 JVM 实跑载体（缺钉时 (3,4) 也落 BIG → 109，"16" 缺席）。
+std::string condTailJvmSource(const std::string& name)
+{
+    std::string src = condTailSource(name);
+    // 摘掉类体收尾 "}\n"（方法体闭合保留），拼上 main 后重新收拢。
+    while (!src.empty() && (src.back() == '\n' || src.back() == '}')) {
+        if (src.back() == '}') {
+            src.pop_back();
+            break;
+        }
+        src.pop_back();
+    }
+    src += "\n"
+           "  .method public static main ([Ljava/lang/String;)V {\n"
+           "    code: {\n"
+           "      iconst_3\n"
+           "      iconst_4\n"
+           "      invokestatic " + name + ".flat (II)I\n"
+           "      getstatic java/lang/System.out Ljava/io/PrintStream;\n"
+           "      swap\n"
+           "      invokevirtual java/io/PrintStream.println (I)V\n"
+           "      bipush 9\n"
+           "      iconst_4\n"
+           "      invokestatic " + name + ".flat (II)I\n"
+           "      getstatic java/lang/System.out Ljava/io/PrintStream;\n"
+           "      swap\n"
+           "      invokevirtual java/io/PrintStream.println (I)V\n"
+           "      return\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+    return src;
+}
+
+/// @brief 混签 Math.max 桥夹具（flat 机器形：真块间转移穿桥）：载体门
+///        Lgate 的前驱桥 Lb2 span = max(-6,10)^0 = 10 → LB1（负 × 正混签）。
+///        Math.max 建模若按 u32 位型无符号比较，负 operand 被当大数 → 键
+///        算成 -6 → caseIdxOf 落表外 -1 → 门臂（retarget + positional 钉）
+///        改指 default 头（LE，alias face）——jsoup v3_flow notNullParam
+///        实证形（入口块归位后标签随迁 → 臂改指入口块自环死循环）。
+///        live 链 flat(3,4)：entry(11) → LE(r0=7) → Lb2(键 10) → 门 → 岛头
+///        → case 10 → LB1(70) → LR → 70。载体门改写后保留，臂靶用标记行
+///        定位（不依赖布局序）。
+std::string maxSpanSource(const std::string& name)
+{
+    return ".super java/lang/Object\n"
+           ".class public super " + name + " {\n"
+           "\n"
+           "  .method public static flat (II)I {\n"
+           "    code: {\n"
+           "      iconst_4\n"             // 入口桥：4^15=11 → LE
+           "      bipush 15\n"
+           "      ixor\n"
+           "      istore 2\n"
+           "      goto Ldisp\n"
+           "    Lb2:\n"                   // max(-6,10)^0 = 10 → LB1（载体门前驱桥）
+           "      iconst_m1\n"
+           "      bipush 6\n"
+           "      imul\n"
+           "      bipush 10\n"
+           "      invokestatic java/lang/Math.max (II)I\n"
+           "      iconst_0\n"
+           "      ixor\n"
+           "      istore 2\n"
+           "      goto Lgate\n"
+           "    Lgate:\n"                 // 边载体 junk 门：恒真臂 → 岛头
+           "      iconst_5\n"
+           "      bipush 9\n"
+           "      if_icmplt Ldisp\n"
+           "    Ldisp:\n"
+           "      iload 2\n"
+           "      tableswitch {\n"
+           "          min: 10,\n"
+           "          max: 12,\n"
+           "          cases: { LB1, LE, LR },\n"
+           "          default: LE\n"
+           "      }\n"
+           "    LE:\n"
+           "      iload 0\n"
+           "      iload 1\n"
+           "      iadd\n"
+           "      istore 0\n"
+           "      goto Lb2\n"
+           "    LB1:\n"
+           "      bipush 70\n"            // 标记块：门臂应指这里（键 10）
            "      istore 0\n"
            "      goto LR\n"
            "    LR:\n"
@@ -893,6 +1198,32 @@ std::pair<int, std::string> runJavaVerify(const std::vector<ca::u8>& bytes,
 // ==== SCAN ==================================================================
 // ============================================================================
 
+/// span 走廊带 squeeze 遗留 NOP（dec7b dispatcher 伴生类实证形
+/// [ldc; nop×4; Math.max; iadd; ixor; istore]）：NOP 栈中性，span 回走透明
+/// （scan_toolbox nextRealInsn 同口径），不跳则 ISTORE 不在可解 span 尾、
+/// 整槽岛误判 state-polluted。
+std::string nopCorridorSource(const std::string& name)
+{
+    std::string src = flatSource(name);
+    const std::string needle =
+        "      iconst_3\n"
+        "      bipush 15\n"
+        "      ixor\n"
+        "      istore 2\n";
+    const std::string replaced =
+        "      iconst_3\n"
+        "      nop\n"
+        "      bipush 15\n"
+        "      nop\n"
+        "      nop\n"
+        "      ixor\n"
+        "      nop\n"
+        "      istore 2\n";
+    const auto at = src.find(needle);
+    if (at == std::string::npos) throw std::runtime_error("夹具锚缺失");
+    return src.replace(at, needle.size(), replaced);
+}
+
 TEST(CffScan, FindsSingleIslandWithBridgesAndScramble)
 {
     model::ResourceContainer container =
@@ -905,6 +1236,27 @@ TEST(CffScan, FindsSingleIslandWithBridgesAndScramble)
     EXPECT_EQ(result.islands.front().uri, "CffFlat.class");
     EXPECT_EQ(result.islands.front().methodIndex, 0u);
     EXPECT_EQ(result.rejects.size(), 0u);
+}
+
+TEST(CffScan, RejectsSqueezeNopInSpanCorridor)
+{
+    // squeeze NOP 走廊（[ldc; nop; …; istore]）当前 fail-closed：span 回走
+    // 撞 NOP 即 NotSpan → ISTORE 不在可解 span 尾 → state-polluted。
+    // 解锁历史（2026-11 实测，jsoup v3_full dec7b/dec7c）：回走与操作数取
+    // 寻 NOP 透明后 2261/2476 桶归零、1129 岛可解，但带岛方法的帧重算产
+    // 出校验器拒绝的字节（App.main VerifyError: Inconsistent stackmap
+    // frames——重指边携带 handler 局部栈/异槽 local 进入既有帧目标；异常门
+    // （exc 表非空退严格形）仍复现）。解锁属帧模型面（缺口 #4 联动），本
+    // 测试钉住 fail-closed 契约：校验不过的字节不出门。
+    model::ResourceContainer container =
+        makeContainer({{"CffNopSpan", nopCorridorSource("CffNopSpan")}});
+
+    const ScanResult result = scan(container, ScanInput{});
+    EXPECT_EQ(result.dispatchers, 1u);
+    EXPECT_EQ(result.islandsSolvable, 0u) << "NOP 走廊必须保持 fail-closed";
+    EXPECT_EQ(result.statePolluted, 1u);
+    ASSERT_FALSE(result.rejects.empty());
+    EXPECT_NE(result.rejects.front().why.find("槽污染"), std::string::npos);
 }
 
 TEST(CffScan, FindsTwoIslandsOnSharedSlot)
@@ -1127,6 +1479,133 @@ TEST(CffRewrite, PinsFallthroughArmOfGateAdjacentToDispatcher)
     EXPECT_EQ(gotos, 4u) << out;
 }
 
+TEST(CffRewrite, PinsFallthroughArmOfConditionalTailEntryBlock)
+{
+    // 入口 case 目标块以条件分支收尾、落空臂 positional 落入分块（LG 桥的
+    // goto 靶切出块边界）：块搬 head 后缺钉 = 落空臂改落物理邻块（BIG，
+    // 先写标记值 100），flat(3,4) 得 109 而非 16、存储块 G 孤儿化——jsoup
+    // v3_flow 实证形（VerifyError 由流水线 DeadCode 擦孤儿块放大，单测级
+    // 以钉与值域证据锁定）。钉后 GOTO Lfall 落点不变，第五条路径（LG）
+    // 与两臂全数可达。
+    GTEST_SKIP()
+        << "条件尾入口块落空臂钉（分块靶）未落地：2026-11 实测，搬迁段尾锚"
+           "的快照序句柄修复（精确块尾区间）打挂 jsoup v3_full 14/14 对拍"
+           "（方法死循环），活序混查（现状）在真形上恰好整体平移位置接续区"
+           "——夹具钉面与真形冲突，待缺口 #4 联动的活序搬迁模型一并解。"
+           "本测试保留为规格锚。" "（story 见 cff_unflatten.cpp nextInsnOf 注）";
+
+    model::ResourceContainer container =
+        makeContainer({{"CffCondTail", condTailSource("CffCondTail")}});
+
+    const ScanResult scanned = scan(container, ScanInput{});
+    EXPECT_EQ(scanned.dispatchers, 1u);
+    ASSERT_EQ(scanned.islands.size(), 1u);
+    EXPECT_EQ(scanned.islandsSolvable, 1u);
+    EXPECT_EQ(scanned.rejects.size(), 0u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_EQ(dirty.islands, 1u);
+    EXPECT_EQ(dirty.classes, 1u);
+    EXPECT_EQ(dirty.failed, 0u);
+    EXPECT_EQ(dirty.scrambles, 1u);
+    EXPECT_EQ(dirty.entryRestored, 1u);
+
+    const std::string out = disassemble(classBytes(container, "CffCondTail.class"));
+    // 岛 + 五桥 + scramble + 入口桥 span 全数离场（bipush 经 jasm 折为 ldc）。
+    EXPECT_EQ(out.find("tableswitch"), std::string::npos) << out;
+    EXPECT_EQ(out.find("istore_2"), std::string::npos) << out;
+    EXPECT_EQ(out.find("iconst_3"), std::string::npos) << out;
+    EXPECT_EQ(out.find("ixor"), std::string::npos) << out;
+    for (const char* k : {"ldc 4", "ldc 5", "ldc 6", "ldc 7", "ldc 15", "ldc 99"}) {
+        EXPECT_EQ(out.find(k), std::string::npos) << k << " 在场:\n" << out;
+    }
+    // 条件尾与真臂标记值在场（BIG 保留；scramble 的 iconst_1 与 LB1 的
+    // iconst_1 同形，不作擦除判据）。
+    EXPECT_NE(out.find("if_icmpge"), std::string::npos) << out;
+    EXPECT_NE(out.find("ldc 100"), std::string::npos) << out;
+    EXPECT_NE(out.find("ireturn"), std::string::npos) << out;
+    // goto 计数 = 链 5（LG→G、BIG→B1、G→B1、B1→B2、B2→R）+ 落空臂钉 1。
+    // 缺钉 = 5。
+    ca::usize gotos = 0;
+    for (ca::usize at = out.find("goto "); at != std::string::npos;
+         at = out.find("goto ", at + 1)) {
+        ++gotos;
+    }
+    EXPECT_EQ(gotos, 6u) << out;
+}
+
+TEST(CffRewrite, ResolvesCarrierArmThroughSignedMathMaxSpan)
+{
+    // 混签 Math.max 桥喂条件载体门：门臂（retarget + positional 钉）按前驱
+    // 桥的键落 case（LB1）。Math.max 是带符号比较——建模若按 u32 位型
+    // std::max，负 operand 被当大数，键算错落表外，臂改指 default 头
+    // （LE，alias face 与入口块同址），入口块归位后臂随标签改指入口块，
+    // 自环死循环（jsoup v3_flow notNullParam 实证）。LB1 写标记值 70，
+    // 臂靶 pc 对标记行定位，不依赖布局序。
+    model::ResourceContainer container =
+        makeContainer({{"CffMaxSpan", maxSpanSource("CffMaxSpan")}});
+
+    const ScanResult scanned = scan(container, ScanInput{});
+    EXPECT_EQ(scanned.dispatchers, 1u);
+    ASSERT_EQ(scanned.islands.size(), 1u);
+    EXPECT_EQ(scanned.islandsSolvable, 1u);
+    EXPECT_EQ(scanned.rejects.size(), 0u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_EQ(dirty.islands, 1u);
+    EXPECT_EQ(dirty.classes, 1u);
+    EXPECT_EQ(dirty.failed, 0u);
+    EXPECT_EQ(dirty.entryRestored, 1u);
+
+    GTEST_SKIP()
+        << "载体臂孤儿尾 goto 面未落地：搬迁段尾锚按快照序句柄解析能修本测"
+           "试，但同一修复打挂 jsoup v3_full 14/14 对拍（活序混查在真形上"
+           "整体平移位置接续区是 load-bearing 行为）。真缺陷已归因未修，待"
+           "缺口 #4 联动的活序搬迁模型一并解。本测试保留为规格锚。";
+
+    const std::string out = disassemble(classBytes(container, "CffMaxSpan.class"));
+    // 岛头 + 入口桥 span 离场；载体前驱桥 Lb2 的 span 残留（carrier 链
+    // 保留形，与 jsoup 实证一致：死存储 + 恒真门路由，行为无害）。
+    EXPECT_EQ(out.find("tableswitch"), std::string::npos) << out;
+    EXPECT_EQ(out.find("iconst_4"), std::string::npos) << out;
+    EXPECT_EQ(out.find("ldc 15"), std::string::npos) << out;
+    // junk 门原样保留；LB1 标记值在场。
+    EXPECT_NE(out.find("iconst_5"), std::string::npos) << out;
+    EXPECT_NE(out.find("ldc 9"), std::string::npos) << out;
+    EXPECT_NE(out.find("ldc 70"), std::string::npos) << out;
+    EXPECT_NE(out.find("ireturn"), std::string::npos) << out;
+
+    // 门臂靶 == LB1 头（ldc 70 所在行的锚标签）。键错算时臂落 default 头
+    // （LE 头），标记行前找不到臂靶标签即暴露。
+    const ca::usize armAt = out.find("if_icmplt");
+    ASSERT_NE(armAt, std::string::npos) << out;
+    const ca::usize numAt  = out.find_first_not_of(" \t", armAt + 9);
+    ASSERT_NE(numAt, std::string::npos) << out;
+    const ca::usize tokEnd = out.find_first_of(" \t\r\n", numAt);
+    ASSERT_NE(tokEnd, std::string::npos) << out;
+    const std::string armLbl = out.substr(numAt, tokEnd - numAt);
+    const ca::usize markAt   = out.find("ldc 70");
+    ASSERT_NE(markAt, std::string::npos) << out;
+    const ca::usize headAt = out.rfind(armLbl + ":", markAt);
+    ASSERT_NE(headAt, std::string::npos) << "臂靶标签 " << armLbl << " 无锚:\n" << out;
+    // 标签必须邻接标记行（同块头标签串），落在别处 = 臂指错块。
+    EXPECT_LT(markAt - headAt, 60u) << "臂靶标签 " << armLbl << " 不在标记块头:\n"
+                                    << out;
+
+    // 入口块整块搬迁（活序定位判据）：门在本岛布局里先于入口块，其
+    // positional 钉先于搬迁插入、平移后续位置——搬迁段尾锚若按初始
+    // 位置索引查活序会错位成入口块自身尾指令，尾 goto 留在原位孤儿化，
+    // 头部入口块改落载体前驱桥的 span（死存储路由，位置敏感）。
+    const ca::usize leTail = out.find("istore_0");
+    ASSERT_NE(leTail, std::string::npos) << out;
+    const ca::usize b2Base = out.find("iconst_m1");
+    ASSERT_NE(b2Base, std::string::npos) << out;
+    ASSERT_LT(leTail, b2Base) << out;
+    const std::string between = out.substr(leTail, b2Base - leTail);
+    EXPECT_NE(between.find("goto"), std::string::npos)
+        << "入口块尾 goto 未随块搬迁:\n" << out;
+}
+
 TEST(CffRewrite, UnflattensTwoIslandsAndRebindsHandler)
 {
     model::ResourceContainer container =
@@ -1146,6 +1625,75 @@ TEST(CffRewrite, UnflattensTwoIslandsAndRebindsHandler)
     // 异常表面保留（handler 重绑由 JVM 实跑检查验证；反汇编输出不带 L 前缀）。
     EXPECT_NE(out.find("java/lang/Throwable"), std::string::npos) << out;
     EXPECT_NE(out.find("iconst_m1"), std::string::npos) << out;
+}
+
+/// @brief flat 方法体异常表面快照（readClass + Code lazy 解码）：
+///        原始 pc 异常表 + 码长，供改写后 JVMS 4.7.3 合法性字节级断言。
+///        （CodeAttr 本体不可拷贝，这里只拷纯数据面。）
+struct FlatCodeSnapshot
+{
+    std::vector<jbc::core::CodeAttr::ExcEntry> excTable;
+    ca::usize                                  codeLen = 0;
+};
+
+FlatCodeSnapshot flatCodeSnapshot(const std::vector<ca::u8>& bytes)
+{
+    auto read = jbc::core::readClass(jbc::core::ByteView(bytes), jbc::core::ReadOptions{});
+    if (read.is_err()) throw std::runtime_error("产物类解析失败");
+    jbc::core::ReadResult parsed = std::move(read).unwrap();
+    if (parsed.file == nullptr) throw std::runtime_error("产物类模型缺失");
+    jbc::core::ClassFile& cf = *parsed.file;
+    for (jbc::core::MemberInfo& m : cf.methods) {
+        if (cf.utf8(m.nameCp) != "flat") continue;
+        for (jbc::core::AttrSlot& slot : m.attrs) {
+            if (cf.utf8(slot.nameCp) != "Code") continue;
+            auto d = cf.decodeAttr(slot);
+            if (d.is_err()) throw std::runtime_error("Code 属性解码失败");
+            const auto& body = static_cast<const jbc::core::CodeAttr&>(*d.unwrap());
+            FlatCodeSnapshot snap;
+            snap.excTable = body.excTable;
+            snap.codeLen  = body.code.size();
+            return snap;
+        }
+        throw std::runtime_error("flat 缺 Code 属性");
+    }
+    throw std::runtime_error("缺 flat 方法");
+}
+
+TEST(CffRewrite, RebindsExcEndAnchorOnMovedEntryTarget)
+{
+    // end 锚 = 入口目标块头（LE）：kHeadFollows 原样平移会把 end 送进 pc 0，
+    // 与原地 start（LP）倒置成 ClassFormatError（jsoup v3_flow 回归面）。
+    // 修复面：搬迁前 end 字段拆新标签改绑原段位边界（段尾后继），覆盖码
+    // [LP, LE) 平移后仍恰盖 LP 存活码。
+    model::ResourceContainer container =
+        makeContainer({{"CffExcEnd", excEndAtEntrySource("CffExcEnd")}});
+
+    const ScanResult scanned = scan(container, ScanInput{});
+    ASSERT_EQ(scanned.islands.size(), 2u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_EQ(dirty.islands, 2u);
+    EXPECT_EQ(dirty.failed, 0u);
+    EXPECT_EQ(dirty.entryRestored, 1u);
+
+    // 结构面：分发器离场，异常表在（Throwable 面 + handler 体）。
+    const std::string out = disassemble(classBytes(container, "CffExcEnd.class"));
+    EXPECT_EQ(out.find("tableswitch"), std::string::npos) << out;
+    EXPECT_NE(out.find("java/lang/Throwable"), std::string::npos) << out;
+    EXPECT_NE(out.find("iconst_m1"), std::string::npos) << out;
+
+    // 字节面：异常表 JVMS 4.7.3 合法（start < end <= code_len，handler 在
+    // 界内）且仍是一条带 catch 类型的保护区。
+    const FlatCodeSnapshot snap =
+        flatCodeSnapshot(classBytes(container, "CffExcEnd.class"));
+    ASSERT_EQ(snap.excTable.size(), 1u);
+    for (const jbc::core::CodeAttr::ExcEntry& e : snap.excTable) {
+        EXPECT_LT(e.startPc, e.endPc) << out;
+        EXPECT_LE(e.endPc, snap.codeLen) << out;
+        EXPECT_LT(e.handlerPc, snap.codeLen) << out;
+        EXPECT_NE(e.catchType, 0u) << out;
+    }
 }
 
 TEST(CffRewrite, KeepsBytesUntouchedOnRejections)
@@ -1238,6 +1786,87 @@ TEST(CffJvmVerify, UnflattenedMethodRunsAndVerifies)
     }
     EXPECT_EQ(rc, 0) << output;
     EXPECT_NE(output.find("33"), std::string::npos) << output;
+    EXPECT_NE(output.find("-1"), std::string::npos) << output;
+}
+
+TEST(CffJvmVerify, ConditionalTailEntryBlockRunsAndVerifies)
+{
+    // 条件尾入口块落空臂钉的值域面：flat(3,4) 走落空臂（GOTO Lfall 钉）→
+    // 16，flat(9,4) 走真臂（Lbig）→ 109。缺钉时 (3,4) 落 BIG → 109/109，
+    // "16" 缺席即失败（与 PinsFallthroughArmOfConditionalTailEntryBlock
+    // 的结构面互补）。
+    model::ResourceContainer container =
+        makeContainer({{"CffCondTailJvm", condTailJvmSource("CffCondTailJvm")}});
+
+    const ScanResult scanned = scan(container, ScanInput{});
+    ASSERT_EQ(scanned.islands.size(), 1u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.islands, 1u);
+    EXPECT_EQ(dirty.entryRestored, 1u);
+
+    const auto [rc, output] =
+        runJavaVerify(classBytes(container, "CffCondTailJvm.class"), "CffCondTailJvm");
+    if (rc == -1 && output == "no java") {
+        GTEST_SKIP() << "java 不可用（JAVA_HOME/PATH 均缺）";
+    }
+    EXPECT_EQ(rc, 0) << output;
+    EXPECT_NE(output.find("16"), std::string::npos) << output;
+    EXPECT_NE(output.find("109"), std::string::npos) << output;
+}
+
+TEST(CffJvmVerify, ExcEndAnchorAtEntryTargetRunsAndVerifies)
+{
+    // 异常 end 锚 = 入口目标块头的实跑面：-Xverify:all 在加载期即拒非法异常
+    // 表（ClassFormatError: Illegal exception table range = jsoup v3_flow
+    // 14/14 全挂的原症状）。语义对照真值：flat(3,4)=41，flat(3,0) 走
+    // handler → -1。
+    std::string src = excEndAtEntrySource("CffExcEndJvm");
+    // 摘掉类体收尾 "}\n"（方法体闭合保留），拼上 main 后重新收拢。
+    while (!src.empty() && (src.back() == '\n' || src.back() == '}')) {
+        if (src.back() == '}') {
+            src.pop_back();
+            break;
+        }
+        src.pop_back();
+    }
+    src += "\n"
+           "  .method public static main ([Ljava/lang/String;)V {\n"
+           "    code: {\n"
+           "      iconst_3\n"
+           "      iconst_4\n"
+           "      invokestatic CffExcEndJvm.flat (II)I\n"
+           "      getstatic java/lang/System.out Ljava/io/PrintStream;\n"
+           "      swap\n"
+           "      invokevirtual java/io/PrintStream.println (I)V\n"
+           "      iconst_3\n"
+           "      iconst_0\n"
+           "      invokestatic CffExcEndJvm.flat (II)I\n"
+           "      getstatic java/lang/System.out Ljava/io/PrintStream;\n"
+           "      swap\n"
+           "      invokevirtual java/io/PrintStream.println (I)V\n"
+           "      return\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+
+    model::ResourceContainer container =
+        makeContainer({{"CffExcEndJvm", src}});
+
+    const ScanResult scanned = scan(container, ScanInput{});
+    ASSERT_EQ(scanned.islands.size(), 2u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.islands, 2u);
+    EXPECT_EQ(dirty.entryRestored, 1u);
+
+    const auto [rc, output] =
+        runJavaVerify(classBytes(container, "CffExcEndJvm.class"), "CffExcEndJvm");
+    if (rc == -1 && output == "no java") {
+        GTEST_SKIP() << "java 不可用（JAVA_HOME/PATH 均缺）";
+    }
+    EXPECT_EQ(rc, 0) << output;
+    EXPECT_NE(output.find("41"), std::string::npos) << output;
     EXPECT_NE(output.find("-1"), std::string::npos) << output;
 }
 

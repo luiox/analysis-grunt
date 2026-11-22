@@ -178,6 +178,327 @@ TEST(DeadMemberRuntime, KeepsMethodsInClassWithBootstrapMethods)
     EXPECT_NE(after.find("secret"), std::string::npos) << after;
 }
 
+TEST(DeadMemberRuntime, DropsDecryptorTailInBsmClassButKeepsOthers)
+{
+    // BSM 类 + 解密器族方法（特征描述符 ([CJI)Ljava/lang/String;，private
+    // static，ConstantCall 折完全部填充点后零明文引用）：收尾门豁免 BSM 盲
+    // 区与反射按名普查（夹具故意放一个与解密器同名的字符串常量 "zz"——单
+    // 字符名撞 junk 载荷是样本实况，豁免论证见实现注释），照常删除；同类
+    // 的普通私有方法仍宁留（盲区口径不变）。
+    // BSM 方法 `a`（Lookup 签名）是 indy 汇编的在场要求；解密器用别名 `zz`。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         hostPrelude()
+             + "  .method public static a (Ljava/lang/invoke/MethodHandles$Lookup;"
+             "Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/String;"
+             "Ljava/lang/String;Ljava/lang/invoke/MethodType;)"
+             "Ljava/lang/invoke/CallSite; {\n"
+             "    parameters: { lk, nm, mt, tn, tc, tm },\n"
+             "    code: {\n"
+             "      aconst_null\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             "  .method private static zz ([CJI)Ljava/lang/String; {\n"
+             "    parameters: { arr, key, seed },\n"
+             "    code: {\n"
+             "      new java/lang/String\n"
+             "      dup\n"
+             "      aload arr\n"
+             "      invokespecial java/lang/String.<init> ([C)V\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             "  .method public static call2 ()I {\n"
+             "    code: {\n"
+             "      ldc \"zz\"\n"
+             "      pop\n"
+             "      bipush 3\n"
+             "      bipush 4\n"
+             "      invokedynamic t (II)I { invokestatic, Host.a, "
+             "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+             "Ljava/lang/invoke/MethodType;Ljava/lang/String;Ljava/lang/String;"
+             "Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite; } "
+             "{ \"t\", \"Host\", (II)I }\n"
+             "      ireturn\n"
+             "    }\n"
+             "  }\n"
+             + hostTail()},
+    });
+
+    const ScanResult scanned = scan(container);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    const std::string after = disassemble(classBytes(container, "Host.class"));
+    // 解密器收尾门生效：特征方法删除。
+    EXPECT_EQ(after.find("([CJI)Ljava/lang/String;"), std::string::npos) << after;
+    // 盲区口径不变：普通私有方法宁留。
+    EXPECT_NE(after.find("secret"), std::string::npos) << after;
+}
+
+TEST(DeadMemberRuntime, KeepsDecryptorWithLiveSelfCalls)
+{
+    // t/u 族反证：解密器收尾件同类还有真调用点（ConstantCall 折不动的 key
+    // 表达式形态）时，普查保护是唯一防线——活引用必须保住方法，孤儿豁免
+    // （shape + 零调用双证）不成立，宁留。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         hostPrelude()
+             + "  .method private static zz ([CJI)Ljava/lang/String; {\n"
+             "    parameters: { arr, key, seed },\n"
+             "    code: {\n"
+             "      new java/lang/String\n"
+             "      dup\n"
+             "      aload arr\n"
+             "      invokespecial java/lang/String.<init> ([C)V\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             "  .method public static call2 ()Ljava/lang/String; {\n"
+             "    code: {\n"
+             "      ldc \"ab\"\n"
+             "      invokevirtual java/lang/String.toCharArray ()[C\n"
+             "      ldc2_w 7L\n"
+             "      bipush 9\n"
+             "      invokestatic Host.zz ([CJI)Ljava/lang/String;\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             + hostTail()},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    const std::string after  = disassemble(classBytes(container, "Host.class"));
+    EXPECT_NE(after.find("zz"), std::string::npos) << after;
+    EXPECT_NE(dirty.methods, 0u) << "夹具里 secret 也该成为删除候选，断言才有分辨力";
+}
+
+/// 第二形解密器体（260705 grunt2-fork 逐码元 XOR）：SB 前导 + length/charAt
+/// 取码元 + 数值载荷 + IXOR/I2C + append(C) 环 + toString 收尾 ARETURN——
+/// 与 stringXorDecryptorShape 五件套逐一对齐的最小夹具。
+std::string stringXorDecryptorBody()
+{
+    return "  .method private static zz (Ljava/lang/String;)Ljava/lang/String; {\n"
+           "    parameters: { s },\n"
+           "    code: {\n"
+           "      new java/lang/StringBuilder\n"
+           "      dup\n"
+           "      invokespecial java/lang/StringBuilder.<init> ()V\n"
+           "      bipush 33\n"
+           "      istore 1\n"
+           "      iconst_0\n"
+           "      istore 2\n"
+           "    Lloop:\n"
+           "      iload 2\n"
+           "      aload 0\n"
+           "      invokevirtual java/lang/String.length ()I\n"
+           "      if_icmpge Ldone\n"
+           "      aload 0\n"
+           "      iload 2\n"
+           "      invokevirtual java/lang/String.charAt (I)C\n"
+           "      iload 1\n"
+           "      ixor\n"
+           "      i2c\n"
+           "      invokevirtual java/lang/StringBuilder.append (C)Ljava/lang/StringBuilder;\n"
+           "      iinc 2 1\n"
+           "      goto Lloop\n"
+           "    Ldone:\n"
+           "      invokevirtual java/lang/StringBuilder.toString ()Ljava/lang/String;\n"
+           "      areturn\n"
+           "    }\n"
+           "  }\n";
+}
+
+TEST(DeadMemberRuntime, DropsStringXorDecryptorOrphanPastNameCollision)
+{
+    // 第二形（(String;)String 逐码元 XOR）：ConstantCall 折完全部填充点后
+    // 零明文引用，名字撞 junk 池明文（call2 里 ldc "zz" 模拟）不构成保护
+    // 面——描述符预滤 + 体形五件套 + 同类零调用点走查双证压住盲区风险，
+    // 照常删除；同类普通私有方法仍宁留（盲区口径不变）。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         hostPrelude()
+             + "  .method public static a (Ljava/lang/invoke/MethodHandles$Lookup;"
+             "Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/String;"
+             "Ljava/lang/String;Ljava/lang/invoke/MethodType;)"
+             "Ljava/lang/invoke/CallSite; {\n"
+             "    parameters: { lk, nm, mt, tn, tc, tm },\n"
+             "    code: {\n"
+             "      aconst_null\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             + stringXorDecryptorBody() +
+             "  .method public static call2 ()I {\n"
+             "    code: {\n"
+             "      ldc \"zz\"\n"
+             "      pop\n"
+             "      bipush 3\n"
+             "      bipush 4\n"
+             "      invokedynamic t (II)I { invokestatic, Host.a, "
+             "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+             "Ljava/lang/invoke/MethodType;Ljava/lang/String;Ljava/lang/String;"
+             "Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite; } "
+             "{ \"t\", \"Host\", (II)I }\n"
+             "      ireturn\n"
+             "    }\n"
+             "  }\n"
+             + hostTail()},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    const std::string after  = disassemble(classBytes(container, "Host.class"));
+    // 双证豁免生效：第二形孤儿删除。
+    EXPECT_EQ(after.find("(Ljava/lang/String;)Ljava/lang/String;"), std::string::npos) << after;
+    // 盲区口径不变：普通私有方法宁留。
+    EXPECT_NE(after.find("secret"), std::string::npos) << after;
+    EXPECT_NE(dirty.methods, 0u) << "解密器没进候选，断言没有分辨力";
+}
+
+TEST(DeadMemberRuntime, KeepsStringXorDecryptorWithLiveSelfCall)
+{
+    // t/u 族反证第二形：体内还有折不动的真调用点时（key 非 LDC 直量等），
+    // 零调用走查不成立，普查保护是唯一防线，宁留。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         hostPrelude() + stringXorDecryptorBody() +
+             "  .method public static call2 ()Ljava/lang/String; {\n"
+             "    code: {\n"
+             "      ldc \"RUS\"\n"
+             "      invokestatic Host.zz (Ljava/lang/String;)Ljava/lang/String;\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             + hostTail()},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    const std::string after  = disassemble(classBytes(container, "Host.class"));
+    EXPECT_NE(after.find("zz"), std::string::npos) << after;
+    EXPECT_NE(dirty.methods, 0u) << "夹具里 secret 也该成为删除候选，断言才有分辨力";
+}
+
+TEST(DeadMemberRuntime, KeepsStringLikePrivateWithoutXorShape)
+{
+    // 描述符同形但体不是 XOR 环（真实代码的 private String 助手，如
+    // toUpperCase 包装）：体形证据不成立，豁免不解锁——名字撞 junk 明文
+    // 也不删（盲区宁留口径）。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         hostPrelude()
+             + "  .method public static a (Ljava/lang/invoke/MethodHandles$Lookup;"
+             "Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/String;"
+             "Ljava/lang/String;Ljava/lang/invoke/MethodType;)"
+             "Ljava/lang/invoke/CallSite; {\n"
+             "    parameters: { lk, nm, mt, tn, tc, tm },\n"
+             "    code: {\n"
+             "      aconst_null\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             "  .method private static zz (Ljava/lang/String;)Ljava/lang/String; {\n"
+             "    parameters: { s },\n"
+             "    code: {\n"
+             "      aload 0\n"
+             "      invokevirtual java/lang/String.toUpperCase ()Ljava/lang/String;\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             "  .method public static call2 ()I {\n"
+             "    code: {\n"
+             "      ldc \"zz\"\n"
+             "      pop\n"
+             "      bipush 3\n"
+             "      bipush 4\n"
+             "      invokedynamic t (II)I { invokestatic, Host.a, "
+             "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+             "Ljava/lang/invoke/MethodType;Ljava/lang/String;Ljava/lang/String;"
+             "Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite; } "
+             "{ \"t\", \"Host\", (II)I }\n"
+             "      ireturn\n"
+             "    }\n"
+             "  }\n"
+             + hostTail()},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    const std::string after  = disassemble(classBytes(container, "Host.class"));
+    EXPECT_NE(after.find("zz"), std::string::npos)
+        << "非 XOR 体的 (String;)String 助手必须宁留" << after;
+}
+
+TEST(DeadMemberRuntime, DropsBsmSignatureOrphanViaGateE)
+{
+    // gateE：Grunt simple BSM 签名（7 参 Lookup 形）+ 容器内零活条目指向
+    // ——JVM 对 BSM 方法的唯一回调通道是 BootstrapMethods 条目，死条目同
+    // 轮剪除后永不可达，静态普查零引用即死。夹具类带签名方法但不带任何
+    // invokedynamic（条目不存在），public static 也收（签名专有性压住
+    // 反射面）；普通私有 secret 照常走 gateC。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         hostPrelude()
+             + "  .method public static zz (Ljava/lang/invoke/MethodHandles$Lookup;"
+             "Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/String;"
+             "Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;)"
+             "Ljava/lang/invoke/CallSite; {\n"
+             "    parameters: { lk, nm, mt, tn, tc, tm, ti },\n"
+             "    code: {\n"
+             "      aconst_null\n"
+             "      areturn\n"
+             "    }\n"
+             "  }\n"
+             + hostTail()},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    const std::string after  = disassemble(classBytes(container, "Host.class"));
+    EXPECT_EQ(after.find("CallSite"), std::string::npos) << after;
+    EXPECT_NE(dirty.methods, 0u) << "gateE 没收进候选，断言没有分辨力";
+}
+
+TEST(DeadMemberRuntime, GateBTakesStaticOnlyForSyntheticBits)
+{
+    // Grunteon 260705 全员撒位面（t3 语料实例方法 acc=0x1041 实证）：实例
+    // 方法带 ACC_SYNTHETIC|ACC_BRIDGE 但零静态引用——位在该家族零信息量，
+    // 计数反射（JavaObfuscatorTest 2.1 getDeclaredMethods）可观察，不进
+    // 候选；static 面的位仍是转发器证据，照常收。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         hostPrelude() +
+             "  .method public synthetic bridge c ()V {\n"
+             "    code: {\n"
+             "      return\n"
+             "    }\n"
+             "  }\n"
+             "  .method public static synthetic fwd (II)I {\n"
+             "    code: {\n"
+             "      iload 0\n"
+             "      iload 1\n"
+             "      iadd\n"
+             "      ireturn\n"
+             "    }\n"
+             "  }\n" +
+             hostTail()},
+    });
+
+    const ScanResult scanned = scan(container);
+    bool instC     = false;
+    bool staticFwd = false;
+    for (const ClassCand& cl : scanned.classes) {
+        for (const MethodCand& m : cl.methods) {
+            instC     |= (m.name == "c");
+            staticFwd |= (m.name == "fwd");
+        }
+    }
+    EXPECT_FALSE(instC) << "实例 synthetic/bridge 位不构成候选（计数反射面）";
+    EXPECT_TRUE(staticFwd) << "static 上的 synthetic 位仍是候选证据";
+}
+
 TEST(DeadMemberRuntime, KeepsMethodNamedByAnnotationValue)
 {
     // @Redirect 形态：注解字符串值 "secret" 按名引用方法，mixin 框架运行时
@@ -387,6 +708,40 @@ TEST(DeadMemberShell, KeepsClassWithMainMethod)
     const DirtySet   dirty   = rewrite(container, scanned);
     EXPECT_EQ(dirty.classes, 0u) << "含 main 的主类不摘";
     EXPECT_EQ(container.hasResource("Main.class"), true);
+}
+
+TEST(DeadMemberShell, KeepsPackageInfoShellAndTransitivelyItsAnnotationTarget)
+{
+    // 4e16046 jsoup 语料回归：空壳回收守卫曾拿裸名精确比对 thisName（全限
+    // 定内部名，org/demo/package-info 形），永不命中——jsoup 7 个
+    // package-info 全被当零引用空壳误摘；jspecify 注解类仅被 package-info
+    // 注解的 CP Classref 引用，converge 后续轮被传递性摘除（实测 dec7p 丢
+    // 7 package-info + NullMarked）。守卫改简单名判后：package-info 免摘，
+    // 其引用链上的注解类两轮都活。
+    model::ResourceContainer container = makeContainer({
+        {"Host", hostPrelude() + hostTail()},
+        {"org/demo/package-info",
+         ".invisible-annotation org/jspecify/annotations/NullMarked {\n"
+         "    tag: \"x\"\n"
+         "}\n"
+         ".super java/lang/Object\n"
+         ".class public super org/demo/package-info {\n"
+         "}\n"},
+        {"org/jspecify/annotations/NullMarked",
+         ".super java/lang/Object\n"
+         ".class public super org/jspecify/annotations/NullMarked {\n"
+         "}\n"},
+    });
+
+    // 两轮扫描回收模拟 converge 轮进：轮 1 守卫拦下 package-info，
+    // NullMarked 因 package-info 注解 CP 引用在册不摘；轮 2 同样成立。
+    for (int round = 0; round < 2; ++round) {
+        const ScanResult scanned = scan(container);
+        const DirtySet   dirty   = rewrite(container, scanned);
+        ASSERT_EQ(dirty.classes, 0u) << "轮 " << round << "：package-info 守卫失效被整类摘除";
+        EXPECT_TRUE(container.hasResource("org/demo/package-info.class"));
+        EXPECT_TRUE(container.hasResource("org/jspecify/annotations/NullMarked.class"));
+    }
 }
 
 TEST(DeadMemberRuntime, ProofHoldsOnRuntimeReferencedClass)
@@ -605,6 +960,250 @@ TEST(DeadMemberCensus, CensusBlindStopsWholeRound)
     EXPECT_EQ(dirty.methods, 0u) << "census 盲区本轮应零删除";
     EXPECT_GE(dirty.censusBlind, 1u) << "盲区类应入账";
     EXPECT_TRUE(mateKeepsSecret(container)) << "引用证据不足不删";
+}
+
+// ============================================================================
+// ==== 反射按名定位的保守面（F3 补口）==========================================
+// ============================================================================
+
+TEST(DeadMemberRuntime, KeepsUnreferencedConstructor)
+{
+    // 构造器反射可达（getDeclaredConstructor + setAccessible 按类型定位，
+    // 无名字证据可用）：整档不删，宁误留。同类的 private 零引用方法照删，
+    // 对照保守面不吞本职工作。
+    model::ResourceContainer container = makeContainer({
+        {"Host",
+         ".super java/lang/Object\n"
+         ".class public super Host {\n"
+         "  .method private <init> ()V {\n"
+         "    code: {\n"
+         "      aload 0\n"
+         "      invokespecial java/lang/Object.<init> ()V\n"
+         "      return\n"
+         "    }\n"
+         "  }\n"
+         "  .method private static secret (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      iadd\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "  .method public static call ()I {\n"
+         "    code: {\n"
+         "      bipush 3\n"
+         "      bipush 4\n"
+         "      invokestatic java/lang/Math.max (II)I\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ScanResult scanned = scan(container);
+    bool ctorCandidate    = false;
+    bool secretCandidate  = false;
+    for (const ClassCand& c : scanned.classes) {
+        for (const MethodCand& m : c.methods) {
+            ctorCandidate   |= (m.name == "<init>");
+            secretCandidate |= (m.name == "secret");
+        }
+    }
+    EXPECT_FALSE(ctorCandidate) << "构造器不该成为删除候选";
+    EXPECT_TRUE(secretCandidate);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_GE(dirty.methods, 1u);
+    const std::string after = disassemble(classBytes(container, "Host.class"));
+    EXPECT_NE(after.find("<init>"), std::string::npos) << after;
+    EXPECT_EQ(after.find("secret"), std::string::npos) << after;
+}
+
+TEST(DeadMemberRuntime, KeepsMethodNamedByPoolString)
+{
+    // 池明文按名引用：任意类的字符串常量 "secret"（框架运行时 getDeclared-
+    // Method("secret") 一族按名反射定位）入名字面，方法不删。反射按名定位
+    // 只有名字证据，全容器任何字符串常量都可能是名字证据。
+    model::ResourceContainer container = makeContainer({
+        {"Mate", mateSource()},
+        {"Host",
+         ".super java/lang/Object\n"
+         ".class public super Host {\n"
+         "  .method public static call ()I {\n"
+         "    code: {\n"
+         "      ldc \"secret\"\n"
+         "      pop\n"
+         "      bipush 3\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    EXPECT_GE(dirty.rejectedByRef, 1u) << "池明文名字应拦删";
+    EXPECT_TRUE(mateKeepsSecret(container)) << "按名反射可达的方法不删";
+}
+
+/// 池类解密器：24 条模板，key=32（"GRUNT" → "grunt"）。与
+/// const_pool_restore_test 的 decBody 同形（各测试文件夹具自持）。
+std::string dmDecryptorBody()
+{
+    std::string src = "  .method static dec (Ljava/lang/String;)Ljava/lang/String; {\n";
+    src += "    code: {\n";
+    src += "      new java/lang/StringBuilder\n";
+    src += "      dup\n";
+    src += "      invokespecial java/lang/StringBuilder.<init> ()V\n";
+    src += "      astore_1\n";
+    src += "      iconst_0\n";
+    src += "      istore_2\n";
+    src += "      goto C\n";
+    src += "    B:\n";
+    src += "      aload_1\n";
+    src += "      aload_0\n";
+    src += "      iload_2\n";
+    src += "      invokevirtual java/lang/String.charAt (I)C\n";
+    src += "      ldc 32\n";
+    src += "      ixor\n";
+    src += "      i2c\n";
+    src += "      invokevirtual java/lang/StringBuilder.append (C)Ljava/lang/StringBuilder;\n";
+    src += "      pop\n";
+    src += "      iinc 2 1\n";
+    src += "    C:\n";
+    src += "      iload_2\n";
+    src += "      aload_0\n";
+    src += "      invokevirtual java/lang/String.length ()I\n";
+    src += "      if_icmplt B\n";
+    src += "      aload_1\n";
+    src += "      invokevirtual java/lang/StringBuilder.toString ()Ljava/lang/String;\n";
+    src += "      areturn\n";
+    src += "    }\n";
+    src += "  }\n";
+    return src;
+}
+
+TEST(DeadMemberRuntime, KeepsMethodNamedByPoolArrayFromClinitEval)
+{
+    // 池数组形态（fork 池形最简体）：名字是 clinit 运行期解密产物。CP 只有
+    // 密文 "GRUNT"，整体名 "grunt" 不在任何字符串常量里，CP 字符串普查看
+    // 不见；模拟执行 clinit（解密器走 str 扩展）从静态区数组提取明文入名
+    // 字面。数组带候选之外的活读点（public 非 getter 形的 name()，4 条体
+    // 不落 Getter 门），死池判定不吞它。同类的无证方法照删，对照提取面不
+    // 吞本职工作。
+    model::ResourceContainer container = makeContainer({
+        {"Pool",
+         ".super java/lang/Object\n"
+         ".class public super Pool {\n"
+         "  .field public static names [Ljava/lang/String;\n"
+         + dmDecryptorBody() +
+         "  .method static <clinit> ()V {\n"
+         "    code: {\n"
+         "      iconst_1\n"
+         "      anewarray java/lang/String\n"
+         "      dup\n"
+         "      iconst_0\n"
+         "      ldc \"GRUNT\"\n"
+         "      invokestatic Pool.dec (Ljava/lang/String;)Ljava/lang/String;\n"
+         "      aastore\n"
+         "      putstatic Pool.names [Ljava/lang/String;\n"
+         "      return\n"
+         "    }\n"
+         "  }\n"
+         "  .method public static name ()Ljava/lang/String; {\n"
+         "    code: {\n"
+         "      getstatic Pool.names [Ljava/lang/String;\n"
+         "      iconst_0\n"
+         "      aaload\n"
+         "      areturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+        {"Mate",
+         ".super java/lang/Object\n"
+         ".class public super Mate {\n"
+         "  .method private static grunt (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      iadd\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "  .method private static gamma (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      isub\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    EXPECT_GE(dirty.rejectedByRef, 1u) << "池数组提取的名字应拦删";
+    EXPECT_GE(dirty.methods, 1u);
+    const std::string after = disassemble(classBytes(container, "Mate.class"));
+    EXPECT_NE(after.find("grunt"), std::string::npos) << after;
+    EXPECT_EQ(after.find("gamma"), std::string::npos) << after;
+}
+
+TEST(DeadMemberRuntime, DropsMethodNamedByDeadPoolArray)
+{
+    // 死池反证：池数组没有任何候选之外的读点（clinit 只写不读、getter 缺席）
+    // 时，明文够不着反射面，不进名字证据面——按名保护面不拦，grunt 照删。
+    // （Grunt junk 池类形态：池 + getter 全零引用，明文是诱饵；样本取证
+    // B.a 只被候选 B.c/B.e 读。）
+    model::ResourceContainer container = makeContainer({
+        {"Pool",
+         ".super java/lang/Object\n"
+         ".class public super Pool {\n"
+         "  .field public static names [Ljava/lang/String;\n"
+         + dmDecryptorBody() +
+         "  .method static <clinit> ()V {\n"
+         "    code: {\n"
+         "      iconst_1\n"
+         "      anewarray java/lang/String\n"
+         "      dup\n"
+         "      iconst_0\n"
+         "      ldc \"GRUNT\"\n"
+         "      invokestatic Pool.dec (Ljava/lang/String;)Ljava/lang/String;\n"
+         "      aastore\n"
+         "      putstatic Pool.names [Ljava/lang/String;\n"
+         "      return\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+        {"Mate",
+         ".super java/lang/Object\n"
+         ".class public super Mate {\n"
+         "  .method private static grunt (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      iadd\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "  .method private static gamma (II)I {\n"
+         "    code: {\n"
+         "      iload 0\n"
+         "      iload 1\n"
+         "      isub\n"
+         "      ireturn\n"
+         "    }\n"
+         "  }\n"
+         "}\n"},
+    });
+
+    const ScanResult scanned = scan(container);
+    const DirtySet   dirty   = rewrite(container, scanned);
+    // Mate 两方法全删 → 空壳回收整类摘除（比逐方法断言更强的收敛证据）。
+    EXPECT_EQ(dirty.classes, 1u) << "Mate 应整类摘除";
+    EXPECT_EQ(container.hasResource("Mate.class"), false);
 }
 
 }   // namespace

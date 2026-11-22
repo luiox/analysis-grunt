@@ -17,15 +17,19 @@
 /// 复核是防御性的）。scan 产出全部调用点并给不可折叠的记 why，便于观测失
 /// 败面；折叠三条件见头文件，任一不成立记 why 不猜。
 ///
-/// REWRITE 就地换指令（invokestatic/invokevirtual + setMember 换目标方法引
-/// 用，CP 只追加 intern），换不动把 op 还原，失败不留半截指令。无删除无
+/// REWRITE 就地换指令（按 scan 判定的 EmitForm 落 op + setMember 换目标
+/// 方法引用：类 owner 走 invokestatic/invokevirtual + Methodref，接口 owner
+/// 走 invokestatic/invokeinterface + InterfaceMethodref——jsoup v2_indy
+/// Appendable.append / v3_full Path.of 实证接口 owner 落 class 形运行期
+/// ICCE。CP 只追加 intern），换不动把 op 还原，失败不留半截指令。无删除无
 /// 插入，pc 布局不变，调试属性与栈帧无需重定位；lowerMethod 失败整类放弃
 /// 回写。不压缩常量池：BootstrapMethods 仍引用 BSM 句柄与密文参数，压缩会
 /// 把活条目当死数据搬走；清属性是另一个 pass 的事。
 ///
-/// 已知边界：Special/Interface 句柄不折（换指令要动 this 槽栈语义，收益配
-/// 不上风险）；非 ConstantCallSite（可变调用点）不折，目标可能被运行期
-/// 换掉，静态改写不安全。BSM 引用容器内解密方法时，先跑整链前序
+/// 已知边界：Special/Interface CP 句柄（reference_kind 7/9）仍不折
+/// （judge 判据面保持，站点留 indy 行为安全）；接口目标面由 owner 旁证
+/// （容器普查 → JDK 接口集）按接口形正确折。非 ConstantCallSite（可变调
+/// 用点）不折，目标可能被运行期换掉，静态改写不安全。BSM 引用容器内解密方法时，先跑整链前序
 /// （ConstantCall 折解密体）不改变本残留结论，BSM 模拟自带 str/num/
 /// reflect/indy 扩展，解密在模拟里直接算出来，不依赖调用点侧折叠。单轮不
 /// 迭代：改写产出的普通 invoke 若又被混淆器包 indy（不存在此生成面），靠
@@ -40,6 +44,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -110,6 +115,10 @@ BsmValue readBsmArg(const jbc::core::ConstantPool& cp, ca::u32 index)
         value.kind = BsmValue::Kind::Int;
         value.i    = e.ival;
         return value;
+    case CpTag::Long:
+        value.kind = BsmValue::Kind::Long;
+        value.l    = static_cast<ca::i64>(e.lval);
+        return value;
     case CpTag::Class:
         value.kind = BsmValue::Kind::Class;
         value.text = std::string(cp.utf8Of(e.a));
@@ -118,11 +127,44 @@ BsmValue readBsmArg(const jbc::core::ConstantPool& cp, ca::u32 index)
         value.kind = BsmValue::Kind::MethodType;
         value.text = std::string(cp.utf8Of(e.a));
         return value;
-    case CpTag::MethodHandle:
+    case CpTag::MethodHandle: {
         value.kind = BsmValue::Kind::MethodHandle;
+        if (cp.valid(e.b)) {
+            const jbc::core::ConstantPool::Entry& ref = cp.at(e.b);
+            if ((ref.tag == CpTag::Methodref || ref.tag == CpTag::InterfaceMethodref)
+                && cp.valid(ref.a) && cp.valid(ref.b)) {
+                const jbc::core::ConstantPool::Entry& cls = cp.at(ref.a);
+                const jbc::core::ConstantPool::Entry& nat = cp.at(ref.b);
+                if (cls.tag == CpTag::Class && cp.valid(cls.a) && nat.tag == CpTag::NameAndType
+                    && cp.valid(nat.a)) {
+                    value.mhOwner = std::string(cp.utf8Of(cls.a));
+                    value.mhName  = std::string(cp.utf8Of(nat.a));
+                }
+            }
+        }
         return value;
+    }
     default: return value;
     }
+}
+
+/// @brief 整型装箱：把裸值装成 `@v` 槽 Obj（载荷口径与 jsim::num::detail::boxed
+///         一致，这里不引 detail 面，用公开的 session 堤原语自持）。
+///
+/// BSM 形参是包装面（`Ljava/lang/Integer;` / `Ljava/lang/Long;`）时必须装箱：
+/// jsim::num 的 intValue/longValue 拆箱 mock 只认 Obj 载荷（ref.kind == Obj，
+/// 值挂 `@v` 槽），裸 i32/i64 会被按 Unknown 传播，BSM 体内的装箱键分支
+/// （`if key == 1`）整站 Bail（Grunt2 fork 全链样本实测：913 站点全部
+/// Bail@分支）。
+jsim::SimValue boxedIntegral(jsim::Session& session, const char* className,
+                             jsim::SimValue value)
+{
+    const ca::u64 id = session.nextAllocId++;
+    jsim::HeapObj obj;
+    obj.className    = className;
+    obj.fields["@v"] = std::move(value);
+    session.heap[id] = std::move(obj);
+    return jsim::SimValue::knownObj(id);
 }
 
 /// 把 BSM 的静态参数灌成 SimValue。前三个形参（Lookup/name/MethodType）给 Unknown
@@ -147,8 +189,26 @@ bool materializeBsmArgs(const std::vector<jsim::ValType>& params,
             out.push_back(jsim::SimValue::knownStr(arg.text));
             break;
         case BsmValue::Kind::Int:
-            out.push_back(jsim::SimValue::knownI32(arg.i));
+        case BsmValue::Kind::Long: {
+            // 形参型别决定载荷：包装面装箱（拆箱 mock 只认 Obj），基元面按
+            // 槽宽灌裸值。包装类名跟 CP tag 走（Integer 常量进 Long 形参不是
+            // 可验证字节码，不猜第二包装类）。
+            const jsim::ValType pt = params[kBsmPrologue + i];
+            const bool          isLongTag = arg.kind == BsmValue::Kind::Long;
+            if (pt == jsim::ValType::Ref) {
+                out.push_back(boxedIntegral(
+                    session, isLongTag ? "java/lang/Long" : "java/lang/Integer",
+                    isLongTag ? jsim::SimValue::knownI64(arg.l)
+                              : jsim::SimValue::knownI32(arg.i)));
+            } else if (pt == jsim::ValType::I64) {
+                out.push_back(
+                    jsim::SimValue::knownI64(isLongTag ? arg.l
+                                                       : static_cast<ca::i64>(arg.i)));
+            } else {
+                out.push_back(jsim::SimValue::knownI32(arg.i));
+            }
             break;
+        }
         case BsmValue::Kind::Class:
             out.push_back(jsim::SimValue::knownObj(session.classObjectOf(arg.text)));
             break;
@@ -216,6 +276,24 @@ bool runBsm(Engine& engine, const std::string& hostUri, const Site& site,
     return true;
 }
 
+/// @brief 接收者放宽形判型：调用点 desc 在目标 desc 的参数表前多一个
+///        `Ljava/lang/Object;` 首参。
+///
+/// fork 形态：JunkBuilderParameter 让 builder/解密上下文经 Object 槽流动，
+/// BSM 侧 `findVirtual(...).asType(siteType)` 把接收者加宽成 Object（引用
+/// 放宽，asType 合法）。Virtual 目标原地换 invokevirtual：栈上接收者实型由
+/// 帧链复核把关（实型与目标 owner 不符时帧重算失败整类回滚，fail-closed）。
+/// Static 目标不认此形（asType 改变参数个数是非法适配，保持原判据拒绝）。
+bool receiverWidenedMatch(std::string_view targetDesc, std::string_view siteDesc)
+{
+    static const std::string_view kObjParam = "(Ljava/lang/Object;";
+    if (targetDesc.size() < 2 || targetDesc.front() != '(') return false;
+    if (siteDesc.size() <= kObjParam.size()) return false;
+    if (siteDesc.compare(0, kObjParam.size(), kObjParam) != 0) return false;
+    return siteDesc.compare(kObjParam.size(), std::string_view::npos,
+                            targetDesc.substr(1)) == 0;
+}
+
 /// 一个调用点能不能折。三条判据见头文件。
 bool judge(const Site& site, const jsim::indy::Target& target, std::string& why)
 {
@@ -225,12 +303,51 @@ bool judge(const Site& site, const jsim::indy::Target& target, std::string& why)
         return false;
     }
     if (target.desc != site.indyDesc) {
+        if (target.kind == jsim::indy::Target::Kind::Virtual
+            && receiverWidenedMatch(target.desc, site.indyDesc)) {
+            return true;
+        }
         why = "句柄描述符与调用点不符（asType 做了适配）：" + target.desc + " vs "
               + site.indyDesc;
         return false;
     }
     return true;
 }
+
+/// @brief 目标 owner 的接口判型（ widened-virtual 改写的前提证据）。
+///
+/// 容器内 owner 读 ACC_INTERFACE 原字节判型，fail-closed；容器外 owner（JDK
+/// 具体类 StringBuilder/String/Long 等）无旁证，按类处理——本仓语料面无
+/// JDK 接口目标，若有后续以 jrt-fs 旁证收窄。
+class OwnerKindCache
+{
+public:
+    explicit OwnerKindCache(const mjbase::model::ResourceContainer& container)
+        : container_(&container)
+    {}
+
+    /// @return true = owner 是接口；false = 类或不可判（不可判按类放行）。
+    bool isInterface(const std::string& owner)
+    {
+        const auto it = kinds_.find(owner);
+        if (it != kinds_.end()) return it->second;
+        bool iface = false;
+        std::string uri = owner + ".class";
+        if (const std::vector<ca::u8>* bytes =
+                findClassBytes(*container_, uri);
+            bytes != nullptr) {
+            if (auto session = openSession(*bytes)) {
+                iface = (session->unit().access & 0x0200) != 0;   // ACC_INTERFACE
+            }
+        }
+        kinds_.emplace(owner, iface);
+        return iface;
+    }
+
+private:
+    const mjbase::model::ResourceContainer* container_;
+    std::map<std::string, bool>             kinds_;
+};
 
 }   // namespace
 
@@ -239,10 +356,12 @@ bool judge(const Site& site, const jsim::indy::Target& target, std::string& why)
 // ============================================================================
 
 ScanResult scan(const mjbase::model::ResourceContainer& container,
-                const iter_budget::ClassBudget& budgetTemplate)
+                const iter_budget::ClassBudget& budgetTemplate,
+                const std::unordered_set<std::string>& jdkInterfaces)
 {
     ScanResult result;
     Engine     engine(container);
+    OwnerKindCache ownerKinds(container);
     ca::usize  named = 0;
 
     forEachClass(container, [&](const ClassEntry& entry) {
@@ -336,6 +455,27 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
                 jsim::indy::Target target;
                 std::string       why;
                 if (!runBsm(engine, uri, site, target, why)) {
+                    // JDK 标准 BSM（LambdaMetafactory 族，owner 在容器外）不算
+                    // 未收敛：它的目标静态可见——implMethod 就是 BSM 静态实参
+                    // 里的 MethodHandle 常量，直读记入 target 供 DeadMember 的
+                    // indyTargets 普查消费（metafactory 的 findStatic 目标不在
+                    // 混淆盲区，目标名不走解密）。容器内 BSM 跑挂才计 bsmFailed
+                    // （那才是「运行时才解出目标」的盲区面）。
+                    if (findClassBytes(container, site.bsmOwner + ".class") == nullptr) {
+                        for (const BsmValue& arg : site.args) {
+                            if (arg.kind == BsmValue::Kind::MethodHandle
+                                && !arg.mhOwner.empty() && !arg.mhName.empty()) {
+                                site.target.owner = arg.mhOwner;
+                                site.target.name  = arg.mhName;
+                                break;
+                            }
+                        }
+                        site.why = site.target.owner.empty()
+                                       ? "JDK 标准 BSM：静态实参无 MethodHandle 可读"
+                                       : "JDK 标准 BSM：目标从静态实参直读";
+                        result.sites.push_back(std::move(site));
+                        continue;
+                    }
                     site.why = std::move(why);
                     ++result.bsmFailed;
                     result.sites.push_back(std::move(site));
@@ -346,6 +486,31 @@ ScanResult scan(const mjbase::model::ResourceContainer& container,
                     site.why = std::move(why);
                     result.sites.push_back(std::move(site));
                     continue;
+                }
+                // 落地形态判定：owner 接口性 = 容器普查（ACC_INTERFACE
+                // 原字节）→ JDK 接口集（CLI --jdk 注入，jmods/lib 穷举普查，
+                // 集非空即双向作证）。接口 owner 折接口形（invokeinterface
+                // / invokestatic + InterfaceMethodref），类 owner 折历史
+                // 口径。jsoup v2_indy 实证 Appendable.append、v3_full 实证
+                // Path.of：接口 owner 落 class 形运行期 ICCE。放宽形（句柄
+                // 描述符接收者单边放宽）同口径分派，不再按 owner 接口性
+                // 拒——接口形与 indy 同为 5B 操作数，重定位面一致。
+                const bool iface = jdkInterfaces.count(target.owner) != 0
+                                   || ownerKinds.isInterface(target.owner);
+                site.emitForm = target.kind == jsim::indy::Target::Kind::Static
+                                    ? (iface ? Site::EmitForm::StaticIface
+                                             : Site::EmitForm::Static)
+                                    : (iface ? Site::EmitForm::Interface
+                                             : Site::EmitForm::Virtual);
+                if (target.kind == jsim::indy::Target::Kind::Static && !iface
+                    && jdkInterfaces.empty() && !ownerKinds.isInterface(target.owner)) {
+                    // 与 IndyRestore 同口径：无容器旁证也无 JDK 旁证的 static
+                    // 落点按类放行，但不静默——owner 若为接口，落 class 形
+                    // 运行期 ICCE（jsoup Path.of 实证）。
+                    std::fprintf(stderr,
+                                 "[grunt.IndyFold] static 落点无 JDK 接口旁证，按类落"
+                                 "（owner 若为接口 = 运行期 ICCE，建议 --jdk）：%s.%s\n",
+                                 target.owner.c_str(), target.name.c_str());
                 }
                 site.foldable = true;
                 ++result.foldable;
@@ -403,10 +568,18 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
                 jbc::ir::Insn* in = slot.unwrap();
                 if (in->op != jbc::core::Op::INVOKEDYNAMIC) continue;   // 已被别的站点改过
 
-                const bool isStatic = site->target.kind == jsim::indy::Target::Kind::Static;
-                in->op = isStatic ? jbc::core::Op::INVOKESTATIC : jbc::core::Op::INVOKEVIRTUAL;
+                const bool isStatic = site->emitForm == Site::EmitForm::Static
+                                      || site->emitForm == Site::EmitForm::StaticIface;
+                const bool iface = site->emitForm == Site::EmitForm::Interface
+                                   || site->emitForm == Site::EmitForm::StaticIface;
+                in->op = isStatic ? jbc::core::Op::INVOKESTATIC
+                         : iface  ? jbc::core::Op::INVOKEINTERFACE
+                                  : jbc::core::Op::INVOKEVIRTUAL;
                 // 操作数整族换成目标方法引用：intern 去重，CP 只追加。
-                if (!session->setMember(*in, jbc::ir::ClassSession::MemberSem::Kind::Method,
+                if (!session->setMember(*in,
+                                        iface
+                                            ? jbc::ir::ClassSession::MemberSem::Kind::InterfaceMethod
+                                            : jbc::ir::ClassSession::MemberSem::Kind::Method,
                                         site->target.owner, site->target.name,
                                         site->target.desc)) {
                     // 改不动就把 op 还原，保证失败不留半截指令。

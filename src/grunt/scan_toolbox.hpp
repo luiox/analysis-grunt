@@ -31,6 +31,9 @@
 
 #include "mjbase/util/annotation_depth.hpp"
 
+#include "jsim/engine.hpp"
+#include "jsim/value.hpp"
+
 namespace grunt::scan_tools {
 
 /// @brief MUTF-8 → UTF-16 码元（不经严格 UTF-8 解码：密文里合法地存在
@@ -118,12 +121,23 @@ inline const std::vector<jbc::core::BootstrapMethodsAttr::Entry>* bsmEntries(
     return attr == nullptr ? nullptr : &attr->entries;
 }
 
-/// @brief 判 owner 类 `<clinit>` 是否中性（缺失，或只剩 NOP/RETURN 且无
-///        异常表）。
+/// @brief 判 owner 类 `<clinit>` 是否中性：删掉指向 owner 的一次主动使用
+///        （invokestatic 调用、字段访问内联）不改变可观察行为。
 ///
-/// 这是保守面而不是判据：折叠掉指向 owner 的某次主动使用（invokestatic 调
-/// 用、字段访问内联）会改变类初始化时机，只有确认初始化器什么都不做时才
-/// 允许那次使用消失。`<clinit>` 带任何实体指令或异常表都判非中性。
+/// 两个接受面（都是保守面而不是判据）：
+///
+/// 1. **缺失或空壳**：无 `<clinit>`、无码，或只剩 NOP/RETURN 且无异常表；
+/// 2. **纯常量初值**：clinit 只由常量装载（数值/String）、栈整形、数值
+///    转换与对**本类字段**的 GETSTATIC/PUTSTATIC 构成（watermark 面：
+///    Grunt 在每个类撒 `ldc "PROTECTED BY …"; putstatic 自家字段`）。这一
+///    面的副作用 = 对本类静态字段写确定值——初始化提前/推迟/不发生都不可
+///    观察：字段值不依赖时机；字段若有读者，读者本身就是主动使用，初始化
+///    照常发生且写的是同一个确定值。
+///
+/// 出现分支、方法调用、NEW、athrow、异常表、任何对**本类以外**字段的访问
+/// 即判非中性（fail-closed）。消费方四个（ConstantCall / GateProcessorFold /
+/// ProxyInline / FieldAccessProxy），语义同一：折叠掉指向 owner 的一次主动
+/// 使用。
 inline bool classInitNeutral(jbc::ir::ClassSession& session)
 {
     namespace ir = jbc::ir;
@@ -148,11 +162,88 @@ inline bool classInitNeutral(jbc::ir::ClassSession& session)
     if (cu == nullptr) return false;
     if (!cu->exc.empty()) return false;
 
+    bool empty = true;
     for (const ir::InsnId id : cu->dom.order()) {
         const ir::Insn* in = cu->dom.peek(id);
         if (in == nullptr) continue;
         if (in->op == Op::NOP || in->op == Op::RETURN) continue;
-        return false;
+        empty = false;
+        break;
+    }
+    if (empty) return true;
+
+    // 纯常量初值面：watermark 形（常量装载 + putstatic 本类字段 + return）。
+    const std::string_view self = session.backing().thisName();
+    for (const ir::InsnId id : cu->dom.order()) {
+        const ir::Insn* in = cu->dom.peek(id);
+        if (in == nullptr) continue;
+        switch (in->op) {
+        case Op::NOP:
+        case Op::RETURN:
+        case Op::ACONST_NULL:
+        case Op::ICONST_M1:
+        case Op::ICONST_0:
+        case Op::ICONST_1:
+        case Op::ICONST_2:
+        case Op::ICONST_3:
+        case Op::ICONST_4:
+        case Op::ICONST_5:
+        case Op::BIPUSH:
+        case Op::SIPUSH:
+        case Op::LCONST_0:
+        case Op::LCONST_1:
+        case Op::FCONST_0:
+        case Op::FCONST_1:
+        case Op::FCONST_2:
+        case Op::DCONST_0:
+        case Op::DCONST_1:
+        case Op::I2L:
+        case Op::I2F:
+        case Op::I2D:
+        case Op::L2I:
+        case Op::L2F:
+        case Op::L2D:
+        case Op::F2I:
+        case Op::F2L:
+        case Op::F2D:
+        case Op::D2I:
+        case Op::D2L:
+        case Op::D2F:
+        case Op::I2B:
+        case Op::I2C:
+        case Op::I2S:
+        case Op::POP:
+        case Op::POP2:
+        case Op::DUP:
+        case Op::DUP2:
+        case Op::SWAP:
+            continue;
+        case Op::LDC:
+        case Op::LDC_W:
+        case Op::LDC2_W: {
+            ir::ClassSession::ConstSem sem;
+            if (!session.constOf(*in, sem)) return false;
+            using CK = ir::ClassSession::ConstSem::Kind;
+            if (in->op == Op::LDC2_W) {
+                if (sem.kind != CK::Long && sem.kind != CK::Double) return false;
+            } else if (sem.kind != CK::Int && sem.kind != CK::String) {
+                return false;
+            }
+            continue;
+        }
+        case Op::GETSTATIC:
+        case Op::PUTSTATIC: {
+            ir::ClassSession::MemberSem sem;
+            if (!session.memberOf(*in, sem)
+                || sem.kind != ir::ClassSession::MemberSem::Kind::Field
+                || sem.owner != self) {
+                return false;
+            }
+            continue;
+        }
+        default:
+            return false;
+        }
     }
     return true;
 }
@@ -228,6 +319,111 @@ inline void buildMethodIndex(const mjbase::model::ResourceContainer& container,
             }
         });
     });
+}
+
+/// @brief DOM 序上从 `from` 起找第一条非 NOP 指令（NOP 跳过，squeeze 遗留
+///        落点不驻栈；number_fold / string_pool_fold 同口径）。跨度内任何
+///        指令带标签即置 `*labeledFlag`（合并点 = 外部到达路径栈形状不可知，
+///        调用方 fail-closed）。@return 指令指针；越序尾/悬空返回 nullptr。
+inline const jbc::ir::Insn* nextRealInsn(jbc::ir::CodeDom&              dom,
+                                         const std::vector<jbc::ir::InsnId>& order,
+                                         ca::usize from, ca::usize* outQ, bool* labeledFlag)
+{
+    for (ca::usize q = from; q < order.size(); ++q) {
+        const jbc::ir::Insn* in = dom.peek(order[q]);
+        if (in == nullptr) return nullptr;
+        if (!dom.labelsAt(order[q]).empty()) *labeledFlag = true;
+        if (in->op != jbc::core::Op::NOP) {
+            *outQ = q;
+            return in;
+        }
+    }
+    return nullptr;
+}
+
+/// @brief 池求值面的 JDK 纯函数 mock 安装（dead_member 池明文提取与
+///        pool_array_fold 数组终态求值共用，原 dead_member 私有副本单源）。
+///
+/// 两面覆盖池填充走廊的 JDK 调用：`parseUnsignedLong`（池解密器 seed 走廊）
+/// 与 `toCharArray`（literal 密文面进解密器）。两者全序纯函数，常量实参下
+/// 值唯一确定，接管不引入猜测面；坏数字/溢出与 NumberFormatException 同桶
+/// Bail（jsim v1 无异常派发）。调用方按需另装 `jsim::str` / `jsim::num`
+/// 扩展包（分层红线：本工具只接管这两个 v1 未覆盖面，不替调用方装包）。
+inline void installPoolEvalMocks(jsim::Session& session)
+{
+    session.callMocks["java/lang/Long.parseUnsignedLong(Ljava/lang/String;I)J"] =
+        [](jsim::Frame& frame) -> jsim::Result<jsim::SimValue, jsim::Bail> {
+        auto radix = frame.popChecked();
+        if (!radix.isOk()) return radix;
+        auto text = frame.popChecked();
+        if (!text.isOk()) return text;
+        if (!text.value().known || text.value().type != jsim::ValType::Ref
+            || text.value().ref.kind != jsim::RefPayload::Kind::Str
+            || !radix.value().known) {
+            return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
+                jsim::SimValue::unknownOf(jsim::ValType::I64));
+        }
+        const ca::i32 radixV = static_cast<ca::i32>(radix.value().asU32());
+        if (radixV < 2 || radixV > 36) {
+            return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                {jsim::Bail::Reason::NotConcrete, frame.pc(),
+                 "parseUnsignedLong radix 越界（NumberFormatException v1 不做）"});
+        }
+        std::vector<ca::u16> units;
+        if (!mutf8ToUnits(text.value().ref.str, units)) {
+            return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                {jsim::Bail::Reason::NotConcrete, frame.pc(),
+                 "parseUnsignedLong 输入串 MUTF-8 解码失败"});
+        }
+        ca::u64 acc = 0;
+        for (const ca::u16 u : units) {
+            ca::i32 d = -1;
+            if (u >= '0' && u <= '9') d = static_cast<ca::i32>(u - '0');
+            else if (u >= 'a' && u <= 'z') d = static_cast<ca::i32>(u - 'a') + 10;
+            else if (u >= 'A' && u <= 'Z') d = static_cast<ca::i32>(u - 'A') + 10;
+            if (d < 0 || d >= radixV) {
+                return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                    {jsim::Bail::Reason::NotConcrete, frame.pc(),
+                     "parseUnsignedLong 坏数字（NumberFormatException v1 不做）"});
+            }
+            const ca::u64 next = acc * static_cast<ca::u64>(radixV)
+                                 + static_cast<ca::u64>(d);
+            if (next < acc) {
+                return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                    {jsim::Bail::Reason::NotConcrete, frame.pc(),
+                     "parseUnsignedLong 溢出（NumberFormatException v1 不做）"});
+            }
+            acc = next;
+        }
+        return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
+            jsim::SimValue::knownI64(static_cast<ca::i64>(acc)));
+    };
+    session.callMocks["java/lang/String.toCharArray()[C"] =
+        [](jsim::Frame& frame) -> jsim::Result<jsim::SimValue, jsim::Bail> {
+        auto recv = frame.popChecked();
+        if (!recv.isOk()) return recv;
+        if (!recv.value().known || recv.value().type != jsim::ValType::Ref
+            || recv.value().ref.kind != jsim::RefPayload::Kind::Str) {
+            return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
+                jsim::SimValue::unknownOf(jsim::ValType::Ref));
+        }
+        std::vector<ca::u16> units;
+        if (!mutf8ToUnits(recv.value().ref.str, units)) {
+            return jsim::Result<jsim::SimValue, jsim::Bail>::err(
+                {jsim::Bail::Reason::NotConcrete, frame.pc(),
+                 "toCharArray 输入串 MUTF-8 解码失败"});
+        }
+        jsim::HeapObj arr;
+        arr.className = "[C";
+        arr.elems.reserve(units.size());   // 原始类型数组载荷在 elems（位型解释）
+        for (const ca::u16 u : units) {
+            arr.elems.push_back(static_cast<ca::i64>(u));
+        }
+        const ca::u64 id = frame.session().nextAllocId++;
+        frame.session().heap[id] = std::move(arr);
+        return jsim::Result<jsim::SimValue, jsim::Bail>::ok(
+            jsim::SimValue::knownObj(id));
+    };
 }
 
 }  // namespace grunt::scan_tools

@@ -13,9 +13,9 @@
 /// era != Kasumi 整面关闭（eraBlocked，fail-closed），未判时一个字节都不
 /// 看内容判据（非 Kasumi jar 挂同前缀资源时 scan 空手而归，产物资源逐字节
 /// 原样）。注解面走 decodeAttr 直调位（booger_anno_strip 同一通路）普查
-/// 类/字段/方法三张挂载面的 @Metadata 条目；深度预检（attrSafeToDecode）
+/// 类/字段/方法三张挂载面的 `@Metadata` 条目；深度预检（attrSafeToDecode）
 /// 拦下的槽计 annoBlocked，解不开的 fail-closed 不摘、不猜条目数。水印
-/// 字段面：字段带 @Metadata 或 ConstantValue 为水印串都计入；ConstantValue
+/// 字段面：字段带 `@Metadata` 或 ConstantValue 为水印串都计入；ConstantValue
 /// 双形态都收，jbc 原生 ConstantValueAttr 解码产物与 RawAttr 2 字节载荷
 /// （const_value_promote 新建形态）。资源面 visitResources 全量走一遍，
 /// 只看 UnknownResource 载荷（参考实现同口径），URI 前缀 + `.md` + 内容探针
@@ -54,6 +54,7 @@
 
 #include <algorithm>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -68,6 +69,7 @@
 #include "mjbase/util/annotation_depth.hpp"
 
 #include "grunt/container.hpp"
+#include "grunt/knowledge/grunt_names.hpp"
 #include "grunt/knowledge/kasumi_names.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/rewrite_toolbox.hpp"
@@ -82,54 +84,98 @@ namespace ir = jbc::ir;
 // ==== 判据谓词（scan / rewrite / proof 三段共用，单源）=======================
 // ============================================================================
 
-/// @brief 单条注解是否 @Metadata（S2 形状钉面：描述符全等，参考实现
-///        isKasumiMetadataAnnotation 对齐）。
+/// @brief 单条注解是否 `@Metadata`（S2 形状钉面：描述符全等，参考实现
+///        isKasumiMetadataAnnotation 对齐）。Era 分支：Kasumi 本家描述符；
+///        Grunt3 双枚（`@Metadata` + `@NativeIncluded`，后者 RuntimeInvisible
+///        无载荷，同类批次剥离）。
 bool isMetadataAnno(const jbc::core::ClassFile&                   cf,
-                    const jbc::core::AnnotationsAttr::Annotation& anno)
+                    const jbc::core::AnnotationsAttr::Annotation& anno,
+                    knowledge::Era                                era)
 {
-    return cf.utf8(anno.typeCp) == knowledge::kKasumiMetadataAnnoDesc;
+    const std::string_view desc = cf.utf8(anno.typeCp);
+    if (era == knowledge::Era::Kasumi) return desc == knowledge::kKasumiMetadataAnnoDesc;
+    if (era == knowledge::Era::Grunt3) {
+        return desc == knowledge::kGrunt3MetadataAnnoDesc
+               || desc == knowledge::kGrunt3NativeAnnoDesc;
+    }
+    return false;
 }
 
-/// @brief 水印串判据（参考实现 isKasumiWatermarkString 三条逐字对齐）：含
-///        `PROTECTED BY Kasumi` / 含 `Gruntpocalypse` / 前缀 `kasumi_`。
-bool isWatermarkText(std::string_view text)
+/// @brief 水印串判据。Kasumi（参考实现 isKasumiWatermarkString 三条逐字
+///        对齐）：含 `PROTECTED BY Kasumi` / 含 `Gruntpocalypse` / 前缀
+///        `kasumi_`。Grunt3：`PROTECTED BY <作者>` 三变体任一 + `Gruntpocalypse`
+///        （v3_full 846 类普查取证）。
+bool isWatermarkText(std::string_view text, knowledge::Era era)
 {
-    if (text.find(knowledge::kKasumiWatermarkText) != std::string_view::npos) return true;
-    if (text.find(knowledge::kKasumiWatermarkAltText) != std::string_view::npos) return true;
-    return text.rfind(knowledge::kKasumiWatermarkKeyPrefix, 0) == 0;
+    if (era == knowledge::Era::Kasumi) {
+        if (text.find(knowledge::kKasumiWatermarkText) != std::string_view::npos) return true;
+        if (text.find(knowledge::kKasumiWatermarkAltText) != std::string_view::npos) return true;
+        return text.rfind(knowledge::kKasumiWatermarkKeyPrefix, 0) == 0;
+    }
+    if (era == knowledge::Era::Grunt3) {
+        for (const std::string_view author : knowledge::kGrunt3WatermarkAuthors) {
+            if (text.find(author) != std::string_view::npos) return true;
+        }
+        return text.find(knowledge::kGrunt3WatermarkAltText) != std::string_view::npos;
+    }
+    return false;
 }
 
 /// @brief 反 LLM 注入资源判据（参考实现 isKasumiAntiLlmResource 三面对齐）：
-///        URI 前缀 `META-INF/Kasumi/` + `.md` 后缀 + 内容探针任一子串在场。
-bool isAntiLlmResource(std::string_view uri, const std::vector<ca::u8>& bytes)
+///        URI 前缀（Kasumi/Grunt3 各自前缀）+ `.md` 后缀 + 内容探针任一
+///        子串在场。
+bool isAntiLlmResource(std::string_view uri, const std::vector<ca::u8>& bytes, knowledge::Era era)
 {
-    if (uri.rfind(knowledge::kKasumiResourcePrefix, 0) != 0) return false;
-    const std::string_view suffix = knowledge::kKasumiResourceSuffix;
+    // 探针表按代分派（返回空表 = 该代无资源面）。
+    const std::string_view* probes = nullptr;
+    ca::usize               probeCount = 0;
+    std::string_view        prefix;
+    std::string_view        suffix;
+    if (era == knowledge::Era::Kasumi) {
+        prefix     = knowledge::kKasumiResourcePrefix;
+        suffix     = knowledge::kKasumiResourceSuffix;
+        probes     = knowledge::kKasumiResourceProbes;
+        probeCount = sizeof(knowledge::kKasumiResourceProbes) / sizeof(*knowledge::kKasumiResourceProbes);
+    } else if (era == knowledge::Era::Grunt3) {
+        prefix     = knowledge::kGrunt3ResourcePrefix;
+        suffix     = knowledge::kGrunt3ResourceSuffix;
+        probes     = knowledge::kGrunt3ResourceProbes;
+        probeCount = sizeof(knowledge::kGrunt3ResourceProbes) / sizeof(*knowledge::kGrunt3ResourceProbes);
+    } else {
+        return false;
+    }
+    if (uri.rfind(prefix, 0) != 0) return false;
     if (uri.size() < suffix.size()
         || uri.compare(uri.size() - suffix.size(), suffix.size(), suffix) != 0) {
         return false;
     }
     const std::string text(bytes.begin(), bytes.end());
-    for (const std::string_view probe : knowledge::kKasumiResourceProbes) {
-        if (text.find(probe) != std::string::npos) return true;
+    for (ca::usize i = 0; i < probeCount; ++i) {
+        if (text.find(probes[i]) != std::string::npos) return true;
     }
     return false;
 }
 
 /// @brief 资源 URI 是否命中前缀形状（resourceCandidates 盘点口径）。
-bool resourcePrefixHit(std::string_view uri)
+bool resourcePrefixHit(std::string_view uri, knowledge::Era era)
 {
-    return uri.rfind(knowledge::kKasumiResourcePrefix, 0) == 0;
+    if (era == knowledge::Era::Kasumi) {
+        return uri.rfind(knowledge::kKasumiResourcePrefix, 0) == 0;
+    }
+    if (era == knowledge::Era::Grunt3) {
+        return uri.rfind(knowledge::kGrunt3ResourcePrefix, 0) == 0;
+    }
+    return false;
 }
 
 // ============================================================================
 // ==== 注解槽普查 / 摘除（booger_anno_strip 同一 decodeAttr 直调位）===========
 // ============================================================================
 
-/// @brief 一张属性表里的 @Metadata 条目普查。深度预检拦下的槽计 blocked
+/// @brief 一张属性表里的 `@Metadata` 条目普查。深度预检拦下的槽计 blocked
 ///        （fail-closed：解不开的不算没有，如实计数但不产出条目）。
 ca::usize countMetadataTable(jbc::core::ClassFile& cf, std::vector<jbc::core::AttrSlot>& slots,
-                             ca::usize& blocked)
+                             ca::usize& blocked, knowledge::Era era)
 {
     ca::usize n = 0;
     for (jbc::core::AttrSlot& slot : slots) {
@@ -145,16 +191,16 @@ ca::usize countMetadataTable(jbc::core::ClassFile& cf, std::vector<jbc::core::At
         if (body == nullptr || body->kind() != jbc::core::AttrKind::Annotations) continue;
         const auto* aa = static_cast<const jbc::core::AnnotationsAttr*>(body);
         for (const auto& anno : aa->annos) {
-            if (isMetadataAnno(cf, anno)) ++n;
+            if (isMetadataAnno(cf, anno, era)) ++n;
         }
     }
     return n;
 }
 
-/// @brief 一张属性表里的 @Metadata 条目摘除（其余注解保留；摘空的属性槽
+/// @brief 一张属性表里的 `@Metadata` 条目摘除（其余注解保留；摘空的属性槽
 ///        整槽移除）。@return 摘除条数。
 ca::usize stripMetadataTable(jbc::core::ClassFile& cf, std::vector<jbc::core::AttrSlot>& slots,
-                             ca::usize& blocked)
+                             ca::usize& blocked, knowledge::Era era)
 {
     ca::usize              removed   = 0;
     std::vector<ca::usize> dropSlots;
@@ -171,7 +217,7 @@ ca::usize stripMetadataTable(jbc::core::ClassFile& cf, std::vector<jbc::core::At
         const ca::usize before = aa->annos.size();
         std::vector<jbc::core::AnnotationsAttr::Annotation> keep;
         for (auto& anno : aa->annos) {
-            if (isMetadataAnno(cf, anno)) {
+            if (isMetadataAnno(cf, anno, era)) {
                 ++removed;
             } else {
                 keep.push_back(std::move(anno));
@@ -225,25 +271,26 @@ bool fieldConstantString(jbc::core::ClassFile& cf, jbc::core::MemberInfo& fld,
 }
 
 /// @brief 单类三面盘查（SCAN）。@return 是否产出站点（条目或字段命中）。
-bool scanClass(ir::ClassSession& s, const std::string& uri, Site& out, ScanResult& result)
+bool scanClass(ir::ClassSession& s, const std::string& uri, Site& out, ScanResult& result,
+               knowledge::Era era)
 {
     jbc::core::ClassFile& cf = s.backing();
     ca::usize             blocked = 0;
 
-    ca::usize annos = countMetadataTable(cf, cf.attrs, blocked);
+    ca::usize annos = countMetadataTable(cf, cf.attrs, blocked, era);
     for (jbc::core::MemberInfo& m : cf.methods) {
-        annos += countMetadataTable(cf, m.attrs, blocked);
+        annos += countMetadataTable(cf, m.attrs, blocked, era);
     }
     ca::usize fields = 0;
     for (jbc::core::MemberInfo& f : cf.fields) {
-        const ca::usize fieldAnnos = countMetadataTable(cf, f.attrs, blocked);
+        const ca::usize fieldAnnos = countMetadataTable(cf, f.attrs, blocked, era);
         annos += fieldAnnos;
         std::string_view cv;
         if (fieldAnnos > 0) {
             ++fields;   // 带注解字段：整字段删除（参考实现对齐）
             continue;
         }
-        if (fieldConstantString(cf, f, cv) && isWatermarkText(cv)) ++fields;
+        if (fieldConstantString(cf, f, cv) && isWatermarkText(cv, era)) ++fields;
     }
     result.annoBlocked += blocked;
     if (annos == 0 && fields == 0) return false;
@@ -263,12 +310,14 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
 {
     ScanResult result;
 
-    // ---- S3 Era 检查：三面判据全是 Kasumi 版本知识，Era 分支唯一合法落点。
-    //      未判即整面关闭（fail-closed）：资源一个不看内容，类一个不进站。
-    if (input.era != knowledge::Era::Kasumi) {
+    // ---- S3 Era 检查：三面判据全是版本知识（Kasumi/Grunt3 各自的注解描述
+    //      符、水印串、资源前缀与探针表），Era 分支唯一合法落点。未判即整面
+    //      关闭（fail-closed）：资源一个不看内容，类一个不进站。
+    if (input.era != knowledge::Era::Kasumi && input.era != knowledge::Era::Grunt3) {
         result.eraBlocked = true;
         return result;
     }
+    const knowledge::Era era = input.era;
 
     // ---- 资源清单（参考实现序：资源先于类）。UnknownResource 条目逐个三证
     //      判定；形状命中而证据不全的如实盘点（参考实现保留，本仓计数）。
@@ -276,11 +325,11 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
         const auto* unknown =
             ca::core::tag_cast::dyn_cast<const mjbase::model::UnknownResource>(&res);
         if (unknown == nullptr) return;   // 参考实现只看 Unknown 载荷
-        if (isAntiLlmResource(uri, unknown->get())) {
+        if (isAntiLlmResource(uri, unknown->get(), era)) {
             result.resources.emplace_back(uri);
             return;
         }
-        if (resourcePrefixHit(uri)) ++result.resourceCandidates;
+        if (resourcePrefixHit(uri, era)) ++result.resourceCandidates;
     });
 
     // ---- 类三面盘查。
@@ -292,7 +341,7 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
             return;
         }
         Site site;
-        if (scanClass(*session, uri, site, result)) {
+        if (scanClass(*session, uri, site, result, era)) {
             result.totalAnnos  += site.annos;
             result.totalFields += site.fields;
             result.sites.push_back(std::move(site));
@@ -305,7 +354,8 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
 // ==== REWRITE ===============================================================
 // ============================================================================
 
-DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result)
+DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& result,
+                 knowledge::Era era)
 {
     DirtySet dirty;
 
@@ -314,7 +364,7 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
     for (const std::string& uri : result.resources) {
         const mjbase::model::IResource* raw = container.getResource(uri);
         const auto* unknown = ca::core::tag_cast::dyn_cast<const mjbase::model::UnknownResource>(raw);
-        if (unknown == nullptr || !isAntiLlmResource(uri, unknown->get())) {
+        if (unknown == nullptr || !isAntiLlmResource(uri, unknown->get(), era)) {
             ++dirty.resourceCandidates;   // 复核不齐：不删，如实计数
             continue;
         }
@@ -352,11 +402,11 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         ca::usize fields  = 0;
 
         // 类面：只摘条目。
-        annos += stripMetadataTable(cf, cf.attrs, blocked);
+        annos += stripMetadataTable(cf, cf.attrs, blocked, era);
 
         // 方法面：只摘条目（方法体不动，参考实现对齐）。
         for (jbc::core::MemberInfo& m : cf.methods) {
-            annos += stripMetadataTable(cf, m.attrs, blocked);
+            annos += stripMetadataTable(cf, m.attrs, blocked, era);
         }
 
         // 字段面：摘条目 + 删字段（带 @Metadata 或 ConstantValue 水印的
@@ -364,9 +414,9 @@ DirtySet rewrite(mjbase::model::ResourceContainer& container, const ScanResult& 
         // erase 稳定）。
         for (ca::usize fi = cf.fields.size(); fi-- > 0;) {
             jbc::core::MemberInfo& f = cf.fields[fi];
-            const ca::usize stripped = stripMetadataTable(cf, f.attrs, blocked);
+            const ca::usize stripped = stripMetadataTable(cf, f.attrs, blocked, era);
             std::string_view cv;
-            const bool watermark = fieldConstantString(cf, f, cv) && isWatermarkText(cv);
+            const bool watermark = fieldConstantString(cf, f, cv) && isWatermarkText(cv, era);
             annos += stripped;
             if (stripped > 0 || watermark) {
                 cf.fields.erase(cf.fields.begin() + static_cast<ca::i64>(fi));
@@ -414,40 +464,41 @@ namespace {
 ///
 /// 深度预检拦下的敌意槽不在视野内（解不开 = 不可判，不是清理缺陷；
 /// scan 的 annoBlocked 已计数）。
-void countResidual(const mjbase::model::ResourceContainer& container, ProofResult& result)
+void countResidual(const mjbase::model::ResourceContainer& container, ProofResult& result,
+                   knowledge::Era era)
 {
     forEachClass(container, [&](const ClassEntry& entry) {
         auto session = openSession(*entry.bytes);
         if (!session) return;
         jbc::core::ClassFile& cf    = session->backing();
         ca::usize             dummy = 0;
-        result.residualAnnos += countMetadataTable(cf, cf.attrs, dummy);
+        result.residualAnnos += countMetadataTable(cf, cf.attrs, dummy, era);
         for (jbc::core::MemberInfo& m : cf.methods) {
-            result.residualAnnos += countMetadataTable(cf, m.attrs, dummy);
+            result.residualAnnos += countMetadataTable(cf, m.attrs, dummy, era);
         }
         for (jbc::core::MemberInfo& f : cf.fields) {
-            const ca::usize fieldAnnos = countMetadataTable(cf, f.attrs, dummy);
+            const ca::usize fieldAnnos = countMetadataTable(cf, f.attrs, dummy, era);
             result.residualAnnos += fieldAnnos;
             std::string_view cv;
             if (fieldAnnos > 0) {
                 ++result.residualFields;
                 continue;
             }
-            if (fieldConstantString(cf, f, cv) && isWatermarkText(cv)) ++result.residualFields;
+            if (fieldConstantString(cf, f, cv) && isWatermarkText(cv, era)) ++result.residualFields;
         }
     });
     container.visitResources([&](std::string_view uri, const mjbase::model::IResource& res) {
         const auto* unknown =
             ca::core::tag_cast::dyn_cast<const mjbase::model::UnknownResource>(&res);
         if (unknown == nullptr) return;
-        if (isAntiLlmResource(uri, unknown->get())) ++result.residualResources;
+        if (isAntiLlmResource(uri, unknown->get(), era)) ++result.residualResources;
     });
 }
 
 }   // namespace
 
 ProofResult proof(const mjbase::model::ResourceContainer& container, const DirtySet& dirty,
-                  ca::usize classesBefore, ca::usize resourcesBefore)
+                  ca::usize classesBefore, ca::usize resourcesBefore, knowledge::Era era)
 {
     // proof 是效力检查（不变量复核），不许被 pass 级时间片截短，挂起期间
     // forEachClass 全量放行（residual 统计同样要看到全量类）。
@@ -466,7 +517,7 @@ ProofResult proof(const mjbase::model::ResourceContainer& container, const Dirty
     result.ok     = intact.ok && shrunk.ok;
     result.failed = intact.failed;
     for (const std::string& f : shrunk.failed) result.failed.push_back(f);
-    countResidual(container, result);
+    countResidual(container, result, era);
     return result;
 }
 

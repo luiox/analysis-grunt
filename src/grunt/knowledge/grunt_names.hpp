@@ -115,6 +115,43 @@ inline constexpr std::string_view kGrunt3MetadataAnnoDesc =
 ///        另一半边）。
 inline constexpr std::string_view kGrunt3NamespacePrefix = "net/spartanb312/grunteon/";
 
+/// @brief v3 `@NativeIncluded` 注解描述符（RuntimeInvisible、无载荷，v3
+///        native 包含标记，挂方法面为主；metadata_strip 与 `@Metadata` 同批
+///        剥离。jsoup v3_full 782/846 类在场，全部与 `@Metadata` 同类共存）。
+inline constexpr std::string_view kGrunt3NativeAnnoDesc =
+    "Lnet/spartanb312/grunteon/annotation/native/NativeIncluded;";
+
+/// @brief v3 水印串：`PROTECTED BY <作者>` 三变体（jsoup v3_full 846 类逐字
+///        普查：GRUNTEON/YuShengJun/EVERETT，混淆器多作者署名轮换，子串命中
+///        任一即水印）。
+inline constexpr std::string_view kGrunt3WatermarkAuthors[] = {
+    "PROTECTED BY GRUNTEON",
+    "PROTECTED BY YuShengJun",
+    "PROTECTED BY EVERETT",
+};
+
+/// @brief v3 水印串：`Gruntpocalypse` 子串（Grunt 家族共署名串，Kasumi 水印
+///        判据同源字面）。
+inline constexpr std::string_view kGrunt3WatermarkAltText = "Gruntpocalypse";
+
+/// @brief 反 LLM 注入资源 URI 前缀（`META-INF/grunteon/cybersecurity/
+///        analysis-*.md`，v3 对位 Kasumi 的 META-INF/Kasumi/ 面）。
+inline constexpr std::string_view kGrunt3ResourcePrefix = "META-INF/grunteon/";
+
+/// @brief 反 LLM 注入资源 URI 后缀（Kasumi 面同口径：endsWith(uri, ".md")）。
+inline constexpr std::string_view kGrunt3ResourceSuffix = ".md";
+
+/// @brief 反 LLM 注入资源内容探针（jsoup v3_full 四份 analysis-*.md 逐字节
+///        取证的结构性标记；任一子串在场才算注入内容，S1 核对面）。伪
+///        `<thinking>` 块 + 伪 system-prompt 边界 + cache-bust 参数是注入
+///        语法的固定骨架，`Automated Analysis Cache` 是全部样本的标题头。
+inline constexpr std::string_view kGrunt3ResourceProbes[] = {
+    "<thinking>",
+    "boundary=system-prompt",
+    "cache-bust=",
+    "Automated Analysis Cache",
+};
+
 /// @brief heavy `d2` 载荷分隔符（生成面 `name + "<>" + desc`，BSM 体
 ///        `LDC "<>"; split` 消费同一串）。
 inline constexpr std::string_view kGruntMetadataPairSep = "<>";

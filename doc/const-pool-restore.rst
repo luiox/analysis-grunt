@@ -37,7 +37,7 @@ Grunt v2 ``ConstPoolEncrypt`` 把类内字面常量改写成对伴生池类静�
 
 按 ``srcPc`` 重定位 GETSTATIC（op 复核）后成员复核（owner/name/desc 与站点一致才动），单条指令原地换常量装载（保 ``srcPc`` ；数值走 makeConstLoad 短形态优先，字符串 intern 进池走 LDC/LDC_W）。无擦除、栈形逐位等（long/double 双槽两读同形），帧链走 mutateMethodWithFrames 正统写回，前置 roundTripSafe。
 
-链序：数值面与 ConstValuePromote 分工（本面收 ConstantValue 属性族，ConstValuePromote 收 clinit 写一次无 CV 族，互不重叠），放 ``grunt.NumberFold`` + ``grunt.ConstValuePromote`` 之后跑；字符串面只依赖解密器体未被二次加密。本 pass 之后 ``grunt.ArithFold`` 吃回填出的常量对。
+链序：数值面与 ConstValuePromote 分工（本面收 ConstantValue 属性族，ConstValuePromote 收 clinit 写一次无 CV 族，互不重叠），放 ``grunt.NumberFold`` + ``grunt.ConstValuePromote`` 之后跑；字符串面只依赖解密器体未被二次加密。本 pass 之后 ``grunt.ArithFold`` 吃回填出的常量对；供给不足时驱动器下一轮重扫兜底（见 :ref:`obf-behaviors-contract`）。
 
 
 已知边界

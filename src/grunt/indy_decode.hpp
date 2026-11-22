@@ -99,7 +99,7 @@ struct Site
     std::string                      targetOwner;   ///< 解密结果（slash 内部名）
     std::string                      targetName;    ///< 方法/字段名（ctor 恒 `<init>`）
     std::string                      targetDesc;    ///< 方法 desc / 字段类型 / ctor init desc
-    bool                             ownerIsInterface = false;  ///< virtual 落点分派
+    bool                             ownerIsInterface = false;  ///< ref-kind 分派（接口 static 同口径）
 };
 
 /// @brief 拒绝（fail-closed 计数：拒绝原因进 trace，站点不动）。

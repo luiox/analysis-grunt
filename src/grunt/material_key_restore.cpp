@@ -290,26 +290,38 @@ std::vector<MaterialWindow> findMaterialWindows(
     for (const auto& [mi, view] : views) {
         const std::string_view desc = unit.symbols().str(unit.methods[mi].desc);
         if (desc != knowledge::kGruntSimpleDecryptorDesc) continue;
-        const std::vector<const ir::Insn*>& seq = view.seq;
+        // pc 布局序视图（视图本体是 dom 序；材料解密器带循环时 dom 序错窗，
+        // 与 indy_restore 260705 keyMissing 同族）。invokePos 是本局部视图
+        // 里的下标，仅本函数作用域消费。窗形 = 键表达式（const_args 单源
+        // parseXorKeyExpr，材料叶必有：单层 `LDC K; mk(); IXOR; IXOR` 与
+        // 260705 组合形 `LDC C1; LDC C2; IXOR; mk(); IXOR; IXOR` 同一面，
+        // rawKey = 常量叶折叠值）。
+        const std::vector<const ir::Insn*> seq = rewrite_tools::pcOrderedInsns(*view.cu);
         if (seq.size() < 5) continue;
-        for (ca::usize p = 4; p < seq.size(); ++p) {
+        for (ca::usize p = 2; p < seq.size(); ++p) {
             if (seq[p]->op != Op::I2C) continue;
-            if (seq[p - 1]->op != Op::IXOR || seq[p - 2]->op != Op::IXOR) continue;
-            if (seq[p - 3]->op != Op::INVOKESTATIC) continue;
-            ir::ClassSession::MemberSem sem;
-            if (!memberOf(s, *seq[p - 3], ir::ClassSession::MemberSem::Kind::Method, sem)) {
+            ca::usize q = p - 1;   // I2C 与 IXOR 之间允许 NOP 缝（链产折叠残迹）
+            while (q > 0 && seq[q] != nullptr && seq[q]->op == Op::NOP) --q;
+            if (seq[q] == nullptr || seq[q]->op != Op::IXOR) continue;
+            const_args::XorKeyExpr expr;
+            ca::usize              start = 0;
+            if (!const_args::parseXorKeyExpr(s, self, seq, q - 1,
+                                             const_args::kMaxKeyExprLeaves, expr, start)) {
                 continue;
             }
-            if (sem.desc != "()I" || sem.owner != self) continue;
-            ca::i32 raw = 0;
-            if (!const_args::decodeConstInt(s, *seq[p - 4], raw)) continue;
+            if (expr.materialPos == const_args::XorKeyExpr::kNoPos) continue;
+            const ir::Insn*               mk = seq[expr.materialPos];
+            ir::ClassSession::MemberSem sem;
+            if (!memberOf(s, *mk, ir::ClassSession::MemberSem::Kind::Method, sem)) {
+                continue;
+            }
             MaterialWindow w;
             w.decryptorIndex = mi;
             w.decryptorName  = std::string(unit.symbols().str(unit.methods[mi].name));
             w.materialKeyName = std::string(sem.name);
-            w.invokePos       = p - 3;
-            w.invokeSrcPc     = seq[p - 3]->srcPc;
-            w.rawKey          = raw;
+            w.invokePos       = expr.materialPos;
+            w.invokeSrcPc     = mk->srcPc;
+            w.rawKey          = expr.folded;
             out.push_back(std::move(w));
         }
     }
@@ -327,9 +339,12 @@ struct MaterialKeyBody
     std::string poisonField;  ///< GETSTATIC poisonField(I) 的字段名
 };
 
-/// @brief 9 条逐字钉形：GETSTATIC F_k(J); DUP2; INT(32); LUSHR; LXOR; L2I;
-///        GETSTATIC F_p(I); IXOR; IRETURN。无标签（首条外）、无异常表；字段
-///        private static 在场。@return nullopt = 体形/字段不符。
+/// @brief 钉形：GETSTATIC F_k(J); DUP2; SHIFT-EXPR(=32); LUSHR; LXOR; L2I;
+///        GETSTATIC F_p(I); IXOR; IRETURN。SHIFT-EXPR 是 int 常量表达式
+///        （const_args::parseXorKeyExpr 单源）：生成面单条 `INT(32)`，260705
+///        拆常量形 `LDC A; LDC B; IXOR`（A^B=32，aa 类 440506536^440506504
+///        实证）。无标签（首条外）、无异常表；字段 private static 在场。
+///        @return nullopt = 体形/字段不符。
 std::optional<MaterialKeyBody> matchMaterialKeyBody(
     ir::ClassSession& s, const std::unordered_map<ca::usize, MethodView>& views,
     const std::string& mkName)
@@ -345,32 +360,61 @@ std::optional<MaterialKeyBody> matchMaterialKeyBody(
     const auto it = views.find(mi);
     if (it == views.end()) return std::nullopt;
     const std::vector<const ir::Insn*>& seq = it->second.seq;
-    if (seq.size() != 9) return std::nullopt;
+    // NOP 缝是链产折叠残迹（ArithFold `A^B=32 → BIPUSH; NOP; NOP`），钉形
+    // 跑在非 NOP 骨架上（骨架保 pc 序；NOP 槽的标签检查仍在原序列上做）。
+    std::vector<const ir::Insn*> core;
     if (!it->second.cu->exc.empty()) return std::nullopt;
-    for (ca::usize p = 1; p < 9; ++p) {
-        if (!it->second.cu->dom.labelsAt(it->second.cu->dom.order()[p]).empty()) {
-            return std::nullopt;
-        }
+    for (const ir::Insn* in : seq) {
+        if (in != nullptr && in->op != Op::NOP) core.push_back(in);
     }
+    // 体长上界：表达式叶 ≤ kMaxKeyExprLeaves（指令 ≤ 2*叶-1），尾部 6 条钉形。
+    constexpr ca::usize kShiftEndBound = 2 + 2 * const_args::kMaxKeyExprLeaves - 2;
+    if (core.size() < 9 || core.size() > kShiftEndBound + 7) return std::nullopt;
 
     ir::ClassSession::MemberSem kSem;
     ir::ClassSession::MemberSem pSem;
-    if (seq[0]->op != Op::GETSTATIC
-        || !memberOf(s, *seq[0], ir::ClassSession::MemberSem::Kind::Field, kSem)
+    if (core[0]->op != Op::GETSTATIC
+        || !memberOf(s, *core[0], ir::ClassSession::MemberSem::Kind::Field, kSem)
         || kSem.owner != self || kSem.desc != "J") {
         return std::nullopt;
     }
-    ca::i32 shift = 0;
-    if (seq[1]->op != Op::DUP2 || !const_args::decodeConstInt(s, *seq[2], shift)
-        || shift != static_cast<ca::i32>(knowledge::kGruntMaterialKeySlotShift)
-        || seq[3]->op != Op::LUSHR || seq[4]->op != Op::LXOR || seq[5]->op != Op::L2I) {
+    if (core[1]->op != Op::DUP2) return std::nullopt;
+    // SHIFT-EXPR 定位：表达式结尾（栈语义末条）必须折叠出 32 且起点恰为
+    // core[2]（DUP2 之后整段都是移位量），LUSHR 紧随其后。
+    ca::usize shiftEnd = 0;
+    for (ca::usize e = 2; e <= kShiftEndBound && e + 6 <= core.size(); ++e) {
+        const_args::XorKeyExpr expr;
+        ca::usize              start = 0;
+        if (!const_args::parseXorKeyExpr(s, self, core, e, const_args::kMaxKeyExprLeaves,
+                                         expr, start)) {
+            continue;
+        }
+        if (start != 2 || expr.materialPos != const_args::XorKeyExpr::kNoPos
+            || expr.folded != static_cast<ca::i32>(knowledge::kGruntMaterialKeySlotShift)) {
+            continue;
+        }
+        shiftEnd = e;
+        break;
+    }
+    if (shiftEnd == 0) return std::nullopt;
+    const ca::usize tail = shiftEnd + 1;   // LUSHR 位点
+    if (core[tail]->op != Op::LUSHR || core[tail + 1]->op != Op::LXOR
+        || core[tail + 2]->op != Op::L2I) {
         return std::nullopt;
     }
-    if (seq[6]->op != Op::GETSTATIC
-        || !memberOf(s, *seq[6], ir::ClassSession::MemberSem::Kind::Field, pSem)
-        || pSem.owner != self || pSem.desc != "I" || seq[7]->op != Op::IXOR
-        || seq[8]->op != Op::IRETURN) {
+    if (core[tail + 3]->op != Op::GETSTATIC
+        || !memberOf(s, *core[tail + 3], ir::ClassSession::MemberSem::Kind::Field, pSem)
+        || pSem.owner != self || pSem.desc != "I" || core[tail + 4]->op != Op::IXOR
+        || core[tail + 5]->op != Op::IRETURN) {
         return std::nullopt;
+    }
+    if (core.size() != shiftEnd + 7) return std::nullopt;   // IRETURN 必须收尾
+    // 标签纪律在原序列上：除首条外任何槽（NOP 缝在内）不得带标签；空槽 = 拒。
+    for (ca::usize p = 0; p < seq.size(); ++p) {
+        if (seq[p] == nullptr) return std::nullopt;
+        if (p > 0 && !it->second.cu->dom.labelsAt(it->second.cu->dom.order()[p]).empty()) {
+            return std::nullopt;
+        }
     }
     // 两字段 private static 在场（防 CP 悬垂引用；引用普查口径宁严勿宽）。
     const auto fieldOk = [&](const std::string& name, std::string_view desc) {
@@ -557,38 +601,45 @@ bool evalKeyInit(ir::ClassSession& s, std::unordered_map<ca::usize, MethodView>&
         return false;
     };
 
+    // NOP 缝是链产折叠残迹（ArithFold 恒等消元原地 NOP 填充），初值窗回溯
+    // 跑在非 NOP 骨架上（骨架保 pc 序；q 是骨架上 PUTSTATIC 的位）。
+    std::vector<const ir::Insn*> core;
+    for (ca::usize p = 0; p < q; ++p) {
+        if (seq[p] != nullptr && seq[p]->op != Op::NOP) core.push_back(seq[p]);
+    }
+    const ca::usize cq = core.size();
+
     // ---- Form A：单条 long 常量装载 ----
-    if (q >= 1) {
+    if (cq >= 1) {
         ca::i64 v = 0;
-        if (const_args::decodeConstLong(s, *seq[q - 1], v)) {
+        if (const_args::decodeConstLong(s, *core[cq - 1], v)) {
             out = v;
             return true;
         }
     }
 
     // ---- Form B：`ldc 明文; INT(32); INVOKESTATIC parse; ldc2_w C; lxor` ----
-    if (q >= 5 && seq[q - 1]->op == Op::LXOR) {
+    if (cq >= 5 && core[cq - 1]->op == Op::LXOR) {
         ca::i64 cxor = 0;
-        if (const_args::decodeConstLong(s, *seq[q - 2], cxor) && seq[q - 3]->op == Op::INVOKESTATIC) {
+        if (const_args::decodeConstLong(s, *core[cq - 2], cxor) && core[cq - 3]->op == Op::INVOKESTATIC) {
             ir::ClassSession::MemberSem psem;
             const bool parseDirect =
-                memberOf(s, *seq[q - 3], ir::ClassSession::MemberSem::Kind::Method, psem)
+                memberOf(s, *core[cq - 3], ir::ClassSession::MemberSem::Kind::Method, psem)
                 && psem.owner == knowledge::kGruntMaterialParseOwner
                 && psem.name == knowledge::kGruntMaterialParseName
                 && psem.desc == knowledge::kGruntMaterialParseDesc;
-            const bool parseTramp = memberOf(s, *seq[q - 3],
+            const bool parseTramp = memberOf(s, *core[cq - 3],
                                              ir::ClassSession::MemberSem::Kind::Method, psem)
                                     && psem.owner
                                            == s.unit().symbols().str(s.unit().thisClass)
                                     && psem.desc == knowledge::kGruntMaterialParseDesc
                                     && parseTrampolineShape(s, views, std::string(psem.name));
             ca::i32 radix = 0;
-            if ((parseDirect || parseTramp) && const_args::decodeConstInt(s, *seq[q - 4], radix)
+            if ((parseDirect || parseTramp) && const_args::decodeConstInt(s, *core[cq - 4], radix)
                 && radix == knowledge::kGruntMaterialParseRadix
-                && (seq[q - 5]->op == Op::LDC || seq[q - 5]->op == Op::LDC_W)
-                && !interiorLabeled(q - 5, q)) {
+                && (core[cq - 5]->op == Op::LDC || core[cq - 5]->op == Op::LDC_W)) {
                 ir::ClassSession::ConstSem cs;
-                if (!s.constOf(*seq[q - 5], cs) || cs.kind != ir::ClassSession::ConstSem::Kind::String) {
+                if (!s.constOf(*core[cq - 5], cs) || cs.kind != ir::ClassSession::ConstSem::Kind::String) {
                     blockedWhy = "Form B 明文装载非常量串";
                     return false;
                 }
@@ -609,8 +660,8 @@ bool evalKeyInit(ir::ClassSession& s, std::unordered_map<ca::usize, MethodView>&
     }
 
     // ---- 桶内归因：池读未折回（链序缺 StringPoolFold）是主流形 ----
-    for (ca::usize back = 1; back <= 8 && back <= q; ++back) {
-        const ir::Insn* in = seq[q - back];
+    for (ca::usize back = 1; back <= 8 && back <= cq; ++back) {
+        const ir::Insn* in = core[cq - back];
         if (in->op == Op::GETSTATIC) {
             ir::ClassSession::MemberSem sem;
             if (memberOf(s, *in, ir::ClassSession::MemberSem::Kind::Field, sem)
@@ -782,6 +833,8 @@ bool evalPoisonInit(ir::ClassSession& s, const MethodView& clinit, ca::usize q, 
                 pushJ(r);
                 break;
             }
+            case Op::NOP:
+                break;   // 链产折叠残迹（栈中性），跳过
             default:
                 return false;
             }
@@ -1145,8 +1198,10 @@ ScanResult scan(const mjbase::model::ResourceContainer& container, const ScanInp
 
 namespace {
 
-/// @brief 单站点改写：窗口复核（INVOKESTATIC 身份 + 邻接形）→ 原地换 LDC
-///        <materialKey>（srcPc 保留）。@return false = 未动（failed 计数）。
+/// @brief 单站点改写：窗口复核（INVOKESTATIC 身份 + 广义键窗，与 scan 同源
+///        parseXorKeyExpr / pc 布局真值 / NOP 缝容忍——dom 序邻接复核在带
+///        循环解密器上是错位窗，260705 实证）→ 原地换 LDC <materialKey>
+///        （srcPc 保留）。@return false = 未动（failed 计数）。
 bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
 {
     const std::vector<ir::InsnId>& order = cu.dom.order();
@@ -1162,9 +1217,6 @@ bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
     }
     if (pos == kNoSlot) return false;
 
-    // 形状复核：窗口身份 + 邻接形（scan 之后字节可能已被改写，不盲改）。
-    // 窗口 = prev(常量 K) ← 本条 ← IXOR ← IXOR ← I2C，先钉跨度再取条。
-    if (pos + 3 >= order.size() || pos == 0) return false;
     auto slotR = cu.dom.get(order[pos]);
     if (slotR.is_err()) return false;
     ir::Insn*     invoke  = slotR.unwrap();
@@ -1175,16 +1227,36 @@ bool rewriteSite(ir::ClassSession& s, ir::CodeUnit& cu, const Site& site)
         || sem.desc != "()I") {
         return false;
     }
-    const ir::Insn* prev  = cu.dom.peek(order[pos - 1]);
-    const ir::Insn* next1 = cu.dom.peek(order[pos + 1]);
-    const ir::Insn* next2 = cu.dom.peek(order[pos + 2]);
-    const ir::Insn* next3 = cu.dom.peek(order[pos + 3]);
-    ca::i32         raw   = 0;
-    if (prev == nullptr || next1 == nullptr || next2 == nullptr || next3 == nullptr
-        || !const_args::decodeConstInt(s, *prev, raw) || raw != site.decryptorRawKey
-        || next1->op != Op::IXOR || next2->op != Op::IXOR || next3->op != Op::I2C) {
+
+    // 形状复核（scan 之后字节可能已被改写，不盲改）：pc 序视图里本条必须
+    // 是广义键窗的材料叶（折叠值 = scan 账面 rawKey），尾随 IXOR IXOR I2C。
+    const std::vector<const ir::Insn*> ins = rewrite_tools::pcOrderedInsns(cu);
+    ca::usize                          ip  = kNoSlot;
+    for (ca::usize p = 0; p < ins.size(); ++p) {
+        if (ins[p] != nullptr && ins[p]->op == Op::INVOKESTATIC
+            && ins[p]->srcPc == site.invokeSrcPc) {
+            ip = p;
+            break;
+        }
+    }
+    if (ip == kNoSlot || ip == 0) return false;
+    // 键表达式含本调用（材料叶），结尾是其后第一条非 NOP 的 IXOR。
+    ca::usize nx = ip + 1;
+    while (nx < ins.size() && ins[nx] != nullptr && ins[nx]->op == Op::NOP) ++nx;
+    if (nx >= ins.size() || ins[nx] == nullptr || ins[nx]->op != Op::IXOR) return false;
+    const_args::XorKeyExpr expr;
+    ca::usize              start = 0;
+    if (!const_args::parseXorKeyExpr(s, self, ins, nx, const_args::kMaxKeyExprLeaves,
+                                     expr, start)) {
         return false;
     }
+    if (expr.materialPos != ip || expr.folded != site.decryptorRawKey) return false;
+    ++nx;
+    while (nx < ins.size() && ins[nx] != nullptr && ins[nx]->op == Op::NOP) ++nx;
+    if (nx >= ins.size() || ins[nx] == nullptr || ins[nx]->op != Op::IXOR) return false;
+    ++nx;
+    while (nx < ins.size() && ins[nx] != nullptr && ins[nx]->op == Op::NOP) ++nx;
+    if (nx >= ins.size() || ins[nx] == nullptr || ins[nx]->op != Op::I2C) return false;
 
     ir::Insn fresh;
     if (!rewrite_tools::makeConstLoad(s, jsim::SimValue::knownI32(site.materialKey), fresh)) {
