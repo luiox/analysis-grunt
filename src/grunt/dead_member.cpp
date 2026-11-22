@@ -74,6 +74,7 @@
 #include "grunt/indy_fold.hpp"
 #include "grunt/knowledge/const_args.hpp"
 #include "grunt/knowledge/grunt_names.hpp"
+#include "grunt/pipeline_adapter.hpp"
 #include "grunt/jsim_executor.hpp"
 #include "grunt/proof_toolbox.hpp"
 #include "grunt/scan_toolbox.hpp"
@@ -650,7 +651,12 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
     // 数与未收敛站点调用点描述符吻合的公开候选需要宁留；无参 getter 与
     // `(Ln;)Runnable` 形 lambda 站点（1 槽）形状不可能命中，不必整档豁免。
     {
-        const indy_fold::ScanResult indyScan = indy_fold::scan(container);
+        // 接口集必须转发：默认空集会让 indy_fold 的无旁证告警在本普查里
+        // 误发（15 样本矩阵实测 demo_a_v3 801 条，owner 全是容器类/JDK 类，
+        // 语义无损但噪声淹没真信号）；真正的 IndyFold pass 是满集零告警。
+        const indy_fold::ScanResult indyScan
+            = indy_fold::scan(container, iter_budget::ClassBudget{indy_fold::kScanClassBudget},
+                              jdkInterfacesCached());
         std::set<std::pair<std::string, std::string>> indyTargets;
         std::set<ca::u32> indyUnresolvedSlots;
         for (const indy_fold::Site& site : indyScan.sites) {
