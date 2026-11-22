@@ -710,6 +710,128 @@ TEST(JunkMemberStripFailClosed, RealReaderKeepsJunkField)
 }
 
 // ============================================================================
+// ==== G5 选后一致性：写活读字段的区域撤选 ====================================
+// ============================================================================
+
+/// G5 悬空最小复现（demo_a_v2final_nohwid 实测同构）：区域写 junk 字段、
+/// 真名方法在区域外读它——区域形照选（栈平衡、G1-G4 全过），G5 一致性核查
+/// 撤选，写原样保留（读者要吃初始化）。正面对照：读者在 junk 方法体内时
+/// 读写同归于净，区域照收、字段照删。
+std::string g5HostSource()
+{
+    return
+        ".super java/lang/Object\n"
+        ".class public super Host5 {\n"
+        "  .field private static realPool [Ljava/lang/String;\n"
+        "  .field private static qfldi I\n"
+        "  .method static realInit ()V {\n"
+        "    code: {\n"
+        "      return\n"
+        "    }\n"
+        "  }\n"
+        "  .method static reader ()I {\n"
+        "    code: {\n"
+        "      getstatic Host5.qfldi I\n"
+        "      ireturn\n"
+        "    }\n"
+        "  }\n"
+        "  .method static <clinit> ()V {\n"
+        "    code: {\n"
+        "      bipush 4\n"
+        "      anewarray java/lang/String\n"
+        "      putstatic Host5.realPool [Ljava/lang/String;\n"
+        "      invokestatic Host5.realInit ()V\n"
+        "      bipush 7\n"
+        "      putstatic Host5.qfldi I\n"
+        "      return\n"
+        "    }\n"
+        "  }\n"
+        "}\n";
+}
+
+std::string g5JunkReaderHostSource()
+{
+    return
+        ".super java/lang/Object\n"
+        ".class public super Host6 {\n"
+        "  .field private static realPool [Ljava/lang/String;\n"
+        "  .field private static qflda J\n"
+        "  .method static realInit ()V {\n"
+        "    code: {\n"
+        "      return\n"
+        "    }\n"
+        "  }\n"
+        "  .method static qmeth1 ()J {\n"
+        "    code: {\n"
+        "      getstatic Host6.qflda J\n"
+        "      lreturn\n"
+        "    }\n"
+        "  }\n"
+        "  .method static <clinit> ()V {\n"
+        "    code: {\n"
+        "      bipush 4\n"
+        "      anewarray java/lang/String\n"
+        "      putstatic Host6.realPool [Ljava/lang/String;\n"
+        "      invokestatic Host6.realInit ()V\n"
+        "      ldc2_w 111L\n"
+        "      nop\n"
+        "      putstatic Host6.qflda J\n"
+        "      return\n"
+        "    }\n"
+        "  }\n"
+        "}\n";
+}
+
+TEST(JunkMemberStripScan, G5ConsistencyDropsRegionWithOutsideReader)
+{
+    model::ResourceContainer container;
+    addClassBytes(container, "Host5",
+                  assembleJunkShaped("Host5", g5HostSource(), {{"qfldi", "$gp44"}}));
+    addClassBytes(container, "Host6",
+                  assembleJunkShaped("Host6", g5JunkReaderHostSource(),
+                                     {{"qflda", "$ga55"}, {"qmeth1", "$gg222"}}));
+
+    const ScanResult scanned = scan(container);
+    ASSERT_EQ(scanned.classes.size(), 2u);
+    const ClassCand* host5 = nullptr;
+    const ClassCand* host6 = nullptr;
+    for (const ClassCand& c : scanned.classes) {
+        if (c.uri == "Host5.class") host5 = &c;
+        if (c.uri == "Host6.class") host6 = &c;
+    }
+    ASSERT_NE(host5, nullptr);
+    ASSERT_NE(host6, nullptr);
+    // Host5：区域形能成立（栈平衡/G1-G4 全过），但写 $gp44 有区域外读者
+    // （真名方法 reader）→ G5 撤选。reader 自身另有 [getstatic] 种子区域
+    // （NOP 后 ireturn 欠栈）→ rewrite-sim 整方法放弃（宁留，方法体保真）。
+    // Host6：唯一读者在 junk 方法体内（随删除面一起消失，读写同归于净）
+    // → 区域照收。
+    EXPECT_TRUE(host5->regions.empty()) << "G5 撤选写活读字段的区域";
+    ASSERT_EQ(host6->regions.size(), 1u) << "junk 方法体读者不构成活读者";
+    EXPECT_EQ(scanned.methodsFailClosed, 1u) << "reader 的种子区域 sim 欠栈放弃";
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_EQ(dirty.methods, 1u) << "Host6 的 $gg222 探针删";
+    // 普查先于成员删除（单轮口径）：$ga55 的 getstatic 活在未删的 $gg222 体
+    // 内 → 本轮宁留，converge 轮 2 吸收（探针先删，下轮普查见零引用再删）。
+    EXPECT_EQ(dirty.fields, 0u);
+    EXPECT_EQ(dirty.rejectedByRef, 2u) << "$gp44/$ga55 本轮都靠引用普查宁留";
+
+    const std::string after5 = disassemble(classBytes(container, "Host5.class"));
+    // 写原样保留：读者要吃的初始化不能被 NOP（悬空根因面）
+    EXPECT_NE(after5.find("putstatic Host5.$gp44"), std::string::npos) << after5;
+    EXPECT_NE(after5.find("ldc 7"), std::string::npos) << after5;
+    EXPECT_NE(after5.find("getstatic Host5.$gp44"), std::string::npos) << after5;
+
+    const std::string after6 = disassemble(classBytes(container, "Host6.class"));
+    EXPECT_EQ(after6.find("putstatic Host6.$ga55"), std::string::npos) << after6;
+    EXPECT_NE(after6.find("$ga55"), std::string::npos) << after6 << "本轮 census 宁留";
+
+    const ProofResult verdict = proof(container, dirty, 2u);
+    EXPECT_TRUE(verdict.ok) << (verdict.failed.empty() ? "" : verdict.failed.front());
+}
+
+// ============================================================================
 // ==== 测试④：白名单外锚 / 模拟不出 → 整方法放弃 =============================
 // ============================================================================
 

@@ -1395,6 +1395,162 @@ ScanResult scan(const mjbase::model::ResourceContainer& container)
             ++result.classesSkipped;
         }
     });
+
+    // G5 选后一致性核查（demo_a_v2final_nohwid 实测教训）：junk 形字段的
+    // 写只有当它的全部读者都随区域消失（读在选定区域内）才可摘——区域外
+    // 读者 + 区域内唯一写 = 悬空初始化（clinit 数组创建的 dup+putstatic 被
+    // NOP、别处 GETSTATIC 读它 → ExceptionInInitializerError）。junk 方法
+    // 体内的读者不计入 liveReads：写它的区域若照选，方法体随删除面一起
+    // 消失（读写同归于净）；方法删除被 census 拒时区域原样保留，读写都在
+    // 原字节里，同样安全。
+    const auto inSelected = [&result](const std::string& uri, ca::usize methodIndex,
+                                      ca::u32 pc) {
+        for (const ClassCand& cand : result.classes) {
+            if (cand.uri != uri) continue;
+            for (const JunkRegion& r : cand.regions) {
+                if (r.methodIndex != methodIndex) continue;
+                for (const auto& [s, e] : r.spans) {
+                    if (pc >= s && pc < e) return true;
+                }
+            }
+        }
+        return false;
+    };
+    std::set<std::string> liveReadFields;   ///< 有区域外读者的 junk 形字段
+    forEachClass(container, [&](const ClassEntry& entry) {
+        auto session = openSession(*entry.bytes);
+        if (!session) return;
+        try {
+            jbc::core::ClassFile& cf = session->backing();
+            const std::string      uri(entry.uri);
+            for (ca::usize mi = 0; mi < cf.methods.size(); ++mi) {
+                jbc::core::MemberInfo& m = cf.methods[mi];
+                if (junkMethodName(cf.utf8(m.nameCp))) continue;
+                ca::i64 codeSlot = -1;
+                for (ca::usize ai = 0; ai < m.attrs.size(); ++ai) {
+                    if (cf.utf8(m.attrs[ai].nameCp) == "Code") {
+                        codeSlot = static_cast<ca::i64>(ai);
+                        break;
+                    }
+                }
+                if (codeSlot < 0) continue;
+                auto d = cf.decodeAttr(m.attrs[static_cast<ca::usize>(codeSlot)]);
+                if (d.is_err()) continue;
+                auto* bodyPtr
+                    = ca::core::tag_cast::cast<jbc::core::CodeAttr>(d.unwrap());
+                if (bodyPtr == nullptr) continue;
+                Body bodyDecoded = decodeBody(bodyPtr->code);
+                for (const Insn& in : bodyDecoded.insns) {
+                    if (in.op != 0xb2) continue;
+                    Ref r;
+                    if (!resolveRef(cf, in.cp, r)) continue;
+                    if (!junkFieldName(r.name)) continue;
+                    if (inSelected(uri, mi, in.pc)) continue;
+                    liveReadFields.insert(r.owner + "::" + r.name);
+                    if (trace) {
+                        std::fprintf(stderr,
+                                     "[grunt.JunkMemberStrip] G5 活读：uri=%s mi=%zu pc=%u"
+                                     " owner=%s name=%s\n",
+                                     uri.c_str(), mi, in.pc, r.owner.c_str(),
+                                     r.name.c_str());
+                    }
+                }
+            }
+        } catch (...) {
+            // 普查缺失的类 = 其读按外部口径保守处理；对应类的区域在下一环
+            // 会话打不开时整体撤选（宁留）
+        }
+    });
+    if (!liveReadFields.empty()) {
+        ca::usize droppedRegions = 0;
+        forEachClass(container, [&](const ClassEntry& entry) {
+            const std::string uri(entry.uri);
+            ClassCand* cand = nullptr;
+            for (ClassCand& c : result.classes) {
+                if (c.uri == uri) {
+                    cand = &c;
+                    break;
+                }
+            }
+            if (cand == nullptr || cand->regions.empty()) return;
+            auto session = openSession(*entry.bytes);
+            if (!session) {
+                droppedRegions += cand->regions.size();
+                cand->regions.clear();
+                return;
+            }
+            try {
+                jbc::core::ClassFile& cf = session->backing();
+                std::vector<JunkRegion> kept;
+                kept.reserve(cand->regions.size());
+                for (JunkRegion& r : cand->regions) {
+                    bool writesLive = r.methodIndex >= cf.methods.size();
+                    if (!writesLive) {
+                        jbc::core::MemberInfo& m = cf.methods[r.methodIndex];
+                        ca::i64 codeSlot = -1;
+                        for (ca::usize ai = 0; ai < m.attrs.size(); ++ai) {
+                            if (cf.utf8(m.attrs[ai].nameCp) == "Code") {
+                                codeSlot = static_cast<ca::i64>(ai);
+                                break;
+                            }
+                        }
+                        if (codeSlot < 0) {
+                            writesLive = true;
+                        } else {
+                            auto d = cf.decodeAttr(
+                                m.attrs[static_cast<ca::usize>(codeSlot)]);
+                            auto* bodyPtr
+                                = d.is_ok() ? ca::core::tag_cast::cast<jbc::core::CodeAttr>(
+                                                  d.unwrap())
+                                            : nullptr;
+                            if (bodyPtr == nullptr) {
+                                writesLive = true;
+                            } else {
+                                Body bodyDecoded = decodeBody(bodyPtr->code);
+                                for (const Insn& in : bodyDecoded.insns) {
+                                    if (in.op != 0xb3) continue;
+                                    if (!inSelected(uri, r.methodIndex, in.pc)) continue;
+                                    Ref rr;
+                                    if (!resolveRef(cf, in.cp, rr)) continue;
+                                    if (liveReadFields.count(rr.owner + "::" + rr.name)
+                                        != 0) {
+                                        writesLive = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (writesLive) {
+                        ++droppedRegions;
+                        if (trace) {
+                            std::fprintf(stderr,
+                                         "[grunt.JunkMemberStrip] G5 撤选：uri=%s"
+                                         " method=%zu\n",
+                                         uri.c_str(), r.methodIndex);
+                        }
+                    } else {
+                        kept.push_back(std::move(r));
+                    }
+                }
+                cand->regions = std::move(kept);
+            } catch (...) {
+                droppedRegions += cand->regions.size();
+                cand->regions.clear();
+            }
+        });
+        if (droppedRegions != 0) {
+            ca::usize total = 0;
+            for (const ClassCand& cand : result.classes) total += cand.regions.size();
+            result.regionsTotal = total;
+            if (trace) {
+                std::fprintf(stderr,
+                             "[grunt.JunkMemberStrip] G5 一致性核查：撤 %zu 个写活读"
+                             "字段的区域，liveReads=%zu\n",
+                             droppedRegions, liveReadFields.size());
+            }
+        }
+    }
     return result;
 }
 

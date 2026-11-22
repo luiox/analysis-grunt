@@ -33,6 +33,13 @@ clinit junk 区域长度保持 NOP 化 → CP 压缩 → 活引用普查 → jun
 - G1 junk 命名方法只作删除候选；G2 区域不得从方法入口起；
 - G3 区域须有 ≥1 junk 字段种子；G4 馈送链净效应闸。
 
+第五道选后一致性核查（G5，demo_a_v2final_nohwid 悬空 NPE 实证）：区域写
+junk 形字段、真名方法在区域外 ``GETSTATIC`` 读它时，NOP 区域 = 摘写留读
+悬空初始化。scan 尾普查全部真名方法体的 junk 字段读——区域外读者使该
+字段成「活读」，凡区域内 ``PUTSTATIC`` 写活读字段者**整区域撤选**（写
+原样保留）；junk 方法体内读者不计（读写同归于净）。选后撤选不改
+fail-closed 口径。
+
 帧面 F1-F4（HotSpot 逐错钉出）：
 
 - 保留尾 return 及其陷阱尾（\ ``pop; goto``\ 回跳保留尾的蹦床）不 NOP
@@ -67,5 +74,5 @@ real-branch-into-dropped-frame 25、kept-return 槽深 15 等。**与无帧面
 VerifyError（tier-2 吞真实块 + 摘帧破坏 locals 基线）——本实现删除集是
 原型的保守子集，JVM 可验证性优先于删除量。
 
-jasm 夹具 9 测试（五面 ①-⑤ + 陷阱尾/SMT 帧/DeadMember 接力/真实 jar
-回归——jar 缺位自动 skip）。
+jasm 夹具 10 测试（五面 ①-⑤ + 陷阱尾/SMT 帧/G5 悬空撤选/DeadMember 接力/
+真实 jar 回归——jar 缺位自动 skip）。
