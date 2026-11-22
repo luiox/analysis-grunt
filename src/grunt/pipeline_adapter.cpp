@@ -25,6 +25,10 @@
 #include "grunt/container.hpp"
 #include "grunt/dead_code.hpp"
 #include "grunt/dead_member.hpp"
+#include "grunt/junk_member_strip.hpp"
+#include "grunt/bait_strip.hpp"
+#include "grunt/junk_member_strip.hpp"
+#include "grunt/bait_strip.hpp"
 #include "grunt/cff_unflatten.hpp"
 #include "grunt/dispatcher_restore.hpp"
 #include "grunt/exc_bridge_restore.hpp"
@@ -1594,6 +1598,150 @@ mjbase::spi::PreservedAnalyses StringEqualsRestorePass::run(
                      dirty.skippedByRoundTrip, verdict.ok ? "ok" : "FAILED");
         for (const std::string& f : verdict.failed) {
             std::fprintf(stderr, "[grunt.StringEqualsRestore] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses JunkMemberStripPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+    const junk_member_strip::ScanResult scanned = junk_member_strip::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.JunkMemberStrip] scan: classes=%zu regions=%zu seeds=%zu"
+                     " orphan=%zu sim-fail=%zu fail-closed=%zu skipped=%zu\n",
+                     scanned.classes.size(), scanned.regionsTotal, scanned.seedsTotal,
+                     scanned.orphanInsns, scanned.methodsSimFail, scanned.methodsFailClosed,
+                     scanned.classesSkipped);
+    }
+    if (scanned.classes.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const junk_member_strip::DirtySet dirty = junk_member_strip::rewrite(container, scanned);
+    const junk_member_strip::ProofResult proof
+        = junk_member_strip::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.JunkMemberStrip] rewrite: classes=%zu regions=%zu nop-bytes=%zu"
+                     " methods=%zu fields=%zu compacted=%zu ref-rejected=%zu"
+                     " residual-m=%zu residual-f=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.regions, dirty.nopBytes, dirty.methods,
+                     dirty.fields, dirty.compacted, dirty.rejectedByRef,
+                     proof.residualMethods, proof.residualFields, proof.ok ? "ok" : "FAILED");
+        for (const std::string& f : proof.failed) {
+            std::fprintf(stderr, "[grunt.JunkMemberStrip] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses BaitStripPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+    const bait_strip::ScanResult scanned = bait_strip::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.BaitStrip] scan: utf8=%zu strings=%zu distinct=%zu orphan=%zu"
+                     " live-sites=%zu dead-sites=%zu blocked=%zu classes=%zu skipped=%zu\n",
+                     scanned.baitUtf8Count, scanned.baitStrings, scanned.distinctStrings,
+                     scanned.orphanUtf8, scanned.liveSites, scanned.unreachableSites,
+                     scanned.blockedSites, scanned.classesWithBait, scanned.classesSkipped);
+    }
+    if (scanned.baitUtf8Count == 0) return mjbase::spi::PreservedAnalyses::all();
+
+    const bait_strip::DirtySet dirty = bait_strip::rewrite(container, scanned);
+    const bait_strip::ProofResult proof = bait_strip::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.BaitStrip] rewrite: classes=%zu stripped=%zu nop-bytes=%zu"
+                     " removed-utf8=%zu removed-strings=%zu compacted=%zu compact-failed=%zu"
+                     " residual-utf8=%zu residual-sites=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.strippedSites, dirty.nopBytes,
+                     dirty.removedUtf8, dirty.removedStrings, dirty.compactedClasses,
+                     dirty.compactFailed, proof.residualBaitUtf8, proof.residualSites,
+                     proof.ok ? "ok" : "FAILED");
+        for (const std::string& f : proof.failed) {
+            std::fprintf(stderr, "[grunt.BaitStrip] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses JunkMemberStripPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+    const junk_member_strip::ScanResult scanned = junk_member_strip::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.JunkMemberStrip] scan: classes=%zu regions=%zu seeds=%zu"
+                     " orphan=%zu sim-fail=%zu fail-closed=%zu skipped=%zu\n",
+                     scanned.classes.size(), scanned.regionsTotal, scanned.seedsTotal,
+                     scanned.orphanInsns, scanned.methodsSimFail, scanned.methodsFailClosed,
+                     scanned.classesSkipped);
+    }
+    if (scanned.classes.empty()) return mjbase::spi::PreservedAnalyses::all();
+
+    const junk_member_strip::DirtySet dirty = junk_member_strip::rewrite(container, scanned);
+    const junk_member_strip::ProofResult proof
+        = junk_member_strip::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.JunkMemberStrip] rewrite: classes=%zu regions=%zu nop-bytes=%zu"
+                     " methods=%zu fields=%zu compacted=%zu ref-rejected=%zu"
+                     " residual-m=%zu residual-f=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.regions, dirty.nopBytes, dirty.methods,
+                     dirty.fields, dirty.compacted, dirty.rejectedByRef,
+                     proof.residualMethods, proof.residualFields, proof.ok ? "ok" : "FAILED");
+        for (const std::string& f : proof.failed) {
+            std::fprintf(stderr, "[grunt.JunkMemberStrip] proof failed: %s\n", f.c_str());
+        }
+    }
+    if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();
+    return mjbase::spi::PreservedAnalyses::none();
+}
+
+mjbase::spi::PreservedAnalyses BaitStripPass::run(
+    mjbase::model::ResourceContainer& container, mjbase::spi::GlobalAnalysisManager& am)
+{
+    (void)am;
+
+    const ca::usize before = countClasses(container);
+    const bait_strip::ScanResult scanned = bait_strip::scan(container);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.BaitStrip] scan: utf8=%zu strings=%zu distinct=%zu orphan=%zu"
+                     " live-sites=%zu dead-sites=%zu blocked=%zu classes=%zu skipped=%zu\n",
+                     scanned.baitUtf8Count, scanned.baitStrings, scanned.distinctStrings,
+                     scanned.orphanUtf8, scanned.liveSites, scanned.unreachableSites,
+                     scanned.blockedSites, scanned.classesWithBait, scanned.classesSkipped);
+    }
+    if (scanned.baitUtf8Count == 0) return mjbase::spi::PreservedAnalyses::all();
+
+    const bait_strip::DirtySet dirty = bait_strip::rewrite(container, scanned);
+    const bait_strip::ProofResult proof = bait_strip::proof(container, dirty, before);
+    if (traceEnabled()) {
+        std::fprintf(stderr,
+                     "[grunt.BaitStrip] rewrite: classes=%zu stripped=%zu nop-bytes=%zu"
+                     " removed-utf8=%zu removed-strings=%zu compacted=%zu compact-failed=%zu"
+                     " residual-utf8=%zu residual-sites=%zu proof=%s\n",
+                     dirty.uris.size(), dirty.strippedSites, dirty.nopBytes,
+                     dirty.removedUtf8, dirty.removedStrings, dirty.compactedClasses,
+                     dirty.compactFailed, proof.residualBaitUtf8, proof.residualSites,
+                     proof.ok ? "ok" : "FAILED");
+        for (const std::string& f : proof.failed) {
+            std::fprintf(stderr, "[grunt.BaitStrip] proof failed: %s\n", f.c_str());
         }
     }
     if (dirty.uris.empty()) return mjbase::spi::PreservedAnalyses::all();

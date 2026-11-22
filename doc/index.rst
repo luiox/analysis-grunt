@@ -28,6 +28,7 @@ Grunt 家族（v2 Gruntpocalypse / v3 Grunteon）混淆产物静态还原的行�
    :caption: 逐面形态文档
 
    arith-fold
+   bait-strip
    booger-anno-strip
    cff-unflatten
    constant-call
@@ -43,6 +44,7 @@ Grunt 家族（v2 Gruntpocalypse / v3 Grunteon）混淆产物静态还原的行�
    indy-decode
    indy-fold
    indy-restore
+   junk-member-strip
    kasumi-verify
    material-key-restore
    metadata-strip

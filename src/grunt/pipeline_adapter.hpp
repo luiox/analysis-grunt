@@ -194,6 +194,24 @@ public:
                                        mjbase::spi::GlobalAnalysisManager& am) override;
 };
 
+/// @brief `grunt.JunkMemberStrip`：junk 成员层链断——clinit junk 区域 NOP 化
+///        （长度保持）+ junk 形字段/方法删除 + CP 压缩，伴生空壳交 DeadMember。
+class JunkMemberStripPass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
+/// @brief `grunt.BaitStrip`：反 LLM 诱饵串审计与 fail-closed 摘除（孤儿 Utf8
+///        摘除 + 死证站点 NOP 化；活引用如实计数不动刀）。
+class BaitStripPass final : public mjbase::spi::GlobalPass
+{
+public:
+    mjbase::spi::PreservedAnalyses run(mjbase::model::ResourceContainer&     container,
+                                       mjbase::spi::GlobalAnalysisManager& am) override;
+};
+
 /// @brief `grunt.BoogerAnnoStrip`：`@Booger` 运行时注解剥离。
 class BoogerAnnoStripPass final : public mjbase::spi::GlobalPass
 {

@@ -98,6 +98,26 @@ Result<void, std::string> registerAll(mjbase::spi::PassNameRegistry& registry)
         return Err(std::string("grunt.DeadMember"));
     }
     if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.JunkMemberStrip",
+            [] { return makeFailClosed<JunkMemberStripPass>("grunt.JunkMemberStrip"); },
+            "Break the junk-member chain: NOP-fill provable junk init regions in"
+            " <clinit> (length-preserving), then delete junk-shaped fields/methods"
+            " whose whole reference face is the filled regions, and compact the"
+            " constant pool. Fail-closed on any unclear reference; shell companion"
+            " classes are left to DeadMember.");
+        r.is_err()) {
+        return Err(std::string("grunt.JunkMemberStrip"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
+            "grunt.BaitStrip",
+            [] { return makeFailClosed<BaitStripPass>("grunt.BaitStrip"); },
+            "Audit and strip anti-LLM bait string constants: delete orphan bait"
+            " Utf8 entries and NOP-fill only provably unreachable LDC sites; live"
+            " references are counted honestly and never touched (fail-closed).");
+        r.is_err()) {
+        return Err(std::string("grunt.BaitStrip"));
+    }
+    if (Result<void, mjbase::spi::RegistryError> r = registry.registerGlobalPass(
             "grunt.NoiseAttrStrip",
             [] { return makeFailClosed<NoiseAttrStripPass>("grunt.NoiseAttrStrip"); },
             "Strip Crasher massive-Signature attributes whose string fails the"
@@ -509,10 +529,12 @@ std::string defaultMainLine()
            "grunt.DeadCode,"
            "grunt.ArithFold,"
            "grunt.ConstantCall,"
+           "grunt.JunkMemberStrip,"
            "grunt.DeadMember,"
            "grunt.FlagsStrip,grunt.NoiseAttrStrip,"
            "grunt.BoogerAnnoStrip,"
            "grunt.ConcatRestore,"
+           "grunt.BaitStrip,"
            "grunt.MetadataStrip";
 }
 
