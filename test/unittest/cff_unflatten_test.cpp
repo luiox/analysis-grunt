@@ -21,12 +21,15 @@
 ///   拒绝面逐桶计数；
 /// - REWRITE：岛 + 桥擦除、alias-face 剪枝（scramble → default）、入口块归
 ///   位、handler 重绑、无假臂 guard紧邻岛头的 positional 落空臂钉 + 条件尾
-///   入口块落空臂钉（分块靶，jsoup v3_flow 形）；拒绝面上容器字节逐位不动；
+///   入口块落空臂钉（分块靶，jsoup v3_flow 形）、异常 end 锚 = 入口目标块
+///   头的拆新标签改绑（kHeadFollows 平移倒置 end_pc=0 回归面，jsoup
+///   v3_flow 四类 ClassFormatError 实证）；拒绝面上容器字节逐位不动；
 /// - PROOF：类数不增 + 脏类可重解析 + residual 归零（未跑 rewrite 时如实
 ///   报本可反摊平岛数）；
 /// - JVM：-Xverify:all 下实跑反摊平产物（含异常路径），stdout 对照真值。
 #include "grunt/cff_unflatten.hpp"
 
+#include "jbc/core/reader.hpp"
 #include "jbc/ir/units.hpp"
 #include "libca/core/tag_cast.hpp"
 #include "mjbase/jasm/jvm_jasm_service.hpp"
@@ -301,6 +304,116 @@ std::string excSource(const std::string& name)
            "      iadd\n"
            "      istore 0\n"
            "      goto LbR\n"
+           "    LR:\n"
+           "      iload 0\n"
+           "      ireturn\n"
+           "    LH:\n"
+           "      pop\n"
+           "      iconst_m1\n"
+           "      ireturn\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+}
+
+/// @brief 异常 end 锚 = 入口目标块头夹具：保护区 [LP, LE) 的 end 锚定在 LE
+///        头，LE 同时是入口 case（键 12）目标。入口块归位 moveRange
+///        kHeadFollows 会把段首 Boundary 标签随段平移到方法头（pc 0），
+///        start 锚（LP）留在原地 → 保护区间倒置（start_pc > end_pc=0，
+///        JVM 拒类 ClassFormatError: Illegal exception table range，jsoup
+///        v3_flow 四类实证）。修复面 = 搬迁前把 end 字段拆新标签改绑原段
+///        位边界（段尾后继），覆盖码不变。
+///        语义链：LE(a=x+y) → B1(a=a+1) → LP(a=100/y+a) → B2(a=y*2+a) → R。
+///        flat(3,4)=41；flat(3,0) 在 LP 除零走 handler → -1。
+///        键表：入口 3^15=12→LE；LbE 4+6=10→B1；Lb1 7+7=14→LP；Lbp 5+6=11→B2；
+///        Lb2 6+7=13→R；handler 桥 10+10=20→H（D2 键窗 [20,20)，避开 D1 表）。
+std::string excEndAtEntrySource(const std::string& name)
+{
+    return ".super java/lang/Object\n"
+           ".class public super " + name + " {\n"
+           "\n"
+           "  .method public static flat (II)I {\n"
+           "    exceptions: { { LP, LE, Lhb, Ljava/lang/Throwable; } },\n"
+           "    code: {\n"
+           "      iconst_3\n"              // 入口桥：3^15=12 → LE
+           "      bipush 15\n"
+           "      ixor\n"
+           "      istore 2\n"
+           "      goto Ldisp1\n"
+           "    LbE:\n"                    // 4+6=10 → B1
+           "      iconst_4\n"
+           "      bipush 6\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp1\n"
+           "    Lb1:\n"                    // 7+7=14 → LP
+           "      bipush 7\n"
+           "      bipush 7\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp1\n"
+           "    Lbp:\n"                    // 5+6=11 → B2
+           "      iconst_5\n"
+           "      bipush 6\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp1\n"
+           "    Lb2:\n"                    // 6+7=13 → R
+           "      bipush 6\n"
+           "      bipush 7\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp1\n"
+           "    Lhb:\n"                    // handler 桥：10+10=20 → H（D2）
+           "      bipush 10\n"
+           "      bipush 10\n"
+           "      iadd\n"
+           "      istore 2\n"
+           "      goto Ldisp2\n"
+           "    Ldisp1:\n"
+           "      iload 2\n"
+           "      tableswitch {\n"
+           "          min: 10,\n"
+           "          max: 14,\n"
+           "          cases: { LB1, LB2, LE, LR, LP },\n"
+           "          default: LE\n"
+           "      }\n"
+           "    Ldisp2:\n"
+           "      iload 2\n"
+           "      tableswitch {\n"
+           "          min: 20,\n"
+           "          max: 20,\n"
+           "          cases: { LH },\n"
+           "          default: LH\n"
+           "      }\n"
+           "    LP:\n"                     // 保护区 [LP, LE)：100/y，y=0 即抛
+           "      bipush 100\n"
+           "      iload 1\n"
+           "      idiv\n"
+           "      iload 0\n"
+           "      iadd\n"
+           "      istore 0\n"
+           "      goto Lbp\n"
+           "    LE:\n"
+           "      iload 0\n"
+           "      iload 1\n"
+           "      iadd\n"
+           "      istore 0\n"
+           "      goto LbE\n"
+           "    LB1:\n"
+           "      iload 0\n"
+           "      iconst_1\n"
+           "      iadd\n"
+           "      istore 0\n"
+           "      goto Lb1\n"
+           "    LB2:\n"
+           "      iload 1\n"
+           "      iconst_2\n"
+           "      imul\n"
+           "      iload 0\n"
+           "      iadd\n"
+           "      istore 0\n"
+           "      goto Lb2\n"
            "    LR:\n"
            "      iload 0\n"
            "      ireturn\n"
@@ -1514,6 +1627,75 @@ TEST(CffRewrite, UnflattensTwoIslandsAndRebindsHandler)
     EXPECT_NE(out.find("iconst_m1"), std::string::npos) << out;
 }
 
+/// @brief flat 方法体异常表面快照（readClass + Code lazy 解码）：
+///        原始 pc 异常表 + 码长，供改写后 JVMS 4.7.3 合法性字节级断言。
+///        （CodeAttr 本体不可拷贝，这里只拷纯数据面。）
+struct FlatCodeSnapshot
+{
+    std::vector<jbc::core::CodeAttr::ExcEntry> excTable;
+    ca::usize                                  codeLen = 0;
+};
+
+FlatCodeSnapshot flatCodeSnapshot(const std::vector<ca::u8>& bytes)
+{
+    auto read = jbc::core::readClass(jbc::core::ByteView(bytes), jbc::core::ReadOptions{});
+    if (read.is_err()) throw std::runtime_error("产物类解析失败");
+    jbc::core::ReadResult parsed = std::move(read).unwrap();
+    if (parsed.file == nullptr) throw std::runtime_error("产物类模型缺失");
+    jbc::core::ClassFile& cf = *parsed.file;
+    for (jbc::core::MemberInfo& m : cf.methods) {
+        if (cf.utf8(m.nameCp) != "flat") continue;
+        for (jbc::core::AttrSlot& slot : m.attrs) {
+            if (cf.utf8(slot.nameCp) != "Code") continue;
+            auto d = cf.decodeAttr(slot);
+            if (d.is_err()) throw std::runtime_error("Code 属性解码失败");
+            const auto& body = static_cast<const jbc::core::CodeAttr&>(*d.unwrap());
+            FlatCodeSnapshot snap;
+            snap.excTable = body.excTable;
+            snap.codeLen  = body.code.size();
+            return snap;
+        }
+        throw std::runtime_error("flat 缺 Code 属性");
+    }
+    throw std::runtime_error("缺 flat 方法");
+}
+
+TEST(CffRewrite, RebindsExcEndAnchorOnMovedEntryTarget)
+{
+    // end 锚 = 入口目标块头（LE）：kHeadFollows 原样平移会把 end 送进 pc 0，
+    // 与原地 start（LP）倒置成 ClassFormatError（jsoup v3_flow 回归面）。
+    // 修复面：搬迁前 end 字段拆新标签改绑原段位边界（段尾后继），覆盖码
+    // [LP, LE) 平移后仍恰盖 LP 存活码。
+    model::ResourceContainer container =
+        makeContainer({{"CffExcEnd", excEndAtEntrySource("CffExcEnd")}});
+
+    const ScanResult scanned = scan(container, ScanInput{});
+    ASSERT_EQ(scanned.islands.size(), 2u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    EXPECT_EQ(dirty.islands, 2u);
+    EXPECT_EQ(dirty.failed, 0u);
+    EXPECT_EQ(dirty.entryRestored, 1u);
+
+    // 结构面：分发器离场，异常表在（Throwable 面 + handler 体）。
+    const std::string out = disassemble(classBytes(container, "CffExcEnd.class"));
+    EXPECT_EQ(out.find("tableswitch"), std::string::npos) << out;
+    EXPECT_NE(out.find("java/lang/Throwable"), std::string::npos) << out;
+    EXPECT_NE(out.find("iconst_m1"), std::string::npos) << out;
+
+    // 字节面：异常表 JVMS 4.7.3 合法（start < end <= code_len，handler 在
+    // 界内）且仍是一条带 catch 类型的保护区。
+    const FlatCodeSnapshot snap =
+        flatCodeSnapshot(classBytes(container, "CffExcEnd.class"));
+    ASSERT_EQ(snap.excTable.size(), 1u);
+    for (const jbc::core::CodeAttr::ExcEntry& e : snap.excTable) {
+        EXPECT_LT(e.startPc, e.endPc) << out;
+        EXPECT_LE(e.endPc, snap.codeLen) << out;
+        EXPECT_LT(e.handlerPc, snap.codeLen) << out;
+        EXPECT_NE(e.catchType, 0u) << out;
+    }
+}
+
 TEST(CffRewrite, KeepsBytesUntouchedOnRejections)
 {
     std::vector<std::vector<ca::u8>> before;
@@ -1631,6 +1813,61 @@ TEST(CffJvmVerify, ConditionalTailEntryBlockRunsAndVerifies)
     EXPECT_EQ(rc, 0) << output;
     EXPECT_NE(output.find("16"), std::string::npos) << output;
     EXPECT_NE(output.find("109"), std::string::npos) << output;
+}
+
+TEST(CffJvmVerify, ExcEndAnchorAtEntryTargetRunsAndVerifies)
+{
+    // 异常 end 锚 = 入口目标块头的实跑面：-Xverify:all 在加载期即拒非法异常
+    // 表（ClassFormatError: Illegal exception table range = jsoup v3_flow
+    // 14/14 全挂的原症状）。语义对照真值：flat(3,4)=41，flat(3,0) 走
+    // handler → -1。
+    std::string src = excEndAtEntrySource("CffExcEndJvm");
+    // 摘掉类体收尾 "}\n"（方法体闭合保留），拼上 main 后重新收拢。
+    while (!src.empty() && (src.back() == '\n' || src.back() == '}')) {
+        if (src.back() == '}') {
+            src.pop_back();
+            break;
+        }
+        src.pop_back();
+    }
+    src += "\n"
+           "  .method public static main ([Ljava/lang/String;)V {\n"
+           "    code: {\n"
+           "      iconst_3\n"
+           "      iconst_4\n"
+           "      invokestatic CffExcEndJvm.flat (II)I\n"
+           "      getstatic java/lang/System.out Ljava/io/PrintStream;\n"
+           "      swap\n"
+           "      invokevirtual java/io/PrintStream.println (I)V\n"
+           "      iconst_3\n"
+           "      iconst_0\n"
+           "      invokestatic CffExcEndJvm.flat (II)I\n"
+           "      getstatic java/lang/System.out Ljava/io/PrintStream;\n"
+           "      swap\n"
+           "      invokevirtual java/io/PrintStream.println (I)V\n"
+           "      return\n"
+           "    }\n"
+           "  }\n"
+           "}\n";
+
+    model::ResourceContainer container =
+        makeContainer({{"CffExcEndJvm", src}});
+
+    const ScanResult scanned = scan(container, ScanInput{});
+    ASSERT_EQ(scanned.islands.size(), 2u);
+
+    const DirtySet dirty = rewrite(container, scanned);
+    ASSERT_EQ(dirty.islands, 2u);
+    EXPECT_EQ(dirty.entryRestored, 1u);
+
+    const auto [rc, output] =
+        runJavaVerify(classBytes(container, "CffExcEndJvm.class"), "CffExcEndJvm");
+    if (rc == -1 && output == "no java") {
+        GTEST_SKIP() << "java 不可用（JAVA_HOME/PATH 均缺）";
+    }
+    EXPECT_EQ(rc, 0) << output;
+    EXPECT_NE(output.find("41"), std::string::npos) << output;
+    EXPECT_NE(output.find("-1"), std::string::npos) << output;
 }
 
 }   // namespace

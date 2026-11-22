@@ -60,7 +60,10 @@
 /// setTarget 重指 + positional 落空臂钉 → 异常表 handler 桥重绑 / 被擦块
 /// 上 end 锚前移 → 入口块归位（fallthrough 补 GOTO + moveRange 头插；入口
 /// 块在异常保护区内或带 junk 前缀时退蹦床：不移动、goto 改指，前缀保持
-/// 执行）→ 受害者单批 eraseBatch（kRejectIfUsed 拒收即整方法回滚）。
+/// 执行；异常 end 锚恰在搬迁段首时拆新标签改绑原段位边界 nextAfterT，
+/// kHeadFollows 原样平移会让 end 落 pc 0 与原地 start 倒置——jsoup
+/// v3_flow 四类 ClassFormatError 实证，相 6 严格内含守卫放行 pos == p1）
+/// → 受害者单批 eraseBatch（kRejectIfUsed 拒收即整方法回滚）。
 /// 帧链走 mutateMethodWithFrames 整体重算。
 
 #include "grunt/cff_unflatten.hpp"
@@ -1444,6 +1447,28 @@ bool executeIsland(ir::ClassSession& s, const MethodView& mv, ir::CodeEditor& ed
         // 4c. 纯形 goto 入口桥整块入 victims（保留形在步 2 已重指）。
         if (!isl.entryCc && !isl.entryKeep) {
             for (const ir::InsnId id : mv.blocks[0].insns) victims.push_back(id);
+        }
+        // 4d-pre. 异常 end 锚在搬迁段首（t.entry）的改绑。kHeadFollows 会把
+        //     段首 Boundary 标签随段平移到方法头（pc 0），start 锚留在原地
+        //     → 保护区间倒置（start_pc > end_pc=0，JVM 拒类
+        //     ClassFormatError: Illegal exception table range；jsoup v3_flow
+        //     HttpConnection$Response.execute / W3CDom.selectXpath /
+        //     Node$OuterHtmlVisitor.tail / HtmlTreeBuilder.pushWithBookmark
+        //     四类实证）。相 6 守卫的严格内含判据（p0 < pos < p1）恰好放行
+        //     pos == p1（end 即段首）这一面。正确落点 = 原段位边界：搬迁后
+        //     nextAfterT 恰坐原段首位（half-open 段尾后继），end 锚
+        //     nextAfterT 即保持 [start, end) 覆盖码不变；段居方法尾时
+        //     nextAfterT == kNoInsn，createLabel(kNoInsn) = 方法末边界
+        //     （end_pc == code_length，JVMS 合法）。一律拆新标签改绑：
+        //     原标签可能同时承担其他 entry 的 start 语义（须随段平移），
+        //     就地改绑会连坐。
+        for (ca::usize ei = 0; ei < cu.exc.size(); ++ei) {
+            const auto er = dom.resolveLabel(cu.exc[ei].end);
+            if (er.is_err() || er.unwrap().isEnd()) continue;
+            if (!(er.unwrap().insn == t.entry)) continue;
+            auto fresh = editor.createLabel(nextAfterT);
+            if (fresh.is_err()) return false;
+            cu.exc[ei].end = fresh.unwrap();
         }
         // 4d. 目标块头插到方法最前（入口桥整擦时搬移后即 blocks[0]）。
         if (!editor.moveRange(t.entry, nextAfterT, mv.blocks[0].entry,
